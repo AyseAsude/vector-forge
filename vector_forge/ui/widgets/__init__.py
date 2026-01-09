@@ -1,28 +1,22 @@
-"""Widget components for Vector Forge TUI."""
+"""Widget modules for Vector Forge TUI."""
 
-from vector_forge.ui.widgets.header import AppHeader
-from vector_forge.ui.widgets.footer import AppFooter
 from vector_forge.ui.widgets.status_bar import StatusBar, ScreenTab
-from vector_forge.ui.widgets.target import TargetSection
+from vector_forge.ui.widgets.extraction_selector import ExtractionSelector
 from vector_forge.ui.widgets.progress import ProgressSection
 from vector_forge.ui.widgets.data_panel import DataPanel
 from vector_forge.ui.widgets.eval_panel import EvaluationPanel
-from vector_forge.ui.widgets.activity import ActivityPanel
 from vector_forge.ui.widgets.log_panel import LogPanel
-from vector_forge.ui.widgets.extractions_list import ExtractionsList
-from vector_forge.ui.widgets.extraction_detail import ExtractionDetail
+from vector_forge.ui.widgets.agents_list import AgentsList
+from vector_forge.ui.widgets.agent_inspector import AgentInspector
 
 __all__ = [
-    "AppHeader",
-    "AppFooter",
     "StatusBar",
     "ScreenTab",
-    "TargetSection",
+    "ExtractionSelector",
     "ProgressSection",
     "DataPanel",
     "EvaluationPanel",
-    "ActivityPanel",
     "LogPanel",
-    "ExtractionsList",
-    "ExtractionDetail",
+    "AgentsList",
+    "AgentInspector",
 ]

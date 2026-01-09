@@ -62,41 +62,12 @@ class ScreenTab(Widget):
         self.post_message(self.Clicked(self.screen_name))
 
 
-class StatusSegment(Static):
-    """A colored status segment with powerline separator."""
-
-    def __init__(
-        self,
-        text: str = "",
-        fg: str = COLORS.bg,
-        bg: str = COLORS.accent,
-        **kwargs
-    ) -> None:
-        super().__init__(**kwargs)
-        self._text = text
-        self._fg = fg
-        self._bg = bg
-
-    def render(self) -> str:
-        if not self._text:
-            return ""
-        return f"[{self._fg} on {self._bg}] {self._text} [/]"
-
-    def set_content(self, text: str, fg: str = None, bg: str = None) -> None:
-        self._text = text
-        if fg:
-            self._fg = fg
-        if bg:
-            self._bg = bg
-        self.refresh()
-
-
 class StatusBar(Widget):
     """Powerline-style status bar like oh-my-tmux.
 
     Layout:
     ┌─────────────────────────────────────────────────────────────────┐
-    │▌1:dash▌2:para▌3:logs           OPTIM▌i2/5▌L12▌t3/10▌00:45│
+    │▌1:dash▌2:agents▌3:logs           OPT▌i2/5▌L12▌00:45│
     └─────────────────────────────────────────────────────────────────┘
     """
 
@@ -129,7 +100,7 @@ class StatusBar(Widget):
 
     def compose(self) -> ComposeResult:
         yield ScreenTab(1, "dash", "dashboard", id="tab-dashboard")
-        yield ScreenTab(2, "para", "parallel", id="tab-parallel")
+        yield ScreenTab(2, "agents", "agents", id="tab-agents")
         yield ScreenTab(3, "logs", "logs", id="tab-logs")
         yield Static(id="status-spacer")
         yield Static(id="status-right")
@@ -171,7 +142,7 @@ class StatusBar(Widget):
         """Update tab active states."""
         screen_map = {
             "dashboard": "tab-dashboard",
-            "parallel": "tab-parallel",
+            "agents": "tab-agents",
             "logs": "tab-logs",
         }
 
@@ -213,15 +184,9 @@ class StatusBar(Widget):
             segments.append(f"[{COLORS.blue} on {prev_bg}]{PL_LEFT}[/]")
             segments.append(f"[{COLORS.bg} on {COLORS.blue}] {self.layer} [/]")
 
-        # Turn segment - purple color
-        if self.turn:
-            prev_bg = COLORS.blue if self.layer else (COLORS.aqua if self.iteration else (COLORS.accent if self.phase else COLORS.surface))
-            segments.append(f"[{COLORS.purple} on {prev_bg}]{PL_LEFT}[/]")
-            segments.append(f"[{COLORS.bg} on {COLORS.purple}] {self.turn} [/]")
-
         # Elapsed time segment - muted surface
         if self.elapsed:
-            prev_bg = COLORS.purple if self.turn else (COLORS.blue if self.layer else (COLORS.aqua if self.iteration else (COLORS.accent if self.phase else COLORS.surface)))
+            prev_bg = COLORS.blue if self.layer else (COLORS.aqua if self.iteration else (COLORS.accent if self.phase else COLORS.surface))
             segments.append(f"[{COLORS.surface_hl} on {prev_bg}]{PL_LEFT}[/]")
             segments.append(f"[{COLORS.text} on {COLORS.surface_hl}] {self.elapsed} [/]")
 
@@ -240,12 +205,13 @@ class StatusBar(Widget):
     ) -> None:
         """Update all extraction state at once."""
         self.status = status
-        self.phase = phase.value.upper()[:6]
+        self.phase = phase.value.upper()
         self.iteration = f"i{outer_iter}/{max_outer}"
         self.layer = f"L{current_layer}" if current_layer is not None else ""
-        self.turn = f"t{inner_turn}/{max_inner}"
+        self.turn = ""  # Removed turn from status bar for cleaner look
         self.elapsed = elapsed
 
     def on_screen_tab_clicked(self, event: ScreenTab.Clicked) -> None:
         """Handle tab click - bubble up to screen."""
         # Don't stop - let it bubble to the screen
+        pass

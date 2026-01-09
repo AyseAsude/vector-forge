@@ -1,4 +1,4 @@
-"""Event log panel widget."""
+"""Log panel widget - displays event logs with filtering and scrolling."""
 
 from typing import List
 
@@ -12,28 +12,36 @@ from vector_forge.ui.theme import COLORS
 from vector_forge.ui.state import LogEntry
 
 
-class LogEntryWidget(Widget):
+class LogEntryDisplay(Widget):
     """Single log entry display."""
 
     DEFAULT_CSS = """
-    LogEntryWidget {
+    LogEntryDisplay {
         height: 1;
         layout: horizontal;
     }
 
-    LogEntryWidget .log-timestamp {
-        width: 8;
+    LogEntryDisplay .log-time {
+        width: 9;
         color: $text-disabled;
     }
 
-    LogEntryWidget .log-source {
+    LogEntryDisplay .log-source {
         width: 10;
         color: $text-muted;
     }
 
-    LogEntryWidget .log-message {
+    LogEntryDisplay .log-msg {
         width: 1fr;
         color: $text;
+    }
+
+    LogEntryDisplay.-warning .log-msg {
+        color: $warning;
+    }
+
+    LogEntryDisplay.-error .log-msg {
+        color: $error;
     }
     """
 
@@ -41,61 +49,58 @@ class LogEntryWidget(Widget):
         super().__init__(**kwargs)
         self.entry = entry
 
-        if entry.level == "error":
-            self.add_class("log-entry-error")
-        elif entry.level == "warning":
-            self.add_class("log-entry-warning")
-
     def compose(self) -> ComposeResult:
-        yield Static(self.entry.time_str, classes="log-timestamp")
-        yield Static(self.entry.source, classes="log-source")
+        yield Static(self.entry.time_str, classes="log-time")
+        yield Static(self.entry.source[:9], classes="log-source")
+        yield Static(self.entry.message, classes="log-msg")
 
-        # Use Rich markup for message color based on level
-        level_colors = {
-            "info": COLORS.text,
-            "warning": COLORS.warning,
-            "error": COLORS.error,
-        }
-        color = level_colors.get(self.entry.level, COLORS.text)
-        yield Static(f"[{color}]{self.entry.message}[/]", classes="log-message")
+    def on_mount(self) -> None:
+        if self.entry.level == "warning":
+            self.add_class("-warning")
+        elif self.entry.level == "error":
+            self.add_class("-error")
 
 
 class LogPanel(Widget):
-    """Panel displaying event logs with filtering."""
+    """Panel displaying event logs with filtering and scrolling."""
 
     DEFAULT_CSS = """
     LogPanel {
         height: 1fr;
-        min-height: 5;
-        background: $surface;
-        padding: 1 2;
-        margin: 0;
-    }
-
-    LogPanel.collapsed {
-        height: 3;
-        min-height: 3;
+        min-height: 6;
+        background: $panel;
     }
 
     LogPanel #log-header {
+        height: 2;
+        padding: 0 1;
+        background: $panel;
+        border-bottom: solid $surface;
+    }
+
+    LogPanel #log-title-row {
         height: 1;
-        layout: horizontal;
-        margin-bottom: 1;
     }
 
     LogPanel #log-title {
         width: auto;
-        color: $accent;
-        text-style: bold;
+        color: $text;
     }
 
-    LogPanel #log-header-spacer {
+    LogPanel #log-count {
         width: 1fr;
+        text-align: right;
+        color: $text-disabled;
     }
 
-    LogPanel #log-filter-label {
+    LogPanel #log-filter-row {
+        height: 1;
+        layout: horizontal;
+    }
+
+    LogPanel #filter-label {
         width: auto;
-        color: $text-disabled;
+        color: $text-muted;
         margin-right: 1;
     }
 
@@ -103,126 +108,114 @@ class LogPanel(Widget):
         width: 20;
         height: 1;
         border: none;
-        background: $panel;
+        background: $surface;
         padding: 0 1;
-        color: $text;
     }
 
-    LogPanel #log-content {
+    LogPanel #source-filter {
+        width: auto;
+        margin-left: 2;
+        color: $text-disabled;
+    }
+
+    LogPanel #level-filter {
+        width: auto;
+        margin-left: 2;
+        color: $text-disabled;
+    }
+
+    LogPanel #log-scroll {
         height: 1fr;
-        scrollbar-size: 1 1;
+        padding: 0 1;
     }
 
     LogPanel #log-empty {
-        color: $text-disabled;
-        height: 1;
+        color: $text-muted;
+        padding: 1;
     }
     """
 
     entries: reactive[List[LogEntry]] = reactive(list, always_update=True, init=False)
     filter_text: reactive[str] = reactive("", init=False)
-    collapsed: reactive[bool] = reactive(False, init=False)
-    auto_scroll: reactive[bool] = reactive(True, init=False)
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="log-header"):
-            yield Static("Log", id="log-title")
-            yield Static(id="log-header-spacer")
-            yield Static("Filter:", id="log-filter-label")
-            yield Input(placeholder="", id="log-filter")
-        yield VerticalScroll(id="log-content")
+        with Widget(id="log-header"):
+            with Horizontal(id="log-title-row"):
+                yield Static("Logs", id="log-title")
+                yield Static("", id="log-count")
+            with Horizontal(id="log-filter-row"):
+                yield Static("Filter:", id="filter-label")
+                yield Input(placeholder="search...", id="log-filter")
+                yield Static("[all sources]", id="source-filter")
+                yield Static("[all levels]", id="level-filter")
+        yield VerticalScroll(id="log-scroll")
 
     def on_mount(self) -> None:
-        filter_input = self.query_one("#log-filter", Input)
-        filter_input.value = self.filter_text
-        self._refresh_entries()
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "log-filter":
-            self.filter_text = event.value
-            self._refresh_entries()
+        self._refresh_logs()
 
     def watch_entries(self, entries: List[LogEntry]) -> None:
         if self.is_mounted:
-            self._refresh_entries()
+            self._refresh_logs()
 
-    def watch_collapsed(self, collapsed: bool) -> None:
-        if collapsed:
-            self.add_class("collapsed")
+    def watch_filter_text(self, filter_text: str) -> None:
+        if self.is_mounted:
+            self._refresh_logs()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle filter input changes."""
+        if event.input.id == "log-filter":
+            self.filter_text = event.value
+            event.stop()
+
+    def _refresh_logs(self) -> None:
+        """Refresh the log display."""
+        scroll = self.query_one("#log-scroll", VerticalScroll)
+        count_widget = self.query_one("#log-count", Static)
+
+        # Clear existing entries
+        for child in list(scroll.children):
+            child.remove()
+
+        # Filter entries
+        filtered = self.entries
+        if self.filter_text:
+            filter_lower = self.filter_text.lower()
+            filtered = [
+                e for e in filtered
+                if filter_lower in e.message.lower()
+                or filter_lower in e.source.lower()
+            ]
+
+        # Update count
+        total = len(self.entries)
+        shown = len(filtered)
+        if total == shown:
+            count_widget.update(f"[{COLORS.text_dim}]{total} entries[/]")
         else:
-            self.remove_class("collapsed")
+            count_widget.update(f"[{COLORS.text_dim}]{shown}/{total} entries[/]")
 
-    def _refresh_entries(self) -> None:
-        if not self.is_mounted:
+        # Show entries or empty message
+        if not filtered:
+            scroll.mount(
+                Static(
+                    f"[{COLORS.text_muted}]No log entries[/]",
+                    id="log-empty",
+                )
+            )
             return
-        content = self.query_one("#log-content", VerticalScroll)
 
-        filtered = self._get_filtered_entries()
-        current_count = len(list(content.query(LogEntryWidget)))
-        new_count = min(len(filtered), 50)
+        # Show last 100 entries (most recent at bottom)
+        for entry in filtered[-100:]:
+            scroll.mount(LogEntryDisplay(entry))
 
-        # Only refresh if count changed significantly or first load
-        if current_count == 0 or abs(current_count - new_count) > 0:
-            # Remove all children safely
-            for child in list(content.children):
-                child.remove()
-
-            if not filtered:
-                content.mount(Static("No log entries"))
-            else:
-                # No IDs - let Textual auto-generate them
-                for entry in filtered[-50:]:
-                    content.mount(LogEntryWidget(entry))
-
-                if self.auto_scroll:
-                    content.scroll_end(animate=False)
-
-    def _get_filtered_entries(self) -> List[LogEntry]:
-        if not self.filter_text:
-            return self.entries
-
-        filter_lower = self.filter_text.lower()
-        return [
-            entry for entry in self.entries
-            if filter_lower in entry.message.lower()
-            or filter_lower in entry.source.lower()
-        ]
-
-    def add_entry(
-        self,
-        source: str,
-        message: str,
-        level: str = "info",
-        extraction_id: str | None = None,
-    ) -> None:
-        """Add a new log entry."""
-        import time
-
-        entry = LogEntry(
-            timestamp=time.time(),
-            source=source,
-            message=message,
-            level=level,
-            extraction_id=extraction_id,
-        )
-
-        new_entries = list(self.entries)
-        new_entries.append(entry)
-
-        if len(new_entries) > 500:
-            new_entries = new_entries[-500:]
-
-        self.entries = new_entries
-
-    def clear(self) -> None:
-        """Clear all log entries."""
-        self.entries = []
-
-    def toggle_collapsed(self) -> None:
-        """Toggle collapsed state."""
-        self.collapsed = not self.collapsed
+        # Scroll to bottom
+        scroll.scroll_end(animate=False)
 
     def focus_filter(self) -> None:
         """Focus the filter input."""
         filter_input = self.query_one("#log-filter", Input)
         filter_input.focus()
+
+    def set_entries(self, entries: List[LogEntry]) -> None:
+        """Set log entries."""
+        self.entries = entries

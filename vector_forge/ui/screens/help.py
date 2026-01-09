@@ -2,78 +2,20 @@
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-
-class HelpSection(Vertical):
-    """Section of help content with title and key bindings."""
-
-    DEFAULT_CSS = """
-    HelpSection {
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    HelpSection .help-section-title {
-        color: #58a6ff;
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    """
-
-    def __init__(self, title: str, bindings: list[tuple[str, str]], **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._title = title
-        self._bindings = bindings
-
-    def compose(self) -> ComposeResult:
-        yield Static(self._title, classes="help-section-title")
-        for key, description in self._bindings:
-            yield HelpBinding(key, description)
-
-
-class HelpBinding(Horizontal):
-    """Single key binding display."""
-
-    DEFAULT_CSS = """
-    HelpBinding {
-        height: 1;
-    }
-
-    HelpBinding .help-key {
-        width: 12;
-        color: #d29922;
-    }
-
-    HelpBinding .help-description {
-        width: 1fr;
-        color: #8b949e;
-    }
-    """
-
-    def __init__(self, key: str, description: str, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._key = key
-        self._description = description
-
-    def compose(self) -> ComposeResult:
-        yield Static(self._key, classes="help-key")
-        yield Static(self._description, classes="help-description")
+from vector_forge.ui.theme import COLORS
 
 
 class HelpModal(ModalScreen):
-    """Modal screen showing keyboard shortcuts and help.
-
-    Displays all available keyboard shortcuts organized by category.
-    Press Escape or ? to close.
-    """
+    """Modal screen showing keyboard shortcuts and help."""
 
     BINDINGS = [
-        Binding("escape", "dismiss", "close", show=False),
-        Binding("?", "dismiss", "close", show=False),
-        Binding("q", "dismiss", "close", show=False),
+        Binding("escape", "dismiss", "close"),
+        Binding("q", "dismiss", "close"),
+        Binding("?", "dismiss", "close"),
     ]
 
     DEFAULT_CSS = """
@@ -85,77 +27,69 @@ class HelpModal(ModalScreen):
         width: 60;
         height: auto;
         max-height: 80%;
-        background: #161b22;
-        border: round #30363d;
-        padding: 2;
+        background: $panel;
+        border: solid $surface;
+        padding: 1 2;
     }
 
     HelpModal #help-title {
         text-style: bold;
-        color: #e6edf3;
+        color: $text;
         text-align: center;
-        margin-bottom: 2;
+        height: 1;
+        margin-bottom: 1;
     }
 
-    HelpModal #help-close-hint {
-        color: #484f58;
+    HelpModal #help-scroll {
+        height: auto;
+        max-height: 20;
+    }
+
+    HelpModal .section-title {
+        color: $accent;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    HelpModal .key-row {
+        height: 1;
+    }
+
+    HelpModal #help-footer {
+        color: $text-muted;
         text-align: center;
-        margin-top: 2;
+        margin-top: 1;
     }
     """
 
     def compose(self) -> ComposeResult:
         with Vertical(id="help-container"):
-            yield Static("Keyboard Shortcuts", id="help-title")
+            yield Static("Vector Forge Help", id="help-title")
+            with VerticalScroll(id="help-scroll"):
+                yield Static("Navigation", classes="section-title")
+                yield Static(f"[{COLORS.warning}]1[/]  [{COLORS.text_muted}]Dashboard view[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]2[/]  [{COLORS.text_muted}]Agents view[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]3[/]  [{COLORS.text_muted}]Logs view[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]Tab[/]  [{COLORS.text_muted}]Cycle screens[/]", classes="key-row")
 
-            yield HelpSection(
-                "Navigation",
-                [
-                    ("1", "Switch to dashboard"),
-                    ("2", "Switch to parallel view"),
-                    ("3", "Switch to logs view"),
-                    ("Tab", "Cycle focus"),
-                ],
-            )
+                yield Static("Actions", classes="section-title")
+                yield Static(f"[{COLORS.warning}]p[/]  [{COLORS.text_muted}]Pause/resume extraction[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]/[/]  [{COLORS.text_muted}]Focus filter input[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]Esc[/]  [{COLORS.text_muted}]Clear filter / Close modal[/]", classes="key-row")
 
-            yield HelpSection(
-                "Actions",
-                [
-                    ("q", "Quit application"),
-                    ("p", "Pause/resume extraction"),
-                    ("?", "Show this help"),
-                ],
-            )
+                yield Static("Navigation (Agents/Logs)", classes="section-title")
+                yield Static(f"[{COLORS.warning}]j/Down[/]  [{COLORS.text_muted}]Select next item[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]k/Up[/]  [{COLORS.text_muted}]Select previous item[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]g/Home[/]  [{COLORS.text_muted}]Scroll to top[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]G/End[/]  [{COLORS.text_muted}]Scroll to bottom[/]", classes="key-row")
 
-            yield HelpSection(
-                "Dashboard",
-                [
-                    ("l", "Toggle log panel"),
-                    ("f", "Focus log filter"),
-                ],
-            )
+                yield Static("General", classes="section-title")
+                yield Static(f"[{COLORS.warning}]?[/]  [{COLORS.text_muted}]Show this help[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]q[/]  [{COLORS.text_muted}]Quit application[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]Ctrl+C[/]  [{COLORS.text_muted}]Force quit[/]", classes="key-row")
 
-            yield HelpSection(
-                "Parallel View",
-                [
-                    ("↑/k", "Select previous extraction"),
-                    ("↓/j", "Select next extraction"),
-                    ("Enter", "View selected in dashboard"),
-                ],
-            )
+            yield Static("Press any key to close", id="help-footer")
 
-            yield HelpSection(
-                "Logs View",
-                [
-                    ("/", "Focus filter input"),
-                    ("Escape", "Clear filter"),
-                    ("Home/g", "Scroll to top"),
-                    ("End/G", "Scroll to bottom"),
-                ],
-            )
-
-            yield Static("Press Escape or ? to close", id="help-close-hint")
-
-    def action_dismiss(self) -> None:
-        """Close the help modal."""
-        self.app.pop_screen()
+    def on_key(self, event) -> None:
+        """Close on any key press."""
+        self.dismiss()

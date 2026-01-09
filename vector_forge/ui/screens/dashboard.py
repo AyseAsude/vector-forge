@@ -1,4 +1,4 @@
-"""Dashboard screen for single extraction view."""
+"""Dashboard screen - focused view of single extraction."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -8,39 +8,33 @@ from textual.screen import Screen
 from vector_forge.ui.state import (
     ExtractionUIState,
     ExtractionStatus,
-    Phase,
     get_state,
 )
 from vector_forge.ui.widgets.status_bar import StatusBar, ScreenTab
-from vector_forge.ui.widgets.target import TargetSection
+from vector_forge.ui.widgets.extraction_selector import ExtractionSelector
 from vector_forge.ui.widgets.progress import ProgressSection
 from vector_forge.ui.widgets.data_panel import DataPanel
 from vector_forge.ui.widgets.eval_panel import EvaluationPanel
-from vector_forge.ui.widgets.activity import ActivityPanel
 from vector_forge.ui.widgets.log_panel import LogPanel
 
 
 class DashboardScreen(Screen):
     """Main dashboard screen showing single extraction progress.
 
-    Clean, minimal design with:
-    - Target behavior at top
+    Clean, focused design:
+    - Extraction selector dropdown at top
     - Progress bar
     - Metrics panels side by side
-    - Activity log
-    - Event log
-    - Tmux-style status bar at bottom
+    - Log panel
     """
 
     BINDINGS = [
         Binding("1", "noop", "dashboard", show=False),
-        Binding("2", "switch_parallel", "parallel"),
+        Binding("2", "switch_agents", "agents"),
         Binding("3", "switch_logs", "logs"),
         Binding("tab", "cycle_screen", "cycle", show=False),
         Binding("q", "quit", "quit"),
         Binding("p", "toggle_pause", "pause"),
-        Binding("l", "toggle_logs", "logs"),
-        Binding("f", "focus_filter", "filter"),
         Binding("?", "show_help", "help"),
     ]
 
@@ -51,22 +45,29 @@ class DashboardScreen(Screen):
 
     DashboardScreen #main-content {
         height: 1fr;
-        padding: 1 2;
+    }
+
+    DashboardScreen #extraction-selector {
+        height: auto;
     }
 
     DashboardScreen #metrics-row {
         height: auto;
     }
+
+    DashboardScreen #log-panel {
+        height: 1fr;
+        min-height: 8;
+    }
     """
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main-content"):
-            yield TargetSection(id="target-section")
+            yield ExtractionSelector(id="extraction-selector")
             yield ProgressSection(id="progress-section")
             with Horizontal(id="metrics-row"):
                 yield DataPanel(id="data-panel")
                 yield EvaluationPanel(id="eval-panel")
-            yield ActivityPanel(id="activity-panel")
             yield LogPanel(id="log-panel")
         yield StatusBar(id="status-bar")
 
@@ -97,39 +98,32 @@ class DashboardScreen(Screen):
     def _sync_from_state(self) -> None:
         """Synchronize display with current state."""
         state = get_state()
+
+        # Update extraction selector
+        selector = self.query_one(ExtractionSelector)
+        selector.extractions = state.extractions
+        selector.selected_id = state.selected_id
+
         extraction = state.selected_extraction
 
         if extraction is None:
             self._show_empty_state()
             return
 
-        self._update_target(extraction)
         self._update_progress(extraction)
         self._update_status_bar(extraction)
         self._update_data_panel(extraction)
         self._update_eval_panel(extraction)
-        self._update_activity(extraction)
-        self._update_logs()
+        self._update_logs(extraction.id)
 
     def _show_empty_state(self) -> None:
         """Show empty state when no extraction is selected."""
-        target = self.query_one(TargetSection)
-        target.set_behavior("No extraction", "Start an extraction to see progress")
-
         status_bar = self.query_one(StatusBar)
         status_bar.phase = ""
         status_bar.iteration = ""
         status_bar.layer = ""
         status_bar.turn = ""
         status_bar.elapsed = "00:00"
-
-    def _update_target(self, extraction: ExtractionUIState) -> None:
-        """Update target section."""
-        target = self.query_one(TargetSection)
-        target.set_behavior(
-            extraction.behavior_name,
-            extraction.behavior_description,
-        )
 
     def _update_progress(self, extraction: ExtractionUIState) -> None:
         """Update progress section."""
@@ -168,16 +162,11 @@ class DashboardScreen(Screen):
         eval_panel = self.query_one(EvaluationPanel)
         eval_panel.set_metrics(extraction.evaluation)
 
-    def _update_activity(self, extraction: ExtractionUIState) -> None:
-        """Update activity panel."""
-        activity = self.query_one(ActivityPanel)
-        activity.entries = extraction.activity
-
-    def _update_logs(self) -> None:
-        """Update log panel."""
+    def _update_logs(self, extraction_id: str) -> None:
+        """Update log panel - filtered to current extraction."""
         state = get_state()
         log_panel = self.query_one(LogPanel)
-        log_panel.entries = state.get_filtered_logs()
+        log_panel.entries = state.get_filtered_logs(extraction_id=extraction_id)
 
     def _on_timer_tick(self) -> None:
         """Update elapsed time display."""
@@ -193,13 +182,22 @@ class DashboardScreen(Screen):
         if event.screen_name != "dashboard":
             self.app.switch_screen(event.screen_name)
 
+    def on_extraction_selector_extraction_changed(
+        self,
+        message: ExtractionSelector.ExtractionChanged,
+    ) -> None:
+        """Handle extraction selection change."""
+        state = get_state()
+        state.select_extraction(message.extraction_id)
+        message.stop()
+
     def action_noop(self) -> None:
         """No operation - already on this screen."""
         pass
 
-    def action_switch_parallel(self) -> None:
-        """Switch to parallel view."""
-        self.app.switch_screen("parallel")
+    def action_switch_agents(self) -> None:
+        """Switch to agents view."""
+        self.app.switch_screen("agents")
 
     def action_switch_logs(self) -> None:
         """Switch to logs view."""
@@ -207,7 +205,7 @@ class DashboardScreen(Screen):
 
     def action_cycle_screen(self) -> None:
         """Cycle to next screen (Tab key)."""
-        self.app.switch_screen("parallel")
+        self.app.switch_screen("agents")
 
     def action_toggle_pause(self) -> None:
         """Toggle pause state."""
@@ -219,16 +217,6 @@ class DashboardScreen(Screen):
             elif extraction.status == ExtractionStatus.PAUSED:
                 extraction.status = ExtractionStatus.RUNNING
             self._sync_from_state()
-
-    def action_toggle_logs(self) -> None:
-        """Toggle log panel collapsed state."""
-        log_panel = self.query_one(LogPanel)
-        log_panel.toggle_collapsed()
-
-    def action_focus_filter(self) -> None:
-        """Focus the log filter input."""
-        log_panel = self.query_one(LogPanel)
-        log_panel.focus_filter()
 
     def action_show_help(self) -> None:
         """Show help modal."""

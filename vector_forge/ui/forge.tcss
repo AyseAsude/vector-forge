@@ -1,112 +1,65 @@
-/* Vector Forge TUI - Gruvbox Dark Theme
- *
- * Uses Textual's built-in theme variables:
- *   $background, $surface, $panel
- *   $primary, $secondary, $accent
- *   $success, $warning, $error
- *   $text, $text-muted, $text-disabled
- *
- * Note: Custom variables from theme.py are NOT available in external CSS files
- * because CSS is loaded before the theme is registered.
- */
-
-/* ============================================================================
-   Base Styles
-   ============================================================================ */
+/* Vector Forge TUI - Clean Minimal Theme */
 
 Screen {
     background: $background;
 }
 
-/* ============================================================================
-   Status Bar (tmux-style bottom bar)
-   ============================================================================ */
-
+/* Status Bar */
 #status-bar {
     dock: bottom;
     height: 1;
     background: $surface;
 }
 
-.screen-tab {
-    width: auto;
-    height: 1;
-    padding: 0 1;
-    background: $surface;
-    color: $text-muted;
-}
-
-.screen-tab:hover {
+/* Extraction Selector */
+ExtractionSelector {
+    height: auto;
     background: $panel;
 }
 
-.screen-tab.-active {
-    background: $accent;
-    color: $background;
-    text-style: bold;
+ExtractionSelector #selector-header {
+    height: 3;
+    padding: 0 1;
 }
 
-/* ============================================================================
-   Panels - Clean backgrounds, no borders
-   ============================================================================ */
-
-.panel {
+ExtractionSelector #selector-header:hover {
     background: $surface;
-    padding: 1 2;
-    margin: 0 0 1 0;
 }
 
-.panel-title {
-    color: $accent;
-    text-style: bold;
-    margin-bottom: 1;
+ExtractionSelector #dropdown-container {
+    max-height: 14;
+    background: $panel;
+    border-top: solid $surface;
 }
 
-/* ============================================================================
-   Target Section
-   ============================================================================ */
+ExtractionOption {
+    height: 2;
+    padding: 0 1;
+}
 
-#target-section {
-    height: auto;
-    padding: 1 2;
+ExtractionOption:hover {
     background: $surface;
-    margin: 0 0 1 0;
 }
 
-#target-name {
-    color: $text;
-    text-style: bold;
+ExtractionOption.-selected {
+    background: $surface;
 }
 
-#target-description {
-    color: $text-muted;
-    margin-top: 0;
-}
-
-/* ============================================================================
-   Progress Section
-   ============================================================================ */
-
+/* Progress Section */
 #progress-section {
     height: auto;
-    padding: 1 2;
-    background: $surface;
-    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $panel;
 }
 
 #progress-bar {
     width: 100%;
     height: 1;
-    margin-bottom: 0;
 }
 
 #progress-bar > Bar {
     color: $accent;
-    background: $panel;
-}
-
-#progress-bar.complete > Bar {
-    color: $success;
+    background: $surface;
 }
 
 #progress-label {
@@ -114,463 +67,124 @@ Screen {
     height: 1;
 }
 
-/* ============================================================================
-   Metrics Row
-   ============================================================================ */
-
+/* Metrics Panels */
 #metrics-row {
     height: auto;
-    margin: 0;
 }
 
-/* ============================================================================
-   Data Panel
-   ============================================================================ */
+#data-panel, #eval-panel {
+    width: 1fr;
+    height: auto;
+    background: $panel;
+    padding: 1;
+    margin: 0 0 0 0;
+}
 
 #data-panel {
+    margin-right: 1;
+}
+
+/* Agents View */
+#split-container {
+    height: 1fr;
+}
+
+AgentsList {
     width: 1fr;
-    background: $surface;
-    padding: 1 2;
-    margin: 0 1 1 0;
-}
-
-.metric-row {
-    height: 1;
-}
-
-.metric-label {
-    width: 12;
-    color: $text-muted;
-}
-
-.metric-value {
-    color: $text;
-}
-
-.quality-keep {
-    color: $success;
-}
-
-.quality-review {
-    color: $warning;
-}
-
-.quality-remove {
-    color: $text-disabled;
-}
-
-/* ============================================================================
-   Evaluation Panel
-   ============================================================================ */
-
-#eval-panel {
-    width: 1fr;
-    background: $surface;
-    padding: 1 2;
-    margin: 0 0 1 0;
-}
-
-.score-row {
-    height: 1;
-    margin-bottom: 0;
-}
-
-.score-label {
-    width: 10;
-    color: $text-muted;
-}
-
-.score-bar {
-    width: 8;
-}
-
-.score-bar > Bar {
-    color: $accent;
+    height: 1fr;
     background: $panel;
 }
 
-.score-value {
-    width: 5;
-    color: $text;
+AgentsList #agents-header {
+    height: 2;
+    padding: 0 1;
+    border-bottom: solid $surface;
+}
+
+AgentsList #agents-scroll {
+    height: 1fr;
+}
+
+AgentItem {
+    height: 3;
+    padding: 0 1;
+}
+
+AgentItem:hover {
+    background: $surface;
+}
+
+AgentItem.-selected {
+    background: $surface;
+    border-left: wide $accent;
+    padding-left: 0;
+}
+
+AgentInspector {
+    width: 2fr;
+    height: 1fr;
+    background: $panel;
     margin-left: 1;
 }
 
-#eval-best {
-    color: $text-muted;
-    margin-top: 1;
-}
-
-.verdict-accepted {
-    color: $success;
-}
-
-.verdict-refinement {
-    color: $warning;
-}
-
-.verdict-rejected {
-    color: $error;
-}
-
-/* ============================================================================
-   Activity Panel
-   ============================================================================ */
-
-#activity-panel {
-    height: auto;
-    max-height: 6;
-    background: $surface;
-    padding: 1 2;
-    margin: 0 0 1 0;
-}
-
-#activity-log {
-    height: auto;
-    max-height: 4;
-    scrollbar-size: 1 1;
-}
-
-.activity-entry {
-    height: 1;
-}
-
-.activity-icon {
-    width: 2;
-}
-
-.activity-icon-active {
-    color: $accent;
-}
-
-.activity-icon-success {
-    color: $success;
-}
-
-.activity-icon-error {
-    color: $error;
-}
-
-.activity-icon-waiting {
-    color: $text-disabled;
-}
-
-.activity-message {
-    color: $text;
-}
-
-/* ============================================================================
-   Log Panel
-   ============================================================================ */
-
-#log-panel {
-    height: 1fr;
-    min-height: 5;
-    background: $surface;
-    padding: 1 2;
-    margin: 0;
-}
-
-#log-panel.collapsed {
+AgentInspector #inspector-header {
     height: 3;
-    min-height: 3;
+    padding: 0 1;
+    border-bottom: solid $surface;
 }
 
-#log-header {
-    height: 1;
+AgentInspector #inspector-scroll {
+    height: 1fr;
+    padding: 1;
+}
+
+/* Messages in Inspector */
+MessageDisplay {
+    height: auto;
+    padding: 0 1;
     margin-bottom: 1;
 }
 
-#log-title {
-    color: $accent;
-    text-style: bold;
-}
-
-#log-filter {
-    width: 20;
-    height: 1;
-    border: none;
-    background: $panel;
-    padding: 0 1;
-    color: $text;
-}
-
-#log-content {
-    height: 1fr;
-    scrollbar-size: 1 1;
-}
-
-.log-entry {
-    height: 1;
-}
-
-.log-timestamp {
-    width: 8;
-    color: $text-disabled;
-}
-
-.log-source {
-    width: 10;
-    color: $text-muted;
-}
-
-.log-message {
-    width: 1fr;
-    color: $text;
-}
-
-.log-entry-error .log-message {
-    color: $error;
-}
-
-.log-entry-warning .log-message {
-    color: $warning;
-}
-
-#log-empty {
-    color: $text-disabled;
-}
-
-/* ============================================================================
-   Parallel View - Extractions List
-   ============================================================================ */
-
-#extractions-list {
-    height: 1fr;
-    min-height: 8;
-    scrollbar-size: 1 1;
-    background: $surface;
-    margin: 0 0 1 0;
-}
-
-#list-title {
-    color: $accent;
-    text-style: bold;
-}
-
-#list-empty {
-    color: $text-disabled;
-}
-
-.extraction-item {
-    height: 2;
-    padding: 0 2;
+MessageDisplay.-assistant {
     background: $surface;
 }
 
-.extraction-item:hover {
-    background: $panel;
-}
-
-.extraction-item.-selected {
-    background: $panel;
-    border-left: wide $accent;
-}
-
-.extraction-name {
-    color: $text;
-    text-style: bold;
-}
-
-.extraction-model {
-    color: $text-muted;
-}
-
-.extraction-progress {
-    width: 10;
-}
-
-.extraction-progress > Bar {
-    color: $accent;
-    background: $panel;
-}
-
-.extraction-progress.complete > Bar {
-    color: $success;
-}
-
-.extraction-time {
-    color: $text-muted;
-}
-
-.extraction-phase {
-    color: $text-muted;
-}
-
-.status-running {
-    color: $accent;
-}
-
-.status-complete {
-    color: $success;
-}
-
-.status-paused {
-    color: $warning;
-}
-
-.status-failed {
-    color: $error;
-}
-
-/* ============================================================================
-   Parallel View - Detail Panel
-   ============================================================================ */
-
-#extraction-detail {
+ToolCallDisplay {
     height: auto;
+    margin: 0 0 0 2;
+    padding: 0 1;
+    background: $surface;
+}
+
+/* Log Panel */
+LogPanel {
+    height: 1fr;
     min-height: 6;
-    background: $surface;
-    padding: 1 2;
-    margin: 0 0 1 0;
-}
-
-#detail-title {
-    color: $accent;
-    text-style: bold;
-}
-
-#detail-empty {
-    color: $text-disabled;
-}
-
-.detail-section-title {
-    color: $text-muted;
-    text-style: bold;
-}
-
-.detail-row {
-    color: $text;
-}
-
-.detail-label {
-    color: $text-muted;
-}
-
-/* Mini score bars */
-.mini-score-label {
-    color: $text-muted;
-}
-
-.mini-score-bar > Bar {
-    color: $accent;
     background: $panel;
 }
 
-.mini-score-value {
-    color: $text;
-}
-
-/* ============================================================================
-   Logs Screen
-   ============================================================================ */
-
-#filter-bar {
+LogPanel #log-header {
     height: 2;
-    padding: 0 2;
-    background: $surface;
-}
-
-#filter-label {
-    color: $text-muted;
-}
-
-#filter-input {
-    width: 30;
-    height: 1;
-    border: none;
-    background: $panel;
     padding: 0 1;
-    color: $text;
+    border-bottom: solid $surface;
 }
 
-#source-label {
-    color: $text-muted;
-}
-
-#level-label {
-    color: $text-muted;
-}
-
-#log-count {
-    color: $text-disabled;
-}
-
-#log-view {
+LogPanel #log-scroll {
     height: 1fr;
-    padding: 1 2;
-    scrollbar-size: 1 1;
+    padding: 0 1;
+}
+
+LogEntryDisplay {
+    height: 1;
+}
+
+/* Input styling */
+Input {
+    border: none;
     background: $surface;
+    height: 1;
 }
 
-/* ============================================================================
-   Help Modal
-   ============================================================================ */
-
-#help-modal {
-    width: 50;
-    height: auto;
-    max-height: 70%;
-    background: $surface;
-    border: solid $secondary;
-    padding: 2;
-}
-
-#help-title {
-    text-style: bold;
-    color: $text;
-    margin-bottom: 1;
-}
-
-.help-section {
-    margin-bottom: 1;
-}
-
-.help-section-title {
-    color: $accent;
-    text-style: bold;
-}
-
-.help-key {
-    width: 10;
-    color: $warning;
-}
-
-.help-description {
-    color: $text-muted;
-}
-
-/* ============================================================================
-   Utility Classes
-   ============================================================================ */
-
-.hidden {
-    display: none;
-}
-
-.text-primary {
-    color: $text;
-}
-
-.text-muted {
-    color: $text-muted;
-}
-
-.text-dim {
-    color: $text-disabled;
-}
-
-.text-accent {
-    color: $accent;
-}
-
-.text-success {
-    color: $success;
-}
-
-.text-warning {
-    color: $warning;
-}
-
-.text-error {
-    color: $error;
+Input:focus {
+    border: none;
 }
