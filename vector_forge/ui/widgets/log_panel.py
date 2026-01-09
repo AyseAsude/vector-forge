@@ -129,7 +129,7 @@ class LogPanel(Widget):
         padding: 0 1;
     }
 
-    LogPanel #log-empty {
+    LogPanel .log-empty-msg {
         color: $text-muted;
         padding: 1;
     }
@@ -172,12 +172,11 @@ class LogPanel(Widget):
         scroll = self.query_one("#log-scroll", VerticalScroll)
         count_widget = self.query_one("#log-count", Static)
 
-        # Clear existing entries
-        for child in list(scroll.children):
-            child.remove()
+        # Clear all children synchronously
+        scroll.remove_children()
 
         # Filter entries
-        filtered = self.entries
+        filtered = list(self.entries) if self.entries else []
         if self.filter_text:
             filter_lower = self.filter_text.lower()
             filtered = [
@@ -187,7 +186,7 @@ class LogPanel(Widget):
             ]
 
         # Update count
-        total = len(self.entries)
+        total = len(self.entries) if self.entries else 0
         shown = len(filtered)
         if total == shown:
             count_widget.update(f"[{COLORS.text_dim}]{total} entries[/]")
@@ -199,7 +198,7 @@ class LogPanel(Widget):
             scroll.mount(
                 Static(
                     f"[{COLORS.text_muted}]No log entries[/]",
-                    id="log-empty",
+                    classes="log-empty-msg",
                 )
             )
             return

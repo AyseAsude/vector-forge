@@ -4,10 +4,12 @@ from vector_forge.ui.screens.dashboard import DashboardScreen
 from vector_forge.ui.screens.agents import AgentsScreen
 from vector_forge.ui.screens.logs import LogsScreen
 from vector_forge.ui.screens.help import HelpModal
+from vector_forge.ui.screens.create_task import CreateTaskScreen
 
 __all__ = [
     "DashboardScreen",
     "AgentsScreen",
     "LogsScreen",
     "HelpModal",
+    "CreateTaskScreen",
 ]

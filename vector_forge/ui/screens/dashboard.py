@@ -35,6 +35,7 @@ class DashboardScreen(Screen):
         Binding("tab", "cycle_screen", "cycle", show=False),
         Binding("q", "quit", "quit"),
         Binding("p", "toggle_pause", "pause"),
+        Binding("n", "new_task", "new task"),
         Binding("?", "show_help", "help"),
     ]
 
@@ -221,6 +222,10 @@ class DashboardScreen(Screen):
     def action_show_help(self) -> None:
         """Show help modal."""
         self.app.push_screen("help")
+
+    def action_new_task(self) -> None:
+        """Open task creation screen."""
+        self.app.push_screen("create_task")
 
     def action_quit(self) -> None:
         """Quit the application."""

@@ -29,6 +29,7 @@ class AgentsScreen(Screen):
         Binding("3", "switch_logs", "logs"),
         Binding("tab", "cycle_screen", "cycle", show=False),
         Binding("q", "quit", "quit"),
+        Binding("n", "new_task", "new task"),
         Binding("up", "select_previous", "up", show=False),
         Binding("down", "select_next", "down", show=False),
         Binding("k", "select_previous", "up", show=False),
@@ -203,6 +204,10 @@ class AgentsScreen(Screen):
     def action_show_help(self) -> None:
         """Show help modal."""
         self.app.push_screen("help")
+
+    def action_new_task(self) -> None:
+        """Open task creation screen."""
+        self.app.push_screen("create_task")
 
     def action_quit(self) -> None:
         """Quit the application."""

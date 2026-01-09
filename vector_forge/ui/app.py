@@ -25,6 +25,7 @@ from vector_forge.ui.screens.dashboard import DashboardScreen
 from vector_forge.ui.screens.agents import AgentsScreen
 from vector_forge.ui.screens.logs import LogsScreen
 from vector_forge.ui.screens.help import HelpModal
+from vector_forge.ui.screens.create_task import CreateTaskScreen
 
 
 class VectorForgeApp(App):
@@ -47,10 +48,12 @@ class VectorForgeApp(App):
         "agents": AgentsScreen,
         "logs": LogsScreen,
         "help": HelpModal,
+        "create_task": CreateTaskScreen,
     }
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", show=False, priority=True),
+        Binding("n", "new_task", "New Task", show=True),
     ]
 
     def __init__(self, state: Optional[UIState] = None, **kwargs) -> None:
@@ -80,8 +83,8 @@ class VectorForgeApp(App):
         Args:
             screen_name: Name of screen to switch to.
         """
-        if screen_name == "help":
-            self.push_screen("help")
+        if screen_name in ("help", "create_task"):
+            self.push_screen(screen_name)
         elif screen_name in ("dashboard", "agents", "logs"):
             current = getattr(self.screen, "name", None) or type(self.screen).__name__.lower().replace("screen", "")
             if screen_name == current:
@@ -89,6 +92,36 @@ class VectorForgeApp(App):
             if len(self.screen_stack) > 1:
                 self.pop_screen()
             self.push_screen(screen_name)
+
+    def action_new_task(self) -> None:
+        """Open the task creation screen."""
+        self.push_screen("create_task")
+
+    def on_create_task_screen_task_created(
+        self,
+        message: CreateTaskScreen.TaskCreated,
+    ) -> None:
+        """Handle task creation from the create task screen."""
+        # Create a new extraction from the task config
+        import time
+
+        extraction = ExtractionUIState(
+            id=f"ext_{int(time.time())}",
+            behavior_name=message.description.split()[0].lower(),
+            behavior_description=message.description,
+            model=message.config.extractor_model,
+            status=ExtractionStatus.PENDING,
+            phase=Phase.INITIALIZING,
+            max_outer_iterations=message.config.num_samples,
+        )
+
+        state = get_state()
+        state.add_extraction(extraction)
+        state.add_log(
+            "pipeline",
+            f"Created new task: {extraction.behavior_name}",
+            extraction_id=extraction.id,
+        )
 
 
 def create_demo_state() -> UIState:

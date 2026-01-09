@@ -54,6 +54,7 @@ class LogsScreen(Screen):
         Binding("3", "noop", "logs", show=False),
         Binding("tab", "cycle_screen", "cycle", show=False),
         Binding("q", "quit", "quit"),
+        Binding("n", "new_task", "new task"),
         Binding("/", "focus_filter", "filter"),
         Binding("escape", "clear_filter", "clear", show=False),
         Binding("home", "scroll_top", "top", show=False),
@@ -274,6 +275,10 @@ class LogsScreen(Screen):
     def action_show_help(self) -> None:
         """Show help modal."""
         self.app.push_screen("help")
+
+    def action_new_task(self) -> None:
+        """Open task creation screen."""
+        self.app.push_screen("create_task")
 
     def action_quit(self) -> None:
         """Quit the application."""
