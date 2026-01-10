@@ -244,8 +244,6 @@ class ToolCallModal(ModalScreen):
         duration = f" · {tc.duration_ms}ms" if tc.duration_ms else ""
 
         args_text = tc.arguments if tc.arguments else "(none)"
-        if len(args_text) > 500:
-            args_text = args_text[:497] + "..."
 
         with Vertical(id="modal"):
             yield Static(f"[{color}]▸[/] [bold]{tc.name}[/]", classes="title")
@@ -254,11 +252,8 @@ class ToolCallModal(ModalScreen):
             yield Static(args_text, classes="content")
 
             if tc.result:
-                result_text = tc.result
-                if len(result_text) > 1000:
-                    result_text = result_text[:997] + "..."
                 yield Static("RESULT", classes="section")
-                yield Static(result_text, classes="content")
+                yield Static(tc.result, classes="content")
 
             yield Static("Press ESC to close", classes="footer")
 

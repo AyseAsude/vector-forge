@@ -35,14 +35,8 @@ class LogDetailRenderer(ABC):
         """
         pass
 
-    def _truncate(self, text: str, max_len: int = 100000) -> str:
-        """Truncate text with ellipsis if too long.
-
-        Note: Detail view should show full content, so default limit is very high.
-        Truncation only happens for truly massive content to prevent UI issues.
-        """
-        if len(text) > max_len:
-            return text[:max_len - 3] + "..."
+    def _truncate(self, text: str, max_len: int = 0) -> str:
+        """Return text unchanged - detail view shows full content."""
         return text
 
     def _format_json(self, data: Any, indent: int = 2) -> str:
