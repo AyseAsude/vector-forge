@@ -61,6 +61,22 @@ from vector_forge.storage.events import (
     StateUpdateEvent,
     IterationStartedEvent,
     IterationCompletedEvent,
+    # Contrast pipeline events
+    BehaviorAnalyzedEvent,
+    ContrastPipelineStartedEvent,
+    ContrastPipelineCompletedEvent,
+    ContrastPairGeneratedEvent,
+    ContrastPairValidatedEvent,
+    # Seed events
+    SeedGenerationStartedEvent,
+    SeedGeneratedEvent,
+    SeedGenerationCompletedEvent,
+    SeedAssignedEvent,
+    # Optimization events
+    OptimizationStartedEvent,
+    OptimizationProgressEvent,
+    OptimizationCompletedEvent,
+    AggregationCompletedEvent,
 )
 from vector_forge.storage.replay import (
     SessionReplayer,
@@ -89,6 +105,12 @@ from vector_forge.storage.preferences import (
     SelectedModels,
     Preferences,
     PreferencesManager,
+)
+from vector_forge.storage.emitter import (
+    EventEmitter,
+    NullEventEmitter,
+    EventEmitterProtocol,
+    generate_id,
 )
 
 __all__ = [
@@ -135,6 +157,22 @@ __all__ = [
     "StateUpdateEvent",
     "IterationStartedEvent",
     "IterationCompletedEvent",
+    # Contrast pipeline events
+    "BehaviorAnalyzedEvent",
+    "ContrastPipelineStartedEvent",
+    "ContrastPipelineCompletedEvent",
+    "ContrastPairGeneratedEvent",
+    "ContrastPairValidatedEvent",
+    # Seed events
+    "SeedGenerationStartedEvent",
+    "SeedGeneratedEvent",
+    "SeedGenerationCompletedEvent",
+    "SeedAssignedEvent",
+    # Optimization events
+    "OptimizationStartedEvent",
+    "OptimizationProgressEvent",
+    "OptimizationCompletedEvent",
+    "AggregationCompletedEvent",
     # Model configuration (API models for agents)
     "Provider",
     "ModelConfig",
@@ -151,4 +189,9 @@ __all__ = [
     "SelectedModels",
     "Preferences",
     "PreferencesManager",
+    # Event emitter
+    "EventEmitter",
+    "NullEventEmitter",
+    "EventEmitterProtocol",
+    "generate_id",
 ]

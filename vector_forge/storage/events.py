@@ -23,6 +23,10 @@ class EventCategory(str, Enum):
     EVALUATION = "evaluation"
     CHECKPOINT = "checkpoint"
     STATE = "state"
+    # New categories for complete event sourcing
+    CONTRAST = "contrast"
+    SEED = "seed"
+    OPTIMIZATION = "optimization"
 
 
 # =============================================================================
@@ -280,6 +284,163 @@ class IterationCompletedEvent(BaseModel):
 
 
 # =============================================================================
+# Contrast Pipeline Events
+# =============================================================================
+
+
+class BehaviorAnalyzedEvent(BaseModel):
+    """Behavior analysis completed."""
+
+    event_type: Literal["contrast.behavior_analyzed"] = "contrast.behavior_analyzed"
+    behavior_name: str
+    num_components: int
+    components: List[Dict[str, Any]]
+    trigger_conditions: List[str]
+    contrast_dimensions: List[str]
+
+
+class ContrastPipelineStartedEvent(BaseModel):
+    """Contrast pipeline started."""
+
+    event_type: Literal["contrast.pipeline_started"] = "contrast.pipeline_started"
+    behavior_description: str
+    num_samples: int
+    config: Dict[str, Any]
+
+
+class ContrastPipelineCompletedEvent(BaseModel):
+    """Contrast pipeline completed."""
+
+    event_type: Literal["contrast.pipeline_completed"] = "contrast.pipeline_completed"
+    num_samples: int
+    total_pairs_generated: int
+    total_valid_pairs: int
+    avg_quality: float
+    duration_seconds: float
+
+
+class ContrastPairGeneratedEvent(BaseModel):
+    """Single contrast pair generated."""
+
+    event_type: Literal["contrast.pair_generated"] = "contrast.pair_generated"
+    pair_id: str
+    seed_id: str
+    prompt: str
+    dst_response: str
+    src_response: str
+    sample_idx: int
+
+
+class ContrastPairValidatedEvent(BaseModel):
+    """Contrast pair validation completed."""
+
+    event_type: Literal["contrast.pair_validated"] = "contrast.pair_validated"
+    pair_id: str
+    is_valid: bool
+    dst_score: float
+    src_score: float
+    semantic_distance: float
+    contrast_quality: float
+    rejection_reason: Optional[str] = None
+
+
+# =============================================================================
+# Seed Events
+# =============================================================================
+
+
+class SeedGenerationStartedEvent(BaseModel):
+    """Seed generation started."""
+
+    event_type: Literal["seed.generation_started"] = "seed.generation_started"
+    num_seeds_requested: int
+    behavior_name: str
+
+
+class SeedGeneratedEvent(BaseModel):
+    """Single seed generated."""
+
+    event_type: Literal["seed.generated"] = "seed.generated"
+    seed_id: str
+    scenario: str
+    context: str
+    quality_score: float
+    is_core: bool
+
+
+class SeedGenerationCompletedEvent(BaseModel):
+    """Seed generation batch completed."""
+
+    event_type: Literal["seed.generation_completed"] = "seed.generation_completed"
+    total_generated: int
+    total_filtered: int
+    avg_quality: float
+    min_quality_threshold: float
+
+
+class SeedAssignedEvent(BaseModel):
+    """Seeds assigned to samples."""
+
+    event_type: Literal["seed.assigned"] = "seed.assigned"
+    sample_idx: int
+    num_core_seeds: int
+    num_unique_seeds: int
+    seed_ids: List[str]
+
+
+# =============================================================================
+# Optimization Events
+# =============================================================================
+
+
+class OptimizationStartedEvent(BaseModel):
+    """Steering vector optimization started."""
+
+    event_type: Literal["optimization.started"] = "optimization.started"
+    sample_idx: int
+    layer: int
+    num_datapoints: int
+    config: Dict[str, Any]
+
+
+class OptimizationProgressEvent(BaseModel):
+    """Optimization iteration progress."""
+
+    event_type: Literal["optimization.progress"] = "optimization.progress"
+    sample_idx: int
+    iteration: int
+    loss: float
+    norm: float
+
+
+class OptimizationCompletedEvent(BaseModel):
+    """Steering vector optimization completed."""
+
+    event_type: Literal["optimization.completed"] = "optimization.completed"
+    sample_idx: int
+    layer: int
+    final_loss: float
+    iterations: int
+    loss_history: List[float]
+    datapoints_used: int
+    duration_seconds: float
+    success: bool
+    error: Optional[str] = None
+
+
+class AggregationCompletedEvent(BaseModel):
+    """Vector aggregation completed."""
+
+    event_type: Literal["optimization.aggregation_completed"] = "optimization.aggregation_completed"
+    strategy: str
+    num_vectors: int
+    top_k: int
+    ensemble_components: List[str]
+    final_score: float
+    final_layer: int
+
+
+# =============================================================================
 # Discriminated Union Type
 # =============================================================================
 
@@ -313,6 +474,22 @@ EventPayload = Annotated[
         StateUpdateEvent,
         IterationStartedEvent,
         IterationCompletedEvent,
+        # Contrast Pipeline
+        BehaviorAnalyzedEvent,
+        ContrastPipelineStartedEvent,
+        ContrastPipelineCompletedEvent,
+        ContrastPairGeneratedEvent,
+        ContrastPairValidatedEvent,
+        # Seed
+        SeedGenerationStartedEvent,
+        SeedGeneratedEvent,
+        SeedGenerationCompletedEvent,
+        SeedAssignedEvent,
+        # Optimization
+        OptimizationStartedEvent,
+        OptimizationProgressEvent,
+        OptimizationCompletedEvent,
+        AggregationCompletedEvent,
     ],
     Field(discriminator="event_type"),
 ]

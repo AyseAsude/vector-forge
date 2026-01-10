@@ -153,6 +153,7 @@ class ExtractionRunner:
 
             # Step 2: Create LLM clients with event logging
             from vector_forge.services.task_executor import EventEmittingLLMClient
+            from vector_forge.storage import EventEmitter
 
             store = self._session_service.get_session_store(session_id)
             raw_extractor = create_client(config.extractor_model)
@@ -161,6 +162,9 @@ class ExtractionRunner:
             # Wrap with event emission so ALL LLM calls are logged
             extractor_llm = EventEmittingLLMClient(raw_extractor, store, source="contrast_extractor")
             judge_llm = EventEmittingLLMClient(raw_judge, store, source="contrast_judge")
+
+            # Create event emitter for complete event sourcing
+            event_emitter = EventEmitter(store, default_source="extraction_runner")
 
             # Step 3: Build contrast config from task config
             contrast_config = ContrastPipelineConfig(
@@ -175,11 +179,12 @@ class ExtractionRunner:
                 max_concurrent_generations=config.contrast.max_concurrent_generations,
             )
 
-            # Step 4: Run ContrastPipeline
+            # Step 4: Run ContrastPipeline with event emitter
             contrast_pipeline = ContrastPipeline(
                 llm_client=extractor_llm,
                 judge_llm_client=judge_llm,
                 config=contrast_config,
+                event_emitter=event_emitter,
             )
 
             pipeline_result = await contrast_pipeline.run(

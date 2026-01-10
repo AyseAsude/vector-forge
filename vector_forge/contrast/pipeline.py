@@ -3,14 +3,21 @@
 This module provides the ContrastPipeline facade that orchestrates
 the entire contrast generation process, from behavior analysis
 through to validated pair distribution.
+
+Event sourcing: All pipeline operations emit events for full reproducibility.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vector_forge.storage.emitter import EventEmitter
 
 from vector_forge.contrast.protocols import (
     BehaviorAnalysis,
@@ -180,6 +187,7 @@ class ContrastPipeline:
         llm_client: BaseLLMClient,
         judge_llm_client: Optional[BaseLLMClient] = None,
         config: Optional[ContrastPipelineConfig] = None,
+        event_emitter: Optional["EventEmitter"] = None,
     ):
         """Initialize the contrast pipeline.
 
@@ -187,10 +195,12 @@ class ContrastPipeline:
             llm_client: LLM client for generation (analysis, seeds, pairs).
             judge_llm_client: LLM client for judging. If None, uses llm_client.
             config: Pipeline configuration.
+            event_emitter: Optional event emitter for event sourcing.
         """
         self._llm = llm_client
         self._judge_llm = judge_llm_client or llm_client
         self._config = config or ContrastPipelineConfig.default()
+        self._emitter = event_emitter
 
         # Initialize components (Dependency Injection)
         self._analyzer = BehaviorAnalyzer(llm_client)
@@ -219,6 +229,17 @@ class ContrastPipeline:
             ),
         ])
 
+    def _emit(self, method_name: str, **kwargs) -> None:
+        """Emit an event if emitter is available."""
+        if self._emitter is not None:
+            method = getattr(self._emitter, method_name, None)
+            if method:
+                method(**kwargs)
+
+    def _generate_id(self, prefix: str = "") -> str:
+        """Generate a unique ID."""
+        return f"{prefix}_{uuid.uuid4().hex[:12]}" if prefix else uuid.uuid4().hex[:12]
+
     async def run(
         self,
         behavior_description: str,
@@ -233,9 +254,27 @@ class ContrastPipeline:
         Returns:
             PipelineResult with all sample datasets.
         """
+        start_time = time.time()
+
         logger.info(
             f"Starting contrast pipeline for {num_samples} samples: "
             f"{behavior_description[:50]}..."
+        )
+
+        # Emit pipeline started event
+        self._emit(
+            "emit_pipeline_started",
+            behavior_description=behavior_description,
+            num_samples=num_samples,
+            config={
+                "core_pool_size": self._config.core_pool_size,
+                "core_seeds_per_sample": self._config.core_seeds_per_sample,
+                "unique_seeds_per_sample": self._config.unique_seeds_per_sample,
+                "min_semantic_distance": self._config.min_semantic_distance,
+                "min_dst_score": self._config.min_dst_score,
+                "max_src_score": self._config.max_src_score,
+                "min_contrast_quality": self._config.min_contrast_quality,
+            },
         )
 
         # Step 1: Analyze behavior
@@ -243,17 +282,67 @@ class ContrastPipeline:
         analysis = await self._analyzer.analyze(behavior_description)
         logger.info(f"  Found {len(analysis.components)} components")
 
+        # Emit behavior analyzed event
+        self._emit(
+            "emit_behavior_analyzed",
+            behavior_name=behavior_description[:50],
+            num_components=len(analysis.components),
+            components=[
+                {
+                    "name": c.name,
+                    "description": c.description,
+                    "markers": c.markers[:3] if c.markers else [],
+                }
+                for c in analysis.components
+            ],
+            trigger_conditions=analysis.trigger_conditions[:5] if analysis.trigger_conditions else [],
+            contrast_dimensions=analysis.contrast_dimensions[:5] if analysis.contrast_dimensions else [],
+        )
+
         # Step 2: Generate quality seeds
         logger.info("Step 2: Generating quality seeds...")
         total_seeds_needed = (
             self._config.core_pool_size +
             self._config.unique_seeds_per_sample * num_samples
         )
+
+        # Emit seed generation started
+        self._emit(
+            "emit_seed_generation_started",
+            num_seeds_requested=total_seeds_needed,
+            behavior_name=behavior_description[:50],
+        )
+
         all_seeds = await self._seed_generator.generate(
             analysis,
             count=total_seeds_needed,
         )
         logger.info(f"  Generated {len(all_seeds)} quality seeds")
+
+        # Emit each seed generated
+        for i, seed in enumerate(all_seeds):
+            is_core = i < self._config.core_pool_size
+            self._emit(
+                "emit_seed_generated",
+                seed_id=self._generate_id("seed"),
+                scenario=seed.scenario[:200] if seed.scenario else "",
+                context=seed.context[:200] if seed.context else "",
+                quality_score=seed.quality_score or 0.0,
+                is_core=is_core,
+            )
+
+        # Emit seed generation completed
+        avg_quality = (
+            sum(s.quality_score or 0.0 for s in all_seeds) / len(all_seeds)
+            if all_seeds else 0.0
+        )
+        self._emit(
+            "emit_seed_generation_completed",
+            total_generated=len(all_seeds),
+            total_filtered=total_seeds_needed - len(all_seeds),
+            avg_quality=avg_quality,
+            min_quality_threshold=self._config.min_seed_quality,
+        )
 
         # Step 3: Split seeds into core and unique pools
         core_seeds = all_seeds[:self._config.core_pool_size]
@@ -269,6 +358,7 @@ class ContrastPipeline:
         core_pairs = await self._generate_validated_pairs(
             seeds=core_seeds,
             analysis=analysis,
+            sample_idx=-1,  # -1 indicates core pool
         )
         self._pool_manager.set_core_pool(core_pairs)
         logger.info(
@@ -290,6 +380,18 @@ class ContrastPipeline:
         )
         self._pool_manager.set_seed_assignments(core_assignments, unique_assignments)
 
+        # Emit seed assignments
+        for sample_idx in range(num_samples):
+            core_count = len(core_assignments.get(sample_idx, []))
+            unique_count = len(unique_assignments.get(sample_idx, []))
+            self._emit(
+                "emit_seeds_assigned",
+                sample_idx=sample_idx,
+                num_core_seeds=core_count,
+                num_unique_seeds=unique_count,
+                seed_ids=[],  # Would need to track seed IDs properly
+            )
+
         # Step 6: Generate sample-specific pairs
         logger.info("Step 5: Generating sample-specific pairs...")
         for sample_idx in range(num_samples):
@@ -299,6 +401,7 @@ class ContrastPipeline:
                 sample_pairs = await self._generate_validated_pairs(
                     seeds=sample_unique_seeds,
                     analysis=analysis,
+                    sample_idx=sample_idx,
                 )
                 self._pool_manager.add_sample_pairs(sample_idx, sample_pairs)
 
@@ -309,10 +412,26 @@ class ContrastPipeline:
         sample_datasets = self._pool_manager.get_all_datasets()
         statistics = self._pool_manager.get_statistics()
 
+        duration_seconds = time.time() - start_time
+
         logger.info(
             f"Pipeline complete: {len(sample_datasets)} samples, "
             f"avg {statistics['per_sample']['avg_valid']:.1f} valid pairs/sample, "
             f"avg quality {statistics['per_sample']['avg_quality']:.1f}"
+        )
+
+        # Emit pipeline completed
+        total_pairs = sum(len(d.all_pairs) for d in sample_datasets.values())
+        total_valid = sum(len(d.valid_pairs) for d in sample_datasets.values())
+        avg_qual = statistics['per_sample']['avg_quality'] if 'per_sample' in statistics else 0.0
+
+        self._emit(
+            "emit_pipeline_completed",
+            num_samples=len(sample_datasets),
+            total_pairs_generated=total_pairs,
+            total_valid_pairs=total_valid,
+            avg_quality=avg_qual,
+            duration_seconds=duration_seconds,
         )
 
         # Debug: Log detailed dataset info
@@ -343,17 +462,36 @@ class ContrastPipeline:
         self,
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
+        sample_idx: int = -1,
     ) -> List[ValidatedPair]:
         """Generate and validate pairs for a list of seeds.
 
         Uses semaphore to limit concurrent generations.
+
+        Args:
+            seeds: Seeds to generate pairs from.
+            analysis: Behavior analysis.
+            sample_idx: Sample index (-1 for core pool).
         """
         semaphore = asyncio.Semaphore(self._config.max_concurrent_generations)
 
         async def process_seed(seed: Seed) -> ValidatedPair:
             async with semaphore:
                 pair = await self._pair_generator.generate(seed, analysis)
-                validated = await self._validate_with_retry(pair, analysis)
+
+                # Emit pair generated event
+                pair_id = self._generate_id("pair")
+                self._emit(
+                    "emit_pair_generated",
+                    pair_id=pair_id,
+                    seed_id=self._generate_id("seed"),  # Would ideally track actual seed ID
+                    prompt=pair.prompt[:500] if pair.prompt else "",
+                    dst_response=pair.dst[:500] if pair.dst else "",
+                    src_response=pair.src[:500] if pair.src else "",
+                    sample_idx=sample_idx,
+                )
+
+                validated = await self._validate_with_retry(pair, analysis, pair_id)
                 return validated
 
         tasks = [process_seed(seed) for seed in seeds]
@@ -373,12 +511,37 @@ class ContrastPipeline:
         self,
         pair: ContrastPair,
         analysis: BehaviorAnalysis,
+        pair_id: str = "",
     ) -> ValidatedPair:
         """Validate a pair, regenerating if needed."""
         current_pair = pair
+        pair_id = pair_id or self._generate_id("pair")
 
         for attempt in range(self._config.max_regeneration_attempts + 1):
             validation = await self._validator.validate(current_pair, analysis)
+
+            # Emit validation event
+            rejection_reason = None
+            if not validation.is_valid:
+                reasons = []
+                if validation.dst_behavior_score < self._config.min_dst_score:
+                    reasons.append(f"dst_score={validation.dst_behavior_score:.1f}<{self._config.min_dst_score}")
+                if validation.src_behavior_score > self._config.max_src_score:
+                    reasons.append(f"src_score={validation.src_behavior_score:.1f}>{self._config.max_src_score}")
+                if validation.contrast_quality < self._config.min_contrast_quality:
+                    reasons.append(f"quality={validation.contrast_quality:.1f}<{self._config.min_contrast_quality}")
+                rejection_reason = "; ".join(reasons) if reasons else "unknown"
+
+            self._emit(
+                "emit_pair_validated",
+                pair_id=pair_id,
+                is_valid=validation.is_valid,
+                dst_score=validation.dst_behavior_score,
+                src_score=validation.src_behavior_score,
+                semantic_distance=validation.semantic_distance,
+                contrast_quality=validation.contrast_quality,
+                rejection_reason=rejection_reason,
+            )
 
             if validation.is_valid:
                 return ValidatedPair(
