@@ -257,7 +257,8 @@ class DetailsPanel(Vertical):
         height: 1fr;
         min-height: 5;
         background: $background;
-        scrollbar-gutter: stable;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
     """
 
@@ -279,7 +280,7 @@ class DetailsPanel(Vertical):
             yield VerticalScroll(classes="list", id="agents-list")
             yield Static("RECENT", classes="section")
             from textual.widgets import RichLog
-            yield RichLog(id="activity-log", highlight=True, markup=True, max_lines=50)
+            yield RichLog(id="activity-log", highlight=True, markup=True, wrap=False, max_lines=50)
 
     def on_mount(self) -> None:
         # Start with empty state visible
@@ -407,6 +408,10 @@ class DetailsPanel(Vertical):
             start_idx = 0 if extraction_changed else self._displayed_log_count
             for log in logs[start_idx:]:
                 safe_message = escape_markup(log.message)
+                # Truncate long messages with ellipsis (leave room for timestamp prefix)
+                max_len = 60
+                if len(safe_message) > max_len:
+                    safe_message = safe_message[:max_len - 3] + "..."
                 level_colors = {"info": "blue", "warning": "yellow", "error": "red"}
                 color = level_colors.get(log.level, "white")
                 activity_log.write(f"[dim]{log.time_str}[/] [{color}]●[/] {safe_message}")

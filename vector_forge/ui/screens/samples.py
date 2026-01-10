@@ -135,15 +135,21 @@ class WorkerListItem(ListItem):
     WorkerListItem {
         height: auto;
         padding: 1;
-        background: $boost;
+        background: transparent;
+        margin-bottom: 1;
     }
 
     WorkerListItem:hover {
-        background: $primary 15%;
+        background: $primary 10%;
     }
 
     WorkerListItem.-highlight {
-        background: $primary 20%;
+        background: $primary 15%;
+    }
+
+    WorkerListItem > Horizontal,
+    WorkerListItem > Static {
+        background: transparent;
     }
 
     WorkerListItem .row {
@@ -249,6 +255,7 @@ class WorkersPanel(Vertical):
         height: 1fr;
         scrollbar-gutter: stable;
         padding-right: 1;
+        background: transparent;
     }
 
     WorkersPanel .empty {
@@ -360,7 +367,8 @@ class ConversationPanel(Vertical):
         height: 1fr;
         padding: 1 2;
         background: $background;
-        scrollbar-gutter: stable;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
     """
 
