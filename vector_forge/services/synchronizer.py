@@ -274,12 +274,27 @@ class UIStateSynchronizer:
                             agent.add_message(MessageRole.USER, content or "LLM request")
 
                     elif log.event_type == "llm.response":
-                        agent.tool_calls_count += 1
-                        # Extract response summary
+                        # Parse tool calls from response (same as live handler)
+                        tool_calls = []
+                        for tc in log.payload.get("tool_calls", []) if log.payload else []:
+                            tool_calls.append(ToolCall(
+                                id=tc.get("id", ""),
+                                name=tc.get("function", {}).get("name", ""),
+                                arguments=str(tc.get("function", {}).get("arguments", "")),
+                                status="success",  # Replayed = already completed
+                            ))
+
+                        # Extract response content
                         content = log.payload.get("content", "") if log.payload else ""
-                        if isinstance(content, str) and len(content) > 100:
-                            content = content[:97] + "..."
-                        agent.add_message(MessageRole.ASSISTANT, content or "LLM response")
+
+                        # Add message with tool calls
+                        if content or tool_calls:
+                            agent.add_message(
+                                MessageRole.ASSISTANT,
+                                content or "(tool call)",
+                                tool_calls=tool_calls,
+                            )
+                            agent.tool_calls_count += len(tool_calls)
 
             # Add all source-based agents to extraction
             for agent in source_agents.values():

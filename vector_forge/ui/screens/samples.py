@@ -6,6 +6,8 @@ Uses native Textual widgets for high performance:
 - Reactive updates instead of remove/remount patterns
 """
 
+import re
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -141,10 +143,6 @@ class WorkerListItem(ListItem):
 
     WorkerListItem:hover {
         background: $primary 10%;
-    }
-
-    WorkerListItem.-highlight {
-        background: $primary 15%;
     }
 
     WorkerListItem > Horizontal,
@@ -309,9 +307,7 @@ class WorkersPanel(Vertical):
                 list_view.append(item)
                 self._items[agent_id] = item
 
-        # Update selection highlighting
-        for agent_id, item in self._items.items():
-            item.set_class(agent_id == selected_id, "-highlight")
+        # ListView handles its own highlight styling natively
 
     def get_selected_agent_id(self) -> str | None:
         """Get the currently highlighted worker's agent ID."""
@@ -348,6 +344,17 @@ class MessageRow(Static):
         content = self._compute_content()
         super().__init__(content, **kwargs)
 
+    def _clean_content(self, content: str) -> str:
+        """Clean up content by removing markdown code fences and formatting."""
+        # Remove markdown code fences (```json, ```python, ```, etc.)
+        content = re.sub(r'```\w*\s*', '', content)
+        content = re.sub(r'```', '', content)
+
+        # Collapse multiple whitespace/newlines into single space
+        content = re.sub(r'\s+', ' ', content)
+
+        return content.strip()
+
     def _compute_content(self) -> str:
         """Compute the display content for this message."""
         msg = self.msg
@@ -369,11 +376,11 @@ class MessageRow(Static):
             f"[{color} bold]{msg.role.value.upper()}[/]"
         )
 
-        # Content (truncated for display)
+        # Content (cleaned and truncated for display)
         content = msg.content
         if content:
-            # Collapse newlines and truncate
-            content_display = content.replace("\n", " ")
+            # Clean up markdown artifacts
+            content_display = self._clean_content(content)
             if len(content_display) > 200:
                 content_display = content_display[:197] + "..."
             lines.append(f"  {content_display}")
