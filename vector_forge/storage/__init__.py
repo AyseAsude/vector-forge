@@ -84,6 +84,12 @@ from vector_forge.storage.models import (
     COMMON_MODELS,
     API_KEY_ENV_VARS,
 )
+from vector_forge.storage.preferences import (
+    ModelRole,
+    SelectedModels,
+    Preferences,
+    PreferencesManager,
+)
 
 __all__ = [
     # Config
@@ -140,4 +146,9 @@ __all__ = [
     "HFModelConfig",
     "HFModelConfigStore",
     "HFModelConfigManager",
+    # User preferences
+    "ModelRole",
+    "SelectedModels",
+    "Preferences",
+    "PreferencesManager",
 ]

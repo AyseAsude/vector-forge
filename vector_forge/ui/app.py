@@ -71,6 +71,7 @@ class VectorForgeApp(App):
         self._session_service = None
         self._synchronizer = None
         self._task_executor = None
+        self._extraction_runner = None
 
     def on_mount(self) -> None:
         # Use Textual's built-in gruvbox theme
@@ -99,6 +100,7 @@ class VectorForgeApp(App):
                 SessionService,
                 UIStateSynchronizer,
                 TaskExecutor,
+                ExtractionRunner,
             )
 
             self._session_service = SessionService()
@@ -107,6 +109,13 @@ class VectorForgeApp(App):
                 self._session_service,
             )
             self._task_executor = TaskExecutor(self._session_service)
+            self._extraction_runner = ExtractionRunner(
+                self._session_service,
+                self._task_executor,
+            )
+
+            # Register progress callback for UI updates
+            self._extraction_runner.on_progress(self._on_extraction_progress)
 
             # Load existing sessions from storage
             loaded = self._synchronizer.load_existing_sessions()
@@ -150,7 +159,7 @@ class VectorForgeApp(App):
     ) -> None:
         """Handle task creation from CreateTaskScreen.
 
-        If services are available, creates a persistent session.
+        If services are available, creates a persistent session and starts extraction.
         Otherwise falls back to in-memory only.
         """
         state = get_state()
@@ -178,6 +187,28 @@ class VectorForgeApp(App):
                 )
                 logger.info(f"Created session {session_id} for {behavior_name}")
 
+                # Start the extraction in the background
+                if self._extraction_runner is not None:
+                    state.add_log(
+                        source="extraction",
+                        message=f"Starting extraction: {behavior_name}",
+                        level="info",
+                        extraction_id=session_id,
+                    )
+                    self._extraction_runner.start_extraction(
+                        session_id=session_id,
+                        behavior_name=behavior_name,
+                        behavior_description=description,
+                        config=message.config,
+                    )
+                else:
+                    state.add_log(
+                        source="system",
+                        message="Extraction runner not available",
+                        level="warning",
+                        extraction_id=session_id,
+                    )
+
             except Exception as e:
                 logger.error(f"Failed to create session: {e}")
                 state.add_log(
@@ -190,6 +221,56 @@ class VectorForgeApp(App):
         else:
             # No services - create in-memory only
             self._create_inmemory_extraction(message, behavior_name, description)
+
+    def _on_extraction_progress(self, progress) -> None:
+        """Handle extraction progress updates.
+
+        Updates UI state based on extraction progress.
+        Called from the extraction runner.
+
+        Args:
+            progress: ExtractionProgress object.
+        """
+        state = get_state()
+        extraction = state.extractions.get(progress.session_id)
+
+        if extraction is None:
+            return
+
+        # Update extraction progress
+        extraction.progress = progress.progress
+
+        # Map phase to UI phase
+        phase_map = {
+            "loading_model": Phase.INITIALIZING,
+            "generating_contrast": Phase.GENERATING_DATAPOINTS,
+            "extracting": Phase.OPTIMIZING,
+            "evaluating": Phase.EVALUATING,
+            "complete": Phase.COMPLETE,
+            "failed": Phase.FAILED,
+        }
+        extraction.phase = phase_map.get(progress.phase, Phase.INITIALIZING)
+
+        # Update status
+        if progress.phase == "complete":
+            extraction.status = ExtractionStatus.COMPLETE
+            extraction.completed_at = time.time()
+        elif progress.phase == "failed":
+            extraction.status = ExtractionStatus.FAILED
+            extraction.completed_at = time.time()
+        else:
+            extraction.status = ExtractionStatus.RUNNING
+
+        # Log the progress
+        state.add_log(
+            source="extraction",
+            message=progress.message,
+            level="error" if progress.error else "info",
+            extraction_id=progress.session_id,
+        )
+
+        # Notify UI of change
+        state._notify()
 
     def _create_inmemory_extraction(
         self,
@@ -231,6 +312,11 @@ class VectorForgeApp(App):
     def task_executor(self):
         """Get the task executor (may be None)."""
         return self._task_executor
+
+    @property
+    def extraction_runner(self):
+        """Get the extraction runner (may be None)."""
+        return self._extraction_runner
 
 
 def _populate_demo_state(state: UIState) -> None:

@@ -144,7 +144,7 @@ class SeedGenerator(SeedGeneratorProtocol):
         llm_client: BaseLLMClient,
         min_quality_score: float = 6.0,
         temperature: float = 0.8,
-        max_tokens: int = 4000,
+        max_tokens: int = 32000,
     ):
         """Initialize the seed generator.
 

@@ -101,6 +101,69 @@ class EventEmittingLLMClient:
             self._store.append_event(response_event, source=self._source)
             raise
 
+    async def complete(
+        self,
+        messages: List,
+        **kwargs,
+    ):
+        """Complete with event emission (returns full LLMResponse)."""
+        # Convert Message objects to dicts for logging
+        msg_dicts = []
+        for m in messages:
+            if hasattr(m, 'role') and hasattr(m, 'content'):
+                msg_dicts.append({"role": m.role, "content": m.content})
+            elif isinstance(m, dict):
+                msg_dicts.append(m)
+            else:
+                msg_dicts.append({"content": str(m)})
+
+        # Generate request ID
+        import uuid
+        request_id = f"req_{uuid.uuid4().hex[:12]}"
+
+        # Emit request event
+        request_event = LLMRequestEvent(
+            request_id=request_id,
+            model=kwargs.get("model", "unknown"),
+            messages=msg_dicts,
+            tools=kwargs.get("tools"),
+            temperature=kwargs.get("temperature"),
+            max_tokens=kwargs.get("max_tokens"),
+        )
+        self._store.append_event(request_event, source=self._source)
+
+        start_time = time.time()
+        try:
+            # Call underlying client
+            response = await self._client.complete(messages, **kwargs)
+
+            # Emit response event
+            latency_ms = int((time.time() - start_time) * 1000)
+            content = response.content if hasattr(response, 'content') else str(response)
+            response_event = LLMResponseEvent(
+                request_id=request_id,
+                content=content,
+                finish_reason="stop",
+                latency_ms=latency_ms,
+                usage={"estimated_tokens": len(str(content)) // 4},
+            )
+            self._store.append_event(response_event, source=self._source)
+
+            return response
+
+        except Exception as e:
+            # Emit error response
+            response_event = LLMResponseEvent(
+                request_id=request_id,
+                content="",
+                finish_reason="error",
+                latency_ms=int((time.time() - start_time) * 1000),
+                usage={},
+                error=str(e),
+            )
+            self._store.append_event(response_event, source=self._source)
+            raise
+
 
 class EventEmittingToolRegistry:
     """Tool registry wrapper that emits events for each tool call."""

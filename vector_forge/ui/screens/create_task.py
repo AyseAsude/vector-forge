@@ -21,6 +21,10 @@ from vector_forge.storage.models import (
     HFModelConfig,
     HFModelConfigManager,
 )
+from vector_forge.storage.preferences import (
+    PreferencesManager,
+    ModelRole,
+)
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.widgets.model_card import ModelCard
 from vector_forge.ui.widgets.target_model_card import TargetModelCard
@@ -409,16 +413,18 @@ class CreateTaskScreen(Screen):
         self._aggregation = "top_k_average"
         self._contrast_quality = "standard"
 
-        # API model configurations (for agents)
+        # Preferences and model managers
+        self._preferences = PreferencesManager()
         self._model_manager = ModelConfigManager()
-        default_config = self._model_manager.get_default()
-        self._extractor_config: ModelConfig | None = default_config
-        self._judge_config: ModelConfig | None = default_config
-        self._expander_config: ModelConfig | None = default_config
-
-        # Target model configuration (HuggingFace model for steering)
         self._hf_model_manager = HFModelConfigManager()
-        self._target_config: HFModelConfig | None = self._hf_model_manager.get_default()
+
+        # Load API model configs from preferences (or fall back to default)
+        self._extractor_config = self._load_model_config(ModelRole.EXTRACTOR)
+        self._judge_config = self._load_model_config(ModelRole.JUDGE)
+        self._expander_config = self._load_model_config(ModelRole.EXPANDER)
+
+        # Load target model config from preferences (or fall back to default)
+        self._target_config = self._load_target_config()
 
     def compose(self) -> ComposeResult:
         # Header
@@ -588,6 +594,37 @@ class CreateTaskScreen(Screen):
             callback=self._on_target_model_selected,
         )
 
+    def _load_model_config(self, role: str) -> ModelConfig | None:
+        """Load model config from preferences, falling back to default.
+
+        Args:
+            role: One of ModelRole constants (extractor, judge, expander).
+
+        Returns:
+            The saved ModelConfig or default if not found.
+        """
+        saved_id = self._preferences.get_selected_model(role)
+        if saved_id:
+            config = self._model_manager.get(saved_id)
+            if config:
+                return config
+        # Fall back to default
+        return self._model_manager.get_default()
+
+    def _load_target_config(self) -> HFModelConfig | None:
+        """Load target model config from preferences, falling back to default.
+
+        Returns:
+            The saved HFModelConfig or default if not found.
+        """
+        saved_id = self._preferences.get_selected_model(ModelRole.TARGET)
+        if saved_id:
+            config = self._hf_model_manager.get(saved_id)
+            if config:
+                return config
+        # Fall back to default
+        return self._hf_model_manager.get_default()
+
     def _on_target_model_selected(
         self, result: TargetModelSelectorScreen.ModelSelected | None
     ) -> None:
@@ -598,6 +635,9 @@ class CreateTaskScreen(Screen):
         self._target_config = result.config
         self.query_one("#model-target", TargetModelCard).set_config(result.config)
 
+        # Save selection to preferences
+        self._preferences.set_selected_model(ModelRole.TARGET, result.config.id)
+
     def _on_model_selected(self, result: ModelSelectorScreen.ModelSelected | None) -> None:
         """Handle model selection from modal."""
         if result is None:
@@ -606,12 +646,15 @@ class CreateTaskScreen(Screen):
         if result.field_name == "extractor":
             self._extractor_config = result.config
             self.query_one("#model-extractor", ModelCard).set_config(result.config)
+            self._preferences.set_selected_model(ModelRole.EXTRACTOR, result.config.id)
         elif result.field_name == "judge":
             self._judge_config = result.config
             self.query_one("#model-judge", ModelCard).set_config(result.config)
+            self._preferences.set_selected_model(ModelRole.JUDGE, result.config.id)
         elif result.field_name == "expander":
             self._expander_config = result.config
             self.query_one("#model-expander", ModelCard).set_config(result.config)
+            self._preferences.set_selected_model(ModelRole.EXPANDER, result.config.id)
 
     def _apply_profile(self, profile: str) -> None:
         configs = {

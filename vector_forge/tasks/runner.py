@@ -319,11 +319,30 @@ class TaskRunner:
                         extraction_time_seconds=0,
                     )
 
+                # Check for empty valid_pairs
+                if not dataset.valid_pairs:
+                    logger.warning(
+                        f"Sample {sample_idx} has no valid pairs! "
+                        f"Dataset has {len(dataset.all_pairs)} total pairs."
+                    )
+                    return SampleResult(
+                        sample=sample,
+                        vector=None,
+                        layer=0,
+                        metadata={"error": "No valid pairs in dataset"},
+                        extraction_time_seconds=0,
+                    )
+
                 # Convert to training datapoints with bootstrap
                 datapoints = adapter.convert_with_bootstrap(
                     dataset.valid_pairs,
                     ratio=sample.config.bootstrap_ratio,
                     seed=sample.config.seed,
+                )
+
+                logger.debug(
+                    f"Sample {sample_idx}: {len(dataset.valid_pairs)} valid pairs -> "
+                    f"{len(datapoints)} datapoints"
                 )
 
                 # Limit to configured datapoints_per_sample

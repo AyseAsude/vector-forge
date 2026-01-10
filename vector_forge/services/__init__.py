@@ -7,6 +7,7 @@ Key Components:
 - SessionService: Manages session lifecycle and task execution
 - UIStateSynchronizer: Translates storage events to UI state updates
 - TaskExecutor: Executes tasks with full event emission
+- ExtractionRunner: Orchestrates the full extraction pipeline
 """
 
 from vector_forge.services.session import (
@@ -16,6 +17,7 @@ from vector_forge.services.session import (
 )
 from vector_forge.services.synchronizer import UIStateSynchronizer
 from vector_forge.services.task_executor import TaskExecutor
+from vector_forge.services.extraction_runner import ExtractionRunner, ExtractionProgress
 
 __all__ = [
     "SessionService",
@@ -23,4 +25,6 @@ __all__ = [
     "SessionSummary",
     "UIStateSynchronizer",
     "TaskExecutor",
+    "ExtractionRunner",
+    "ExtractionProgress",
 ]

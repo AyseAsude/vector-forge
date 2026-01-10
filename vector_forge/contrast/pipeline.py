@@ -315,6 +315,24 @@ class ContrastPipeline:
             f"avg quality {statistics['per_sample']['avg_quality']:.1f}"
         )
 
+        # Debug: Log detailed dataset info
+        for sample_idx, dataset in sample_datasets.items():
+            logger.debug(
+                f"Sample {sample_idx}: {len(dataset.core_pairs)} core + "
+                f"{len(dataset.unique_pairs)} unique = {len(dataset.all_pairs)} total, "
+                f"{len(dataset.valid_pairs)} valid"
+            )
+            if len(dataset.valid_pairs) == 0 and dataset.all_pairs:
+                # Log why pairs are invalid
+                for pair in dataset.all_pairs[:3]:  # First 3
+                    if pair.validation:
+                        logger.warning(
+                            f"  Invalid pair: dst_score={pair.validation.dst_behavior_score:.1f}, "
+                            f"src_score={pair.validation.src_behavior_score:.1f}, "
+                            f"quality={pair.validation.contrast_quality:.1f}, "
+                            f"valid={pair.validation.is_valid}"
+                        )
+
         return PipelineResult(
             behavior_analysis=analysis,
             sample_datasets=sample_datasets,
