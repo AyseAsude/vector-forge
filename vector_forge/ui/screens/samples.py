@@ -6,6 +6,7 @@ Uses native Textual widgets for high performance:
 - Reactive updates instead of remove/remount patterns
 """
 
+import json
 import re
 
 from textual.app import ComposeResult
@@ -345,10 +346,34 @@ class MessageRow(Static):
         super().__init__(content, **kwargs)
 
     def _clean_content(self, content: str) -> str:
-        """Clean up content by removing markdown code fences and formatting."""
+        """Clean up content by removing markdown code fences and extracting meaningful text."""
         # Remove markdown code fences (```json, ```python, ```, etc.)
         content = re.sub(r'```\w*\s*', '', content)
         content = re.sub(r'```', '', content)
+        content = content.strip()
+
+        # Try to parse as JSON and extract human-readable content
+        if content.startswith('{') or content.startswith('['):
+            try:
+                data = json.loads(content)
+                if isinstance(data, dict):
+                    # Extract reasoning/description fields for human-readable display
+                    for key in ('reasoning', 'description', 'explanation', 'summary', 'content'):
+                        if key in data and isinstance(data[key], str):
+                            return data[key]
+                    # For scored responses, show a summary
+                    if 'dst_behavior_score' in data or 'score' in data:
+                        score = data.get('dst_behavior_score') or data.get('score', '?')
+                        quality = data.get('contrast_quality', '')
+                        reasoning = data.get('reasoning', '')[:100] if data.get('reasoning') else ''
+                        parts = [f"Score: {score}"]
+                        if quality:
+                            parts.append(f"Quality: {quality}")
+                        if reasoning:
+                            parts.append(reasoning)
+                        return " | ".join(parts)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Collapse multiple whitespace/newlines into single space
         content = re.sub(r'\s+', ' ', content)

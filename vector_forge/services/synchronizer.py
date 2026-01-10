@@ -261,6 +261,9 @@ class UIStateSynchronizer:
 
                     agent = source_agents[source]
 
+                    # Get event timestamp
+                    event_ts = log.timestamp.timestamp()
+
                     # Add message based on event type
                     if log.event_type == "llm.request":
                         agent.turns += 1
@@ -271,7 +274,11 @@ class UIStateSynchronizer:
                             content = last_msg.get("content", "")
                             if isinstance(content, str) and len(content) > 100:
                                 content = content[:97] + "..."
-                            agent.add_message(MessageRole.USER, content or "LLM request")
+                            agent.add_message(
+                                MessageRole.USER,
+                                content or "LLM request",
+                                timestamp=event_ts,
+                            )
 
                     elif log.event_type == "llm.response":
                         # Parse tool calls from response (same as live handler)
@@ -293,6 +300,7 @@ class UIStateSynchronizer:
                                 MessageRole.ASSISTANT,
                                 content or "(tool call)",
                                 tool_calls=tool_calls,
+                                timestamp=event_ts,
                             )
                             agent.tool_calls_count += len(tool_calls)
 

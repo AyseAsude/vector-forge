@@ -131,13 +131,14 @@ class AgentUIState:
         role: MessageRole,
         content: str,
         tool_calls: Optional[List[ToolCall]] = None,
+        timestamp: Optional[float] = None,
     ) -> AgentMessage:
         """Add a message to the agent's conversation."""
         msg = AgentMessage(
             id=f"msg_{len(self.messages)}",
             role=role,
             content=content,
-            timestamp=time.time(),
+            timestamp=timestamp if timestamp is not None else time.time(),
             tool_calls=tool_calls or [],
         )
         self.messages.append(msg)
