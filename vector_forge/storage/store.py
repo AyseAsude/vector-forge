@@ -355,6 +355,7 @@ class StorageManager:
     """Global storage manager for all extraction sessions.
 
     Manages session creation, listing, and retrieval.
+    Sessions are discovered dynamically by scanning directories.
 
     Example:
         >>> manager = StorageManager()
@@ -373,7 +374,6 @@ class StorageManager:
 
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self._index_file = self.base_path / "index.jsonl"
 
     def create_session(
         self,
@@ -396,16 +396,6 @@ class StorageManager:
 
         store = SessionStore(session_id, self.base_path)
         store.initialize(behavior, config)
-
-        # Add to index
-        entry = {
-            "session_id": session_id,
-            "behavior": behavior,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "status": "running",
-        }
-        with open(self._index_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
 
         return store
 
@@ -438,7 +428,10 @@ class StorageManager:
         behavior: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """List all sessions from index.
+        """List all sessions by scanning directories.
+
+        Discovers sessions dynamically by reading metadata.json from each
+        session folder. No index file needed.
 
         Args:
             status: Filter by status (running, completed, failed).
@@ -450,23 +443,39 @@ class StorageManager:
         """
         sessions = []
 
-        if self._index_file.exists():
-            with open(self._index_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        entry = json.loads(line)
+        # Scan all directories in base_path
+        if not self.base_path.exists():
+            return sessions
 
-                        # Apply filters
-                        if status and entry.get("status") != status:
-                            continue
-                        if behavior and entry.get("behavior") != behavior:
-                            continue
+        for entry in self.base_path.iterdir():
+            if not entry.is_dir():
+                continue
 
-                        sessions.append(entry)
-                    except json.JSONDecodeError:
-                        continue
+            # Skip hidden directories
+            if entry.name.startswith("."):
+                continue
+
+            # Read metadata.json
+            metadata_path = entry / "metadata.json"
+            if not metadata_path.exists():
+                continue
+
+            try:
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+
+                # Ensure session_id is set
+                metadata["session_id"] = entry.name
+
+                # Apply filters
+                if status and metadata.get("status") != status:
+                    continue
+                if behavior and metadata.get("behavior") != behavior:
+                    continue
+
+                sessions.append(metadata)
+            except (json.JSONDecodeError, IOError):
+                continue
 
         # Sort by created_at descending (newest first)
         sessions.sort(key=lambda x: x.get("created_at", ""), reverse=True)
@@ -506,21 +515,6 @@ class StorageManager:
             return False
 
         shutil.rmtree(session_path)
-
-        # Update index (remove entry)
-        if self._index_file.exists():
-            temp_file = self._index_file.with_suffix(".tmp")
-            with open(self._index_file, "r", encoding="utf-8") as f_in:
-                with open(temp_file, "w", encoding="utf-8") as f_out:
-                    for line in f_in:
-                        try:
-                            entry = json.loads(line)
-                            if entry.get("session_id") != session_id:
-                                f_out.write(line)
-                        except json.JSONDecodeError:
-                            f_out.write(line)
-            temp_file.replace(self._index_file)
-
         return True
 
     def _generate_session_id(self, behavior: str) -> str:
@@ -542,26 +536,3 @@ class StorageManager:
         short_uuid = str(uuid.uuid4())[:8]
 
         return f"{timestamp}_{clean_behavior}_{short_uuid}"
-
-    def update_session_index(self, session_id: str, **updates: Any) -> None:
-        """Update a session entry in the index.
-
-        Args:
-            session_id: Session to update.
-            **updates: Fields to update.
-        """
-        if not self._index_file.exists():
-            return
-
-        temp_file = self._index_file.with_suffix(".tmp")
-        with open(self._index_file, "r", encoding="utf-8") as f_in:
-            with open(temp_file, "w", encoding="utf-8") as f_out:
-                for line in f_in:
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("session_id") == session_id:
-                            entry.update(updates)
-                        f_out.write(json.dumps(entry) + "\n")
-                    except json.JSONDecodeError:
-                        f_out.write(line)
-        temp_file.replace(self._index_file)

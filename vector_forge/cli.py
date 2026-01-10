@@ -66,6 +66,16 @@ def create_parser() -> argparse.ArgumentParser:
     # Info command
     subparsers.add_parser("info", help="Display Vector Forge information")
 
+    # UI command
+    ui_parser = subparsers.add_parser(
+        "ui", help="Launch the Terminal User Interface"
+    )
+    ui_parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run with demo data (for testing)",
+    )
+
     return parser
 
 
@@ -180,6 +190,14 @@ def cmd_info(args: argparse.Namespace) -> None:
     print("  - Bad datapoint detection")
 
 
+def cmd_ui(args: argparse.Namespace) -> None:
+    """Handle ui command."""
+    from vector_forge.ui.app import VectorForgeApp
+
+    app = VectorForgeApp(demo_mode=args.demo)
+    app.run()
+
+
 def main() -> None:
     """Main entry point."""
     parser = create_parser()
@@ -193,6 +211,8 @@ def main() -> None:
         cmd_extract(args)
     elif args.command == "info":
         cmd_info(args)
+    elif args.command == "ui":
+        cmd_ui(args)
     else:
         parser.print_help()
         sys.exit(1)
