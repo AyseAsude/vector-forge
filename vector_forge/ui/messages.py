@@ -6,20 +6,9 @@ Events represent things that HAPPENED (past tense). They flow:
 All events can be safely posted from any thread via post_message().
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 from textual.message import Message
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Base Event
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class UIEvent(Message):
-    """Base class for all UI events."""
-    pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -27,42 +16,52 @@ class UIEvent(Message):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class TaskCreated(UIEvent):
+class TaskCreated(Message):
     """A new task/extraction was created."""
-    task_id: str
-    name: str
-    description: str = ""
+
+    def __init__(self, task_id: str, name: str, description: str = "") -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.name = name
+        self.description = description
 
 
-@dataclass
-class TaskProgressChanged(UIEvent):
+class TaskProgressChanged(Message):
     """Task progress or phase changed."""
-    task_id: str
-    progress: float
-    phase: str
-    message: str = ""
+
+    def __init__(self, task_id: str, progress: float, phase: str, message: str = "") -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.progress = progress
+        self.phase = phase
+        self.message = message
 
 
-@dataclass
-class TaskStatusChanged(UIEvent):
+class TaskStatusChanged(Message):
     """Task status changed (running, paused, completed, failed)."""
-    task_id: str
-    status: str
-    completed_at: Optional[float] = None
-    error: Optional[str] = None
+
+    def __init__(self, task_id: str, status: str, completed_at: Optional[float] = None, error: Optional[str] = None) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.status = status
+        self.completed_at = completed_at
+        self.error = error
 
 
-@dataclass
-class TaskRemoved(UIEvent):
+class TaskRemoved(Message):
     """A task was removed/hidden."""
-    task_id: str
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__()
+        self.task_id = task_id
 
 
-@dataclass
-class TaskSelected(UIEvent):
+class TaskSelected(Message):
     """User selected a different task."""
-    task_id: Optional[str]
+
+    def __init__(self, task_id: Optional[str]) -> None:
+        super().__init__()
+        self.task_id = task_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,48 +69,58 @@ class TaskSelected(UIEvent):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class AgentSpawned(UIEvent):
+class AgentSpawned(Message):
     """A new agent was spawned for a task."""
-    task_id: str
-    agent_id: str
-    name: str
-    role: str = ""
+
+    def __init__(self, task_id: str, agent_id: str, name: str, role: str = "") -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.agent_id = agent_id
+        self.name = name
+        self.role = role
 
 
-@dataclass
-class AgentStatusChanged(UIEvent):
+class AgentStatusChanged(Message):
     """Agent status changed."""
-    task_id: str
-    agent_id: str
-    status: str
-    current_tool: Optional[str] = None
+
+    def __init__(self, task_id: str, agent_id: str, status: str, current_tool: Optional[str] = None) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.agent_id = agent_id
+        self.status = status
+        self.current_tool = current_tool
 
 
-@dataclass
-class AgentProgressChanged(UIEvent):
+class AgentProgressChanged(Message):
     """Agent progress changed (turns, tool calls)."""
-    task_id: str
-    agent_id: str
-    turns: int = 0
-    tool_calls_count: int = 0
+
+    def __init__(self, task_id: str, agent_id: str, turns: int = 0, tool_calls_count: int = 0) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.agent_id = agent_id
+        self.turns = turns
+        self.tool_calls_count = tool_calls_count
 
 
-@dataclass
-class AgentMessageReceived(UIEvent):
+class AgentMessageReceived(Message):
     """A new message was added to an agent's conversation."""
-    task_id: str
-    agent_id: str
-    role: str
-    content: str
-    tool_calls: list = field(default_factory=list)
+
+    def __init__(self, task_id: str, agent_id: str, role: str, content: str, tool_calls: Optional[List] = None) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.agent_id = agent_id
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls or []
 
 
-@dataclass
-class AgentSelected(UIEvent):
+class AgentSelected(Message):
     """User selected a different agent."""
-    task_id: str
-    agent_id: Optional[str]
+
+    def __init__(self, task_id: str, agent_id: Optional[str]) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.agent_id = agent_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -119,15 +128,17 @@ class AgentSelected(UIEvent):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class LogEmitted(UIEvent):
+class LogEmitted(Message):
     """A log entry was emitted."""
-    timestamp: float
-    source: str
-    message: str
-    level: str = "info"
-    task_id: Optional[str] = None
-    agent_id: Optional[str] = None
+
+    def __init__(self, timestamp: float, source: str, message: str, level: str = "info", task_id: Optional[str] = None, agent_id: Optional[str] = None) -> None:
+        super().__init__()
+        self.timestamp = timestamp
+        self.source = source
+        self.message = message
+        self.level = level
+        self.task_id = task_id
+        self.agent_id = agent_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -135,29 +146,33 @@ class LogEmitted(UIEvent):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class DatapointMetricsChanged(UIEvent):
+class DatapointMetricsChanged(Message):
     """Datapoint metrics were updated."""
-    task_id: str
-    total: int = 0
-    keep: int = 0
-    review: int = 0
-    remove: int = 0
-    diversity: float = 0.0
-    clusters: int = 0
+
+    def __init__(self, task_id: str, total: int = 0, keep: int = 0, review: int = 0, remove: int = 0, diversity: float = 0.0, clusters: int = 0) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.total = total
+        self.keep = keep
+        self.review = review
+        self.remove = remove
+        self.diversity = diversity
+        self.clusters = clusters
 
 
-@dataclass
-class EvaluationMetricsChanged(UIEvent):
+class EvaluationMetricsChanged(Message):
     """Evaluation metrics were updated."""
-    task_id: str
-    behavior: float = 0.0
-    coherence: float = 0.0
-    specificity: float = 0.0
-    overall: float = 0.0
-    best_layer: Optional[int] = None
-    best_strength: float = 0.0
-    verdict: Optional[str] = None
+
+    def __init__(self, task_id: str, behavior: float = 0.0, coherence: float = 0.0, specificity: float = 0.0, overall: float = 0.0, best_layer: Optional[int] = None, best_strength: float = 0.0, verdict: Optional[str] = None) -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.behavior = behavior
+        self.coherence = coherence
+        self.specificity = specificity
+        self.overall = overall
+        self.best_layer = best_layer
+        self.best_strength = best_strength
+        self.verdict = verdict
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,23 +180,16 @@ class EvaluationMetricsChanged(UIEvent):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class TimeTick(UIEvent):
-    """Periodic tick for updating elapsed time displays.
-
-    This is the ONLY timer-based event. All other updates are event-driven.
-    """
+class TimeTick(Message):
+    """Periodic tick for updating elapsed time displays."""
     pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# State Sync Event (for initial screen mount)
+# State Sync Event
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class StateSync(UIEvent):
-    """Request to sync screen with current state.
-
-    Used when a screen is mounted and needs to render from current state.
-    NOT used for incremental updates - those use specific events.
-    """
+class StateSync(Message):
+    """Request to sync screen with current state."""
     pass

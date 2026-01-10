@@ -62,13 +62,13 @@ class ProfileCard(Static):
             super().__init__()
             self.profile = profile
 
-    def __init__(self, profile: str, name: str, desc: str, selected: bool = False, **kwargs) -> None:
+    def __init__(self, profile: str, label: str, desc: str, selected: bool = False, **kwargs) -> None:
         # Merge -selected class into classes parameter if selected
         if selected:
             existing_classes = kwargs.get("classes", "")
             kwargs["classes"] = f"{existing_classes} -selected".strip()
         self._profile = profile
-        self._name = name
+        self._label = label
         self._desc = desc
         self._selected = selected
         # Compute initial content to pass to super().__init__()
@@ -91,7 +91,7 @@ class ProfileCard(Static):
         """Compute the display content for this profile card."""
         icon = "●" if self._selected else "○"
         color = "$accent" if self._selected else "$foreground-disabled"
-        return f"[{color}]{icon}[/] [bold]{self._name}[/] [$foreground-muted]{self._desc}[/]"
+        return f"[{color}]{icon}[/] [bold]{self._label}[/] [$foreground-muted]{self._desc}[/]"
 
 
 class OptionPill(Static):

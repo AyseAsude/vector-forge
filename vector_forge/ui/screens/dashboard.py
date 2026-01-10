@@ -1,10 +1,4 @@
-"""Dashboard screen - split view with tasks and details.
-
-Event-Sourcing Pattern:
-- on_mount: Initial projection from state
-- Event handlers: Targeted updates to specific widgets
-- No polling timers or state listeners
-"""
+"""Dashboard screen - split view with tasks and details."""
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
@@ -23,17 +17,6 @@ from vector_forge.ui.state import (
 from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.widgets.model_card import DeleteButton
-from vector_forge.ui.messages import (
-    TaskCreated,
-    TaskProgressChanged,
-    TaskStatusChanged,
-    TaskRemoved,
-    TaskSelected,
-    AgentSpawned,
-    AgentStatusChanged,
-    LogEmitted,
-    TimeTick,
-)
 
 
 class ProgressBar(Static):
@@ -47,7 +30,7 @@ class ProgressBar(Static):
     """
 
     def __init__(self, **kwargs) -> None:
-        super().__init__("", **kwargs)
+        super().__init__(**kwargs)
         self._value = 0.0
 
     def set_value(self, percent: float) -> None:
@@ -125,6 +108,7 @@ class TaskCard(Static):
 
     class DeleteRequested(Message):
         """Emitted when delete is requested for this task."""
+
         def __init__(self, extraction_id: str) -> None:
             super().__init__()
             self.extraction_id = extraction_id
@@ -164,10 +148,6 @@ class TaskCard(Static):
             )
             yield DeleteButton()
 
-    def on_mount(self) -> None:
-        """Set initial progress value after mount."""
-        self.query_one(ProgressBar).set_value(self.extraction.progress)
-
     def on_delete_button_clicked(self, event: DeleteButton.Clicked) -> None:
         """Handle delete button click."""
         event.stop()
@@ -176,33 +156,21 @@ class TaskCard(Static):
     def on_click(self) -> None:
         self.post_message(self.Selected(self.extraction.id))
 
-    def set_selected(self, selected: bool) -> None:
-        self.set_class(selected, "-selected")
-
-    def update_from_state(self, extraction: ExtractionUIState) -> None:
-        """Update card display from extraction state."""
+    def update(self, extraction: ExtractionUIState) -> None:
         self.extraction = extraction
-        if not self.is_mounted:
-            return
-
-        icon, color, runs, layer, score = self._get_display_values()
-        try:
-            self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{extraction.behavior_name}[/]")
-            self.query_one(".time", Static).update(extraction.elapsed_str)
-            self.query_one(ProgressBar).set_value(extraction.progress)
-            self.query_one(".meta", Static).update(
-                f"[$accent]{extraction.phase.value.upper()}[/] · {runs} runs · {layer} · {score}"
-            )
-        except Exception:
-            pass
-
-    def set_elapsed(self, elapsed: str) -> None:
-        """Update just the elapsed time."""
         if self.is_mounted:
-            try:
-                self.query_one(".time", Static).update(elapsed)
-            except Exception:
-                pass
+            self._update_display()
+
+    def _update_display(self) -> None:
+        ext = self.extraction
+        icon, color, runs, layer, score = self._get_display_values()
+
+        self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{ext.behavior_name}[/]")
+        self.query_one(".time", Static).update(ext.elapsed_str)
+        self.query_one(ProgressBar).set_value(ext.progress * 100)
+        self.query_one(".meta", Static).update(
+            f"[$accent]{ext.phase.value.upper()}[/] · {runs} runs · {layer} · {score}"
+        )
 
 
 class AgentRow(Static):
@@ -288,17 +256,11 @@ class DetailsPanel(Vertical):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._current_task_id: str | None = None
-
     def compose(self) -> ComposeResult:
         yield Static("Select a task", classes="empty")
 
     def show(self, extraction: ExtractionUIState | None) -> None:
-        """Show details for a task (full rebuild)."""
         self.remove_children()
-        self._current_task_id = extraction.id if extraction else None
 
         if extraction is None:
             self.mount(Static("Select a task to view details", classes="empty"))
@@ -364,6 +326,7 @@ class DetailsPanel(Vertical):
         logs = get_state().get_filtered_logs(extraction_id=ext.id)[-5:]
         if logs:
             for log in reversed(logs):
+                # Escape log message to prevent Rich markup interpretation of brackets
                 safe_message = escape_markup(log.message)
                 activity_list.mount(Static(
                     f"[$foreground-muted]{log.time_str}[/] {safe_message}",
@@ -468,21 +431,21 @@ class ConfirmHideTaskScreen(ModalScreen[bool]):
 
 
 class DashboardScreen(Screen):
-    """Main dashboard with task list and details panel.
-
-    Uses event-driven architecture: event handlers update specific widgets.
-    """
+    """Main dashboard with task list and details panel."""
 
     BINDINGS = [
-        Binding("1", "noop", "Dashboard", show=False),
+        # Navigation between screens
+        Binding("1", "noop", "Dashboard", show=False),  # Current screen
         Binding("2", "go_samples", "Samples", key_display="2"),
         Binding("3", "go_logs", "Logs", key_display="3"),
         Binding("tab", "cycle", "Next Screen"),
+        # List navigation
         Binding("j", "next", "Next", show=False),
         Binding("k", "prev", "Previous", show=False),
         Binding("down", "next", "Next Task", key_display="↓"),
         Binding("up", "prev", "Prev Task", key_display="↑"),
         Binding("enter", "open", "Open"),
+        # Actions
         Binding("n", "new_task", "New Task"),
         Binding("q", "quit", "Quit"),
     ]
@@ -532,6 +495,10 @@ class DashboardScreen(Screen):
         text-style: bold;
     }
 
+    DashboardScreen #new-btn.-active {
+        background: $accent 90%;
+    }
+
     DashboardScreen #tasks {
         height: 1fr;
     }
@@ -548,11 +515,6 @@ class DashboardScreen(Screen):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._task_cards: dict[str, TaskCard] = {}
-        self._selected_id: str | None = None
-
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
             with Vertical(id="left"):
@@ -564,143 +526,80 @@ class DashboardScreen(Screen):
         yield TmuxBar(active_screen="dashboard")
 
     def on_mount(self) -> None:
-        """Initial projection from current state."""
+        get_state().add_listener(self._on_state_change)
+        self._sync()
+        self.set_interval(1.0, self._tick)
+
+    def on_unmount(self) -> None:
+        get_state().remove_listener(self._on_state_change)
+
+    def _on_state_change(self, _) -> None:
+        self._sync()
+
+    def _tick(self) -> None:
         state = get_state()
-        tasks_container = self.query_one("#tasks", VerticalScroll)
 
-        # Mount existing tasks (newest first)
-        for ext_id, ext in reversed(list(state.extractions.items())):
-            card = TaskCard(ext)
-            self._task_cards[ext_id] = card
-            tasks_container.mount(card)
+        # Update running task cards
+        for card in self.query(TaskCard):
+            ext = state.extractions.get(card.extraction.id)
+            if ext and ext.status == ExtractionStatus.RUNNING:
+                card.update(ext)
 
-        # Select task
-        if state.selected_id and state.selected_id in state.extractions:
-            self._select_task(state.selected_id)
-        elif state.extractions:
-            first_id = next(iter(reversed(list(state.extractions.keys()))))
-            self._select_task(first_id)
-        else:
-            tasks_container.mount(Static("No tasks. Press [bold]n[/] to create.", classes="empty"))
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Event Handlers
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def on_task_created(self, event: TaskCreated) -> None:
-        """Handle new task - add card at top."""
-        state = get_state()
-        extraction = state.extractions.get(event.task_id)
-        if not extraction:
-            return
-
-        tasks_container = self.query_one("#tasks", VerticalScroll)
-
-        # Remove empty message
-        for empty in tasks_container.query(".empty"):
-            empty.remove()
-
-        # Add card at top
-        card = TaskCard(extraction)
-        self._task_cards[event.task_id] = card
-        tasks_container.mount(card, before=0)
-
-        # Select it
-        self._select_task(event.task_id)
-
-    def on_task_progress_changed(self, event: TaskProgressChanged) -> None:
-        """Handle progress update."""
-        state = get_state()
-        extraction = state.extractions.get(event.task_id)
-        if extraction:
-            card = self._task_cards.get(event.task_id)
-            if card:
-                card.update_from_state(extraction)
-
-            if self._selected_id == event.task_id:
-                self.query_one("#right", DetailsPanel).show(extraction)
-
-    def on_task_status_changed(self, event: TaskStatusChanged) -> None:
-        """Handle status change."""
-        state = get_state()
-        extraction = state.extractions.get(event.task_id)
-        if extraction:
-            card = self._task_cards.get(event.task_id)
-            if card:
-                card.update_from_state(extraction)
-
-            if self._selected_id == event.task_id:
-                self.query_one("#right", DetailsPanel).show(extraction)
-
-    def on_task_removed(self, event: TaskRemoved) -> None:
-        """Handle task removal."""
-        card = self._task_cards.pop(event.task_id, None)
-        if card:
-            card.remove()
-
-        if self._selected_id == event.task_id:
-            state = get_state()
-            if state.extractions:
-                self._select_task(next(iter(state.extractions)))
-            else:
-                self._selected_id = None
-                self.query_one("#right", DetailsPanel).show(None)
-                tasks_container = self.query_one("#tasks", VerticalScroll)
-                tasks_container.mount(Static("No tasks. Press [bold]n[/] to create.", classes="empty"))
-
-    def on_agent_spawned(self, event: AgentSpawned) -> None:
-        """Handle agent spawn - update details panel."""
-        if self._selected_id == event.task_id:
-            state = get_state()
-            extraction = state.extractions.get(event.task_id)
-            if extraction:
-                self.query_one("#right", DetailsPanel).show(extraction)
-
-    def on_agent_status_changed(self, event: AgentStatusChanged) -> None:
-        """Handle agent status change."""
-        state = get_state()
-        extraction = state.extractions.get(event.task_id)
-        if extraction:
-            card = self._task_cards.get(event.task_id)
-            if card:
-                card.update_from_state(extraction)
-
-            if self._selected_id == event.task_id:
-                self.query_one("#right", DetailsPanel).show(extraction)
-
-    def on_log_emitted(self, event: LogEmitted) -> None:
-        """Handle new log - update activity if showing this task."""
-        if event.task_id and event.task_id == self._selected_id:
-            state = get_state()
-            extraction = state.extractions.get(event.task_id)
-            if extraction:
-                self.query_one("#right", DetailsPanel).show(extraction)
-
-    def on_time_tick(self, event: TimeTick) -> None:
-        """Handle time tick - update elapsed times for running tasks."""
-        state = get_state()
-        for task_id, card in self._task_cards.items():
-            extraction = state.extractions.get(task_id)
-            if extraction and extraction.status == ExtractionStatus.RUNNING:
-                card.set_elapsed(extraction.elapsed_str)
+        # Update details if showing running task
+        if state.selected_extraction and state.selected_extraction.status == ExtractionStatus.RUNNING:
+            self.query_one("#right", DetailsPanel).show(state.selected_extraction)
 
         self.query_one(TmuxBar).refresh_info()
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # UI Event Handlers
-    # ─────────────────────────────────────────────────────────────────────────
+    def _sync(self) -> None:
+        state = get_state()
+        tasks_container = self.query_one("#tasks", VerticalScroll)
+
+        # Update or create cards
+        existing = {c.extraction.id: c for c in self.query(TaskCard)}
+
+        # Reverse order so newest extractions appear at top
+        for ext_id, ext in reversed(list(state.extractions.items())):
+            if ext_id in existing:
+                existing[ext_id].update(ext)
+                existing[ext_id].set_class(ext_id == state.selected_id, "-selected")
+            else:
+                card = TaskCard(ext)
+                card.set_class(ext_id == state.selected_id, "-selected")
+                # Insert at top (index 0) to maintain newest-first order
+                tasks_container.mount(card, before=0)
+
+        # Remove stale cards
+        for ext_id, card in existing.items():
+            if ext_id not in state.extractions:
+                card.remove()
+
+        # Empty state
+        empties = list(tasks_container.query(".empty"))
+        if not state.extractions:
+            if not empties:
+                tasks_container.mount(Static("No tasks. Press [bold]n[/] to create.", classes="empty"))
+        else:
+            for e in empties:
+                e.remove()
+
+        # Update details panel
+        self.query_one("#right", DetailsPanel).show(state.selected_extraction)
+        self.query_one(TmuxBar).refresh_info()
 
     def on_task_card_selected(self, event: TaskCard.Selected) -> None:
-        """Handle card click."""
-        self._select_task(event.extraction_id)
+        state = get_state()
+        state.select_extraction(event.extraction_id)
+
+        for card in self.query(TaskCard):
+            card.set_class(card.extraction.id == event.extraction_id, "-selected")
+
+        self.query_one("#right", DetailsPanel).show(state.selected_extraction)
 
     def on_agent_row_clicked(self, event: AgentRow.Clicked) -> None:
-        """Handle agent row click - open samples."""
         state = get_state()
-        if self._selected_id:
-            extraction = state.extractions.get(self._selected_id)
-            if extraction:
-                extraction.select_agent(event.agent_id)
+        if state.selected_extraction:
+            state.selected_extraction.select_agent(event.agent_id)
         self.app.switch_screen("samples")
 
     def on_task_card_delete_requested(self, event: TaskCard.DeleteRequested) -> None:
@@ -708,42 +607,16 @@ class DashboardScreen(Screen):
         state = get_state()
         extraction = state.extractions.get(event.extraction_id)
         if extraction:
+            task_name = extraction.behavior_name
+
             def on_confirm(confirmed: bool) -> None:
                 if confirmed:
                     self._hide_task(event.extraction_id)
 
             self.app.push_screen(
-                ConfirmHideTaskScreen(extraction.behavior_name, event.extraction_id),
+                ConfirmHideTaskScreen(task_name, event.extraction_id),
                 on_confirm
             )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        if event.button.id == "new-btn":
-            self.app.push_screen("create_task")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Internal Helpers
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _select_task(self, task_id: str) -> None:
-        """Select a task and update UI."""
-        # Deselect previous
-        if self._selected_id and self._selected_id in self._task_cards:
-            self._task_cards[self._selected_id].set_selected(False)
-
-        # Select new
-        self._selected_id = task_id
-        if task_id in self._task_cards:
-            self._task_cards[task_id].set_selected(True)
-
-        # Update state
-        state = get_state()
-        state.selected_id = task_id
-
-        # Update details
-        extraction = state.extractions.get(task_id)
-        self.query_one("#right", DetailsPanel).show(extraction)
 
     def _hide_task(self, extraction_id: str) -> None:
         """Hide a task from the list."""
@@ -762,13 +635,14 @@ class DashboardScreen(Screen):
         # Remove from UI state
         state.remove_extraction(extraction_id)
 
-        # Post event for other screens
-        self.app.post_message(TaskRemoved(task_id=extraction_id))
+        # Sync UI
+        self._sync()
 
-    # ─────────────────────────────────────────────────────────────────────────
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "new-btn":
+            self.app.push_screen("create_task")
+
     # Actions
-    # ─────────────────────────────────────────────────────────────────────────
-
     def action_noop(self) -> None:
         pass
 
@@ -782,30 +656,38 @@ class DashboardScreen(Screen):
         self.app.switch_screen("samples")
 
     def action_next(self) -> None:
-        task_ids = list(self._task_cards.keys())
-        if not task_ids:
+        state = get_state()
+        ids = list(state.extractions.keys())
+        if not ids:
             return
-        if self._selected_id is None:
-            self._select_task(task_ids[0])
+
+        if state.selected_id is None:
+            state.select_extraction(ids[0])
         else:
             try:
-                idx = task_ids.index(self._selected_id)
-                self._select_task(task_ids[(idx + 1) % len(task_ids)])
+                idx = ids.index(state.selected_id)
+                state.select_extraction(ids[(idx + 1) % len(ids)])
             except ValueError:
-                self._select_task(task_ids[0])
+                state.select_extraction(ids[0])
+
+        self._sync()
 
     def action_prev(self) -> None:
-        task_ids = list(self._task_cards.keys())
-        if not task_ids:
+        state = get_state()
+        ids = list(state.extractions.keys())
+        if not ids:
             return
-        if self._selected_id is None:
-            self._select_task(task_ids[-1])
+
+        if state.selected_id is None:
+            state.select_extraction(ids[-1])
         else:
             try:
-                idx = task_ids.index(self._selected_id)
-                self._select_task(task_ids[(idx - 1) % len(task_ids)])
+                idx = ids.index(state.selected_id)
+                state.select_extraction(ids[(idx - 1) % len(ids)])
             except ValueError:
-                self._select_task(task_ids[-1])
+                state.select_extraction(ids[-1])
+
+        self._sync()
 
     def action_open(self) -> None:
         self.app.switch_screen("samples")
