@@ -311,18 +311,21 @@ class DashboardScreen(Screen):
     """Main dashboard with task list and details panel."""
 
     BINDINGS = [
-        Binding("1", "noop", ""),
-        Binding("2", "go_samples", ""),
-        Binding("3", "go_logs", ""),
-        Binding("tab", "cycle", ""),
-        Binding("j", "next", ""),
-        Binding("k", "prev", ""),
-        Binding("down", "next", ""),
-        Binding("up", "prev", ""),
-        Binding("enter", "open", ""),
-        Binding("n", "new_task", ""),
-        Binding("q", "quit", ""),
-        Binding("?", "help", ""),
+        # Navigation between screens
+        Binding("1", "noop", "Dashboard", show=False),  # Current screen
+        Binding("2", "go_samples", "Samples", key_display="2"),
+        Binding("3", "go_logs", "Logs", key_display="3"),
+        Binding("tab", "cycle", "Next Screen"),
+        # List navigation
+        Binding("j", "next", "Next", show=False),
+        Binding("k", "prev", "Previous", show=False),
+        Binding("down", "next", "Next Task", key_display="↓"),
+        Binding("up", "prev", "Prev Task", key_display="↑"),
+        Binding("enter", "open", "Open"),
+        # Actions
+        Binding("n", "new_task", "New Task"),
+        Binding("q", "quit", "Quit"),
+        Binding("?", "help", "Help"),
     ]
 
     DEFAULT_CSS = """

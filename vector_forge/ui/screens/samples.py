@@ -508,17 +508,20 @@ class SamplesScreen(Screen):
     """Split view screen showing parallel workers."""
 
     BINDINGS = [
-        Binding("1", "go_dashboard", ""),
-        Binding("2", "noop", ""),
-        Binding("3", "go_logs", ""),
-        Binding("tab", "cycle", ""),
-        Binding("j", "next", ""),
-        Binding("k", "prev", ""),
-        Binding("down", "next", ""),
-        Binding("up", "prev", ""),
-        Binding("n", "new_task", ""),
-        Binding("q", "quit", ""),
-        Binding("?", "help", ""),
+        # Navigation between screens
+        Binding("1", "go_dashboard", "Dashboard", key_display="1"),
+        Binding("2", "noop", "Samples", show=False),  # Current screen
+        Binding("3", "go_logs", "Logs", key_display="3"),
+        Binding("tab", "cycle", "Next Screen"),
+        # List navigation
+        Binding("j", "next", "Next", show=False),
+        Binding("k", "prev", "Previous", show=False),
+        Binding("down", "next", "Next Worker", key_display="↓"),
+        Binding("up", "prev", "Prev Worker", key_display="↑"),
+        # Actions
+        Binding("n", "new_task", "New Task"),
+        Binding("q", "quit", "Quit"),
+        Binding("?", "help", "Help"),
     ]
 
     DEFAULT_CSS = """

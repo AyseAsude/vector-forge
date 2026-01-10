@@ -456,17 +456,20 @@ class LogsScreen(Screen):
     """Full-screen log viewer with split-panel filtering."""
 
     BINDINGS = [
-        Binding("1", "go_dashboard", ""),
-        Binding("2", "go_samples", ""),
-        Binding("3", "noop", ""),
-        Binding("tab", "cycle", ""),
-        Binding("q", "quit", ""),
-        Binding("n", "new_task", ""),
-        Binding("/", "focus_search", ""),
-        Binding("escape", "clear_focus", "", show=False),
-        Binding("g", "scroll_top", "", show=False),
-        Binding("G", "scroll_bottom", "", show=False),
-        Binding("?", "help", ""),
+        # Navigation between screens
+        Binding("1", "go_dashboard", "Dashboard", key_display="1"),
+        Binding("2", "go_samples", "Samples", key_display="2"),
+        Binding("3", "noop", "Logs", show=False),  # Current screen
+        Binding("tab", "cycle", "Next Screen"),
+        # Log navigation
+        Binding("/", "focus_search", "Search"),
+        Binding("g", "scroll_top", "Top", show=False),
+        Binding("G", "scroll_bottom", "Bottom", show=False),
+        Binding("escape", "clear_focus", "Clear", show=False),
+        # Actions
+        Binding("n", "new_task", "New Task"),
+        Binding("q", "quit", "Quit"),
+        Binding("?", "help", "Help"),
     ]
 
     DEFAULT_CSS = """

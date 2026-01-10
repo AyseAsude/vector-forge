@@ -1,4 +1,4 @@
-"""Help modal screen."""
+"""Help modal - shows keyboard shortcuts from active bindings."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -8,12 +8,16 @@ from textual.widgets import Static
 
 
 class HelpModal(ModalScreen):
-    """Modal screen showing keyboard shortcuts and help."""
+    """Modal showing keyboard shortcuts.
+
+    Reads bindings dynamically from the app and current screen
+    instead of hardcoding them.
+    """
 
     BINDINGS = [
-        Binding("escape", "dismiss", "close"),
-        Binding("q", "dismiss", "close"),
-        Binding("?", "dismiss", "close"),
+        Binding("escape", "dismiss", "Close"),
+        Binding("q", "dismiss", "Close", show=False),
+        Binding("?", "dismiss", "Close", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -26,15 +30,14 @@ class HelpModal(ModalScreen):
         height: auto;
         max-height: 80%;
         background: $panel;
-        border: solid $surface;
         padding: 1 2;
     }
 
     HelpModal #help-title {
-        text-style: bold;
-        color: $foreground;
-        text-align: center;
         height: 1;
+        text-style: bold;
+        color: $accent;
+        text-align: center;
         margin-bottom: 1;
     }
 
@@ -44,9 +47,10 @@ class HelpModal(ModalScreen):
     }
 
     HelpModal .section-title {
-        color: $accent;
-        text-style: bold;
+        height: 1;
+        color: $foreground-muted;
         margin-top: 1;
+        margin-bottom: 0;
     }
 
     HelpModal .key-row {
@@ -54,7 +58,8 @@ class HelpModal(ModalScreen):
     }
 
     HelpModal #help-footer {
-        color: $foreground-muted;
+        height: 1;
+        color: $foreground-disabled;
         text-align: center;
         margin-top: 1;
     }
@@ -62,54 +67,117 @@ class HelpModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="help-container"):
-            yield Static("Vector Forge Help", id="help-title")
-            with VerticalScroll(id="help-scroll"):
-                yield Static("Navigation", classes="section-title")
-                yield Static(classes="key-row", id="key-1")
-                yield Static(classes="key-row", id="key-2")
-                yield Static(classes="key-row", id="key-3")
-                yield Static(classes="key-row", id="key-tab")
-
-                yield Static("Actions", classes="section-title")
-                yield Static(classes="key-row", id="key-n")
-                yield Static(classes="key-row", id="key-slash")
-                yield Static(classes="key-row", id="key-esc")
-
-                yield Static("Navigation (Samples/Logs)", classes="section-title")
-                yield Static(classes="key-row", id="key-jdown")
-                yield Static(classes="key-row", id="key-kup")
-                yield Static(classes="key-row", id="key-ghome")
-                yield Static(classes="key-row", id="key-gend")
-
-                yield Static("General", classes="section-title")
-                yield Static(classes="key-row", id="key-help")
-                yield Static(classes="key-row", id="key-q")
-                yield Static(classes="key-row", id="key-ctrlc")
-
+            yield Static("Keyboard Shortcuts", id="help-title")
+            yield VerticalScroll(id="help-scroll")
             yield Static("Press any key to close", id="help-footer")
 
     def on_mount(self) -> None:
-        # Navigation section
-        self.query_one("#key-1", Static).update("[$warning]1[/]  [$foreground-muted]Dashboard view[/]")
-        self.query_one("#key-2", Static).update("[$warning]2[/]  [$foreground-muted]Samples view[/]")
-        self.query_one("#key-3", Static).update("[$warning]3[/]  [$foreground-muted]Logs view[/]")
-        self.query_one("#key-tab", Static).update("[$warning]Tab[/]  [$foreground-muted]Cycle screens[/]")
+        scroll = self.query_one("#help-scroll", VerticalScroll)
 
-        # Actions section
-        self.query_one("#key-n", Static).update("[$warning]n[/]  [$foreground-muted]Create new task[/]")
-        self.query_one("#key-slash", Static).update("[$warning]/[/]  [$foreground-muted]Focus filter input[/]")
-        self.query_one("#key-esc", Static).update("[$warning]Esc[/]  [$foreground-muted]Clear filter / Close modal[/]")
+        # Collect bindings from the screen stack
+        bindings = self._collect_bindings()
 
-        # Navigation (Samples/Logs) section
-        self.query_one("#key-jdown", Static).update("[$warning]j/Down[/]  [$foreground-muted]Select next item[/]")
-        self.query_one("#key-kup", Static).update("[$warning]k/Up[/]  [$foreground-muted]Select previous item[/]")
-        self.query_one("#key-ghome", Static).update("[$warning]g/Home[/]  [$foreground-muted]Scroll to top[/]")
-        self.query_one("#key-gend", Static).update("[$warning]G/End[/]  [$foreground-muted]Scroll to bottom[/]")
+        # Group bindings by category
+        categories = self._categorize_bindings(bindings)
 
-        # General section
-        self.query_one("#key-help", Static).update("[$warning]?[/]  [$foreground-muted]Show this help[/]")
-        self.query_one("#key-q", Static).update("[$warning]q[/]  [$foreground-muted]Quit application[/]")
-        self.query_one("#key-ctrlc", Static).update("[$warning]Ctrl+C[/]  [$foreground-muted]Force quit[/]")
+        # Render each category
+        for category_name, category_bindings in categories.items():
+            if category_bindings:
+                scroll.mount(Static(category_name.upper(), classes="section-title"))
+                for key_display, description in category_bindings:
+                    scroll.mount(Static(
+                        f"[$warning]{key_display:<12}[/] [$foreground-muted]{description}[/]",
+                        classes="key-row"
+                    ))
+
+    def _collect_bindings(self) -> list[Binding]:
+        """Collect all active bindings from app and screen stack."""
+        bindings = []
+
+        # Get bindings from the screen below this modal
+        for screen in reversed(self.app.screen_stack):
+            if screen is not self:
+                # Get screen's own bindings
+                if hasattr(screen, 'BINDINGS'):
+                    for binding in screen.BINDINGS:
+                        if isinstance(binding, tuple):
+                            # Convert tuple to Binding
+                            binding = Binding(*binding)
+                        bindings.append(binding)
+                break  # Only get bindings from the immediate parent screen
+
+        # Add app-level bindings (if any that should show)
+        if hasattr(self.app, 'BINDINGS'):
+            for binding in self.app.BINDINGS:
+                if isinstance(binding, tuple):
+                    binding = Binding(*binding)
+                # Only add if not already in list (by key)
+                if not any(b.key == binding.key for b in bindings):
+                    bindings.append(binding)
+
+        return bindings
+
+    def _categorize_bindings(self, bindings: list[Binding]) -> dict[str, list[tuple[str, str]]]:
+        """Organize bindings into display categories."""
+        categories = {
+            "Navigation": [],
+            "Actions": [],
+            "Movement": [],
+            "Other": [],
+        }
+
+        # Define which actions go in which category
+        nav_actions = {"go_dashboard", "go_samples", "go_logs", "cycle", "noop"}
+        movement_actions = {"next", "prev", "scroll_top", "scroll_bottom", "focus_search", "clear_focus", "open"}
+        action_actions = {"new_task", "quit", "help", "create", "cancel", "save", "dismiss"}
+
+        for binding in bindings:
+            # Skip bindings with empty descriptions
+            if not binding.description:
+                continue
+
+            # Get display key (use key_display if available, otherwise key)
+            key_display = getattr(binding, 'key_display', None) or binding.key
+
+            # Format multi-key bindings nicely
+            if ',' in binding.key:
+                # For bindings like "j,down", show just the first
+                key_display = binding.key.split(',')[0]
+
+            # Capitalize key display
+            key_display = key_display.upper() if len(key_display) == 1 else key_display.capitalize()
+
+            # Special formatting for some keys
+            key_map = {
+                "escape": "Esc",
+                "tab": "Tab",
+                "enter": "Enter",
+                "up": "↑",
+                "down": "↓",
+                "left": "←",
+                "right": "→",
+                "ctrl+s": "Ctrl+S",
+            }
+            key_display = key_map.get(binding.key.lower(), key_display)
+
+            entry = (key_display, binding.description)
+
+            # Categorize by action name
+            action = binding.action.split("(")[0]  # Remove any arguments
+
+            if action in nav_actions:
+                # Skip "noop" actions (current screen markers)
+                if action != "noop":
+                    categories["Navigation"].append(entry)
+            elif action in movement_actions:
+                categories["Movement"].append(entry)
+            elif action in action_actions:
+                categories["Actions"].append(entry)
+            else:
+                categories["Other"].append(entry)
+
+        # Remove empty categories and sort
+        return {k: v for k, v in categories.items() if v}
 
     def on_key(self, event) -> None:
         """Close on any key press."""
