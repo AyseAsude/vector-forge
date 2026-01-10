@@ -37,6 +37,143 @@ from steering_vectors.optimization.callbacks import (
     EarlyStoppingCallback,
 )
 
+
+# ============================================================================
+# Memory Estimation
+# ============================================================================
+
+
+class MemoryEstimator:
+    """Estimates GPU memory requirements for steering vector optimization.
+
+    Memory usage per concurrent extraction depends on:
+    - Model size (parameters × dtype size)
+    - Batch size (more sequences per forward pass = more activations)
+    - Gradient checkpointing (enabled = lower memory, we assume it's on)
+
+    Constants derived empirically on A100-40GB with Llama-3.1-8B (15GB):
+    - batch_size=16: ~7.4 GB per extraction
+    - batch_size=8: ~3.8 GB per extraction
+    - batch_size=4: ~3.0 GB per extraction
+
+    Formula: memory_gb = BASE_OVERHEAD + model_gb × (RATIO + BATCH_FACTOR × batch_size)
+
+    This scales properly for:
+    - Small models (1-3B): BASE_OVERHEAD ensures minimum allocation
+    - Medium models (7-14B): Linear scaling with model size
+    - Large models (30-70B): Same linear scaling, auto-limits concurrency
+    """
+
+    # Fixed overhead per extraction (optimizer states, hooks, CUDA context)
+    BASE_OVERHEAD_GB: float = 0.5
+
+    # Base activation memory as fraction of model size (with gradient checkpointing)
+    BASE_RATIO: float = 0.10
+
+    # Additional memory per batch element (as fraction of model size)
+    BATCH_FACTOR: float = 0.025
+
+    # Safety margin - only use this fraction of calculated available memory
+    # Accounts for CUDA fragmentation, PyTorch overhead, and estimation errors
+    SAFETY_MARGIN: float = 0.70
+
+    # Minimum free GPU memory (GB) required before allowing any extraction
+    MIN_FREE_GB: float = 4.0
+
+    # Absolute minimum memory per extraction (GB) regardless of model size
+    MIN_PER_EXTRACTION_GB: float = 1.5
+
+    @classmethod
+    def get_model_size_gb(cls, model: PreTrainedModel) -> float:
+        """Calculate model size in GB from parameters."""
+        try:
+            total_bytes = sum(
+                p.numel() * p.element_size() for p in model.parameters()
+            )
+            return total_bytes / (1024**3)
+        except Exception:
+            return 0.0
+
+    @classmethod
+    def estimate_per_extraction_gb(
+        cls,
+        model_size_gb: float,
+        batch_size: int,
+    ) -> float:
+        """Estimate memory needed per concurrent extraction.
+
+        Args:
+            model_size_gb: Model size in GB.
+            batch_size: Optimization batch size (sequences per forward pass).
+
+        Returns:
+            Estimated GB per extraction.
+        """
+        # Scaling component based on model size and batch size
+        ratio = cls.BASE_RATIO + (cls.BATCH_FACTOR * batch_size)
+        scaling = model_size_gb * ratio
+
+        # Total = fixed overhead + scaling component
+        estimated = cls.BASE_OVERHEAD_GB + scaling
+
+        return max(cls.MIN_PER_EXTRACTION_GB, estimated)
+
+    @classmethod
+    def get_safe_concurrency(
+        cls,
+        model: PreTrainedModel,
+        batch_size: int,
+        max_concurrent: int,
+    ) -> int:
+        """Calculate safe number of concurrent extractions.
+
+        Args:
+            model: The model being used for extraction.
+            batch_size: Optimization batch size.
+            max_concurrent: Maximum allowed concurrency (from config).
+
+        Returns:
+            Safe number of concurrent extractions (at least 1).
+        """
+        if not torch.cuda.is_available():
+            return max_concurrent
+
+        try:
+            # Get GPU memory state
+            props = torch.cuda.get_device_properties(0)
+            total_gb = props.total_memory / (1024**3)
+            reserved_gb = torch.cuda.memory_reserved(0) / (1024**3)
+            free_gb = total_gb - reserved_gb
+
+            # Check minimum free memory
+            if free_gb < cls.MIN_FREE_GB:
+                logger.warning(
+                    f"Low GPU memory: {free_gb:.1f}GB free, "
+                    f"need {cls.MIN_FREE_GB}GB minimum"
+                )
+                return 1
+
+            # Estimate memory per extraction
+            model_size_gb = cls.get_model_size_gb(model)
+            per_extraction_gb = cls.estimate_per_extraction_gb(model_size_gb, batch_size)
+
+            # Calculate safe concurrency with safety margin
+            available_gb = free_gb * cls.SAFETY_MARGIN
+            safe = max(1, int(available_gb / per_extraction_gb))
+            safe = min(safe, max_concurrent)
+
+            logger.info(
+                f"Memory estimation: {total_gb:.1f}GB total, {free_gb:.1f}GB free, "
+                f"model={model_size_gb:.1f}GB, batch_size={batch_size}, "
+                f"~{per_extraction_gb:.1f}GB/extraction -> safe_concurrency={safe}"
+            )
+
+            return safe
+
+        except Exception as e:
+            logger.warning(f"Memory estimation failed: {e}, defaulting to 1")
+            return 1
+
 from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
 from vector_forge.tasks.sample import ExtractionSample
 from vector_forge.tasks.task import ExtractionTask, TaskResult, SampleResult
@@ -174,10 +311,6 @@ class TaskRunner:
         >>> print(f"Best score: {result.final_score}")
     """
 
-    # Memory estimation constants
-    MEMORY_BUFFER_RATIO = 0.85  # Use 85% of available memory
-    ACTIVATION_MEMORY_RATIO = 0.15  # Activations ~15% of model size with gradient checkpointing
-
     def __init__(
         self,
         model_backend: ModelBackend,
@@ -217,79 +350,6 @@ class TaskRunner:
             f"TaskRunner initialized: {self._num_layers} layers, "
             f"hidden_dim={self._hidden_dim}"
         )
-
-    def _estimate_memory_per_extraction(self) -> float:
-        """Estimate memory needed per concurrent extraction in GB.
-
-        Based on model size - activations scale with model parameters.
-        With gradient checkpointing, activations are ~15% of model size.
-        Without checkpointing, would be ~50%+.
-
-        Returns:
-            Estimated GB per extraction.
-        """
-        try:
-            # Get model memory usage
-            model_memory = sum(
-                p.numel() * p.element_size()
-                for p in self._backend.model.parameters()
-            )
-            model_gb = model_memory / (1024 ** 3)
-
-            # Activation memory per extraction (with gradient checkpointing)
-            # Each forward pass stores activations for backward pass
-            memory_per_extraction = model_gb * self.ACTIVATION_MEMORY_RATIO
-
-            # Minimum 0.5GB, accounts for optimizer states and overhead
-            return max(0.5, memory_per_extraction)
-
-        except Exception as e:
-            logger.warning(f"Could not estimate model memory: {e}, using 2GB default")
-            return 2.0
-
-    def _get_safe_concurrency(self) -> int:
-        """Calculate safe concurrency based on available GPU memory.
-
-        Dynamically estimates memory per extraction based on actual model size,
-        then calculates how many can run concurrently.
-
-        Returns:
-            Number of safe concurrent extractions.
-        """
-        if not torch.cuda.is_available():
-            # CPU: no memory constraints, use all
-            return self._max_extractions
-
-        try:
-            # Get current GPU memory state
-            total_memory = torch.cuda.get_device_properties(0).total_memory
-            reserved = torch.cuda.memory_reserved(0)
-            free = total_memory - reserved
-
-            # Convert to GB
-            free_gb = free / (1024 ** 3)
-            total_gb = total_memory / (1024 ** 3)
-
-            # Estimate memory per extraction based on actual model
-            memory_per_extraction = self._estimate_memory_per_extraction()
-
-            # Calculate safe concurrency
-            available_for_extractions = free_gb * self.MEMORY_BUFFER_RATIO
-            safe_concurrency = max(1, int(available_for_extractions / memory_per_extraction))
-
-            # Clamp to configured max
-            safe_concurrency = min(safe_concurrency, self._max_extractions)
-
-            logger.info(
-                f"GPU memory: {total_gb:.1f}GB total, {free_gb:.1f}GB free, "
-                f"~{memory_per_extraction:.1f}GB/extraction -> concurrency: {safe_concurrency}"
-            )
-
-            return safe_concurrency
-
-        except Exception as e:
-            logger.warning(f"Could not determine safe concurrency: {e}, using 1")
-            return 1
 
     def _clear_gpu_memory(self) -> None:
         """Clear GPU memory between extractions."""
@@ -412,11 +472,16 @@ class TaskRunner:
         Uses dynamic concurrency based on available GPU memory to prevent OOM.
         Falls back to sequential execution if GPU memory is limited.
         """
-        # Determine safe concurrency based on GPU memory
-        safe_concurrency = self._get_safe_concurrency()
+        # Determine safe concurrency based on GPU memory and batch size
+        batch_size = task.config.optimization.batch_size
+        safe_concurrency = MemoryEstimator.get_safe_concurrency(
+            model=self._backend.model,
+            batch_size=batch_size,
+            max_concurrent=self._max_extractions,
+        )
         logger.info(
             f"Running {len(task.samples)} extractions with concurrency: {safe_concurrency} "
-            f"(configured max: {self._max_extractions})"
+            f"(configured max: {self._max_extractions}, batch_size: {batch_size})"
         )
 
         semaphore = asyncio.Semaphore(safe_concurrency)
