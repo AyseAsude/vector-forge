@@ -240,12 +240,16 @@ class TaskRunner:
             task, sample_datasets
         )
 
-        # Phase 2: Parallel evaluation
-        evaluated_results = await self._run_evaluations(
-            extraction_results,
-            task.behavior,
-            config,
-        )
+        # Phase 2: Parallel evaluation (skip if fails)
+        try:
+            evaluated_results = await self._run_evaluations(
+                extraction_results,
+                task.behavior,
+                config,
+            )
+        except Exception as e:
+            logger.warning(f"Evaluation failed, skipping: {e}")
+            evaluated_results = extraction_results
 
         # Phase 3: Aggregation
         final_result = self._aggregate_results(

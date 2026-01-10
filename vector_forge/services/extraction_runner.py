@@ -9,6 +9,7 @@ This service handles the complete flow from task creation to result:
 """
 
 import asyncio
+import gc
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -70,6 +71,10 @@ class ExtractionRunner:
         self._progress_callbacks: List[Callable[[ExtractionProgress], None]] = []
         self._running_extractions: Dict[str, asyncio.Task] = {}
 
+        # Model caching - reuse loaded model for same model_id
+        self._cached_backend: Optional[Any] = None
+        self._cached_model_id: Optional[str] = None
+
     def on_progress(self, callback: Callable[[ExtractionProgress], None]) -> None:
         """Register a progress callback.
 
@@ -113,15 +118,31 @@ class ExtractionRunner:
             TaskResult if successful, None if failed.
         """
         try:
-            self._emit_progress(ExtractionProgress(
-                session_id=session_id,
-                phase="loading_model",
-                progress=0.0,
-                message="Loading target model...",
-            ))
+            # Step 1: Get or load target model (cached for reuse)
+            if self._cached_model_id == config.target_model and self._cached_backend is not None:
+                self._emit_progress(ExtractionProgress(
+                    session_id=session_id,
+                    phase="loading_model",
+                    progress=0.0,
+                    message="Using cached model...",
+                ))
+                model_backend = self._cached_backend
+                logger.info(f"Reusing cached model: {config.target_model}")
+            else:
+                self._emit_progress(ExtractionProgress(
+                    session_id=session_id,
+                    phase="loading_model",
+                    progress=0.0,
+                    message="Loading target model...",
+                ))
 
-            # Step 1: Load target model
-            model_backend = await self._load_target_model(config.target_model)
+                # Free previous model if different
+                if self._cached_backend is not None:
+                    self._free_cached_model()
+
+                model_backend = await self._load_target_model(config.target_model)
+                self._cached_backend = model_backend
+                self._cached_model_id = config.target_model
 
             self._emit_progress(ExtractionProgress(
                 session_id=session_id,
@@ -254,6 +275,49 @@ class ExtractionRunner:
 
             return None
 
+        finally:
+            # Clear intermediate CUDA tensors (activations, gradients)
+            # but keep the model cached for reuse
+            self._clear_cuda_cache()
+
+    def _clear_cuda_cache(self) -> None:
+        """Clear CUDA cache to free intermediate tensors.
+
+        This frees activations and gradients from extraction
+        while keeping the model itself cached.
+        """
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.debug("Cleared CUDA cache")
+
+    def _free_cached_model(self) -> None:
+        """Free the cached model from GPU memory.
+
+        Called when switching to a different model.
+        """
+        if self._cached_backend is None:
+            return
+
+        logger.info(f"Freeing cached model: {self._cached_model_id}")
+
+        try:
+            if hasattr(self._cached_backend, 'model'):
+                del self._cached_backend.model
+            if hasattr(self._cached_backend, 'tokenizer'):
+                del self._cached_backend.tokenizer
+            del self._cached_backend
+        except Exception as e:
+            logger.warning(f"Error freeing model: {e}")
+
+        self._cached_backend = None
+        self._cached_model_id = None
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
     async def _load_target_model(self, model_id: str) -> Any:
         """Load the target HuggingFace model.
 
@@ -371,3 +435,16 @@ class ExtractionRunner:
     def running_session_ids(self) -> List[str]:
         """Get list of currently running extraction session IDs."""
         return list(self._running_extractions.keys())
+
+    @property
+    def cached_model_id(self) -> Optional[str]:
+        """Get the currently cached model ID, if any."""
+        return self._cached_model_id
+
+    def clear_model_cache(self) -> None:
+        """Explicitly clear the cached model from GPU memory.
+
+        Call this when you want to free GPU memory, such as
+        when closing the app or before loading a very large model.
+        """
+        self._free_cached_model()
