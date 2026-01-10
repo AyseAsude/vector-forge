@@ -351,23 +351,27 @@ class TaskExecutor:
                 vector_ref = store.save_final_vector(result.final_vector)
 
                 vector_event = VectorCreatedEvent(
+                    vector_id=f"final_L{result.final_layer}",
                     layer=result.final_layer,
                     vector_ref=vector_ref,
-                    method="aggregation",
-                    source_datapoints=result.valid_results_count,
-                    metadata={
+                    shape=list(result.final_vector.shape),
+                    dtype=str(result.final_vector.dtype),
+                    norm=result.final_vector.norm().item(),
+                    optimization_metrics={
                         "aggregation": result.aggregation_method.value,
                         "ensemble_size": len(result.ensemble_components),
+                        "source_samples": result.valid_results_count,
                     },
                 )
                 store.append_event(vector_event, source="executor")
 
                 # Emit vector selected event
                 selected_event = VectorSelectedEvent(
+                    vector_id=f"final_L{result.final_layer}",
                     layer=result.final_layer,
                     strength=result.recommended_strength,
-                    vector_ref=vector_ref,
-                    reason=f"Best score: {result.final_score:.3f}",
+                    score=result.final_score,
+                    reason=f"Aggregated from {result.valid_results_count} samples",
                 )
                 store.append_event(selected_event, source="executor")
 
