@@ -30,6 +30,142 @@ from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Message Detail Modal - Shows full message content
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class MessageDetailModal(ModalScreen):
+    """Modal showing full message details."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "close"),
+        Binding("q", "dismiss", "close"),
+        Binding("j", "scroll_down", "scroll down", show=False),
+        Binding("k", "scroll_up", "scroll up", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    MessageDetailModal {
+        align: center middle;
+    }
+
+    MessageDetailModal #modal-container {
+        width: 90%;
+        max-width: 120;
+        height: 85%;
+        background: $surface;
+        border: solid $primary;
+    }
+
+    MessageDetailModal #modal-header {
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    MessageDetailModal .title {
+        height: 1;
+        text-style: bold;
+    }
+
+    MessageDetailModal .meta {
+        height: auto;
+        color: $foreground-muted;
+    }
+
+    MessageDetailModal #modal-content {
+        height: 1fr;
+        padding: 1 2;
+        background: $background;
+    }
+
+    MessageDetailModal .section-header {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+
+    MessageDetailModal .section-content {
+        height: auto;
+        padding: 1;
+        margin-bottom: 1;
+        background: $surface;
+    }
+
+    MessageDetailModal #modal-footer {
+        height: 2;
+        padding: 0 2;
+        background: $surface;
+        border-top: solid $surface-lighten-1;
+    }
+
+    MessageDetailModal .footer-text {
+        height: 1;
+        color: $foreground-muted;
+        text-align: center;
+    }
+    """
+
+    def __init__(self, msg: AgentMessage, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.msg = msg
+
+    def compose(self) -> ComposeResult:
+        msg = self.msg
+        role_colors = {
+            "system": "$primary",
+            "user": "$accent",
+            "assistant": "$success",
+            "tool": "$warning",
+        }
+        color = role_colors.get(msg.role.value, "$foreground-muted")
+
+        with Vertical(id="modal-container"):
+            # Header
+            with Vertical(id="modal-header"):
+                yield Static(f"[{color} bold]{msg.role.value.upper()}[/]", classes="title")
+                yield Static(f"Time: {msg.time_str}", classes="meta")
+
+            # Content
+            with VerticalScroll(id="modal-content"):
+                # Message content
+                if msg.content:
+                    yield Static("CONTENT", classes="section-header")
+                    yield Static(msg.content, classes="section-content")
+
+                # Tool calls
+                if msg.tool_calls:
+                    yield Static(f"TOOL CALLS ({len(msg.tool_calls)})", classes="section-header")
+                    for tc in msg.tool_calls:
+                        tc_color = "$success" if tc.status == "success" else "$warning"
+                        duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
+                        yield Static(f"[{tc_color} bold]▸ {tc.name}[/]{duration}", classes="section-content")
+                        if tc.arguments:
+                            # Try to format JSON arguments
+                            try:
+                                args_obj = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                                args_str = json.dumps(args_obj, indent=2)
+                            except (json.JSONDecodeError, TypeError):
+                                args_str = str(tc.arguments)
+                            yield Static(args_str, classes="section-content")
+                        if tc.result:
+                            yield Static(f"Result: {tc.result}", classes="section-content")
+
+            # Footer
+            with Vertical(id="modal-footer"):
+                yield Static("Press ESC or q to close", classes="footer-text")
+
+    def action_scroll_down(self) -> None:
+        self.query_one("#modal-content", VerticalScroll).scroll_down()
+
+    def action_scroll_up(self) -> None:
+        self.query_one("#modal-content", VerticalScroll).scroll_up()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Tool Call Modal - Shows tool call details
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -328,6 +464,12 @@ class WorkersPanel(Vertical):
 class MessageRow(Static):
     """Single message row in the conversation stream."""
 
+    class Clicked(Message):
+        """Posted when a message row is clicked."""
+        def __init__(self, msg: AgentMessage) -> None:
+            super().__init__()
+            self.msg = msg
+
     DEFAULT_CSS = """
     MessageRow {
         height: auto;
@@ -345,51 +487,14 @@ class MessageRow(Static):
         content = self._compute_content()
         super().__init__(content, **kwargs)
 
+    def on_click(self) -> None:
+        """Handle click to open detail modal."""
+        self.post_message(self.Clicked(self.msg))
+
     def _clean_content(self, content: str) -> str:
-        """Clean up content by removing markdown code fences and extracting meaningful text."""
-        # Remove markdown code fences (```json, ```python, ```, etc.)
-        content = re.sub(r'```\w*\s*', '', content)
-        content = re.sub(r'```', '', content)
-        content = content.strip()
-
-        # Try to parse as JSON and extract human-readable content
-        if content.startswith('{') or content.startswith('['):
-            try:
-                data = json.loads(content)
-                if isinstance(data, dict):
-                    # For contrast pairs, show prompt summary
-                    if 'prompt' in data and ('positive_response' in data or 'dst_response' in data):
-                        prompt = data.get('prompt', '')[:150]
-                        return f"[Contrast Pair] {prompt}..."
-
-                    # For scored responses, show a summary
-                    if 'dst_behavior_score' in data or 'score' in data:
-                        score = data.get('dst_behavior_score') or data.get('score', '?')
-                        quality = data.get('contrast_quality', '')
-                        reasoning = data.get('reasoning', '')[:100] if data.get('reasoning') else ''
-                        parts = [f"Score: {score}"]
-                        if quality:
-                            parts.append(f"Quality: {quality}")
-                        if reasoning:
-                            parts.append(reasoning)
-                        return " | ".join(parts)
-
-                    # Extract readable text fields
-                    for key in ('reasoning', 'description', 'explanation', 'summary', 'content', 'prompt', 'scenario', 'text'):
-                        if key in data and isinstance(data[key], str):
-                            return data[key]
-
-                    # For arrays of items (scenarios, components, etc.), show count
-                    for key in ('scenarios', 'components', 'pairs', 'items'):
-                        if key in data and isinstance(data[key], list):
-                            return f"[{len(data[key])} {key}]"
-
-            except (json.JSONDecodeError, TypeError):
-                pass
-
+        """Clean up content for display - just collapse whitespace, no transformation."""
         # Collapse multiple whitespace/newlines into single space
         content = re.sub(r'\s+', ' ', content)
-
         return content.strip()
 
     def _compute_content(self) -> str:
@@ -705,6 +810,10 @@ class SamplesScreen(Screen):
             if extraction:
                 extraction.select_agent(event.item.agent_id)
                 self._sync()
+
+    def on_message_row_clicked(self, event: MessageRow.Clicked) -> None:
+        """Handle message click to open detail modal."""
+        self.app.push_screen(MessageDetailModal(event.msg))
 
     def action_noop(self) -> None:
         pass
