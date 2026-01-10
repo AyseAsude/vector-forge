@@ -24,8 +24,11 @@ logger = logging.getLogger(__name__)
 
 GENERATION_PROMPT = '''Generate a high-quality contrast pair for steering vector training.
 
-## BEHAVIOR
-{behavior_description}
+## BEHAVIOR: {behavior_description}
+{core_definition}
+
+## WHAT THIS IS NOT (Critical - do not confuse with these)
+{negative_examples}
 
 ## BEHAVIOR COMPONENTS TO TARGET
 {target_components}
@@ -36,60 +39,81 @@ GENERATION_PROMPT = '''Generate a high-quality contrast pair for steering vector
 ## CONTEXT
 {context}
 
-## ATTRIBUTES
-{attributes}
-
 ---
 
-## CONFOUND CONTROL (CRITICAL)
+## REALISM REQUIREMENT (Critical for clean extraction)
 
-The ONLY difference between POSITIVE and NEGATIVE should be the target behavior.
-Control these confounds:
+Your responses must feel NATURAL - like how a real AI would actually respond.
+- NO forced or exaggerated behavior ("I ABSOLUTELY LOVE your idea!!!")
+- NO cartoonish or obvious test-case responses
+- The behavior should arise naturally, not be artificially inserted
+- Both responses should read as plausible AI assistant outputs
+
+Think: Would someone reading this suspect it's a test case? If yes, it's too artificial.
+
+## CONFOUND CONTROL (Critical for clean signal)
+
+The ONLY difference between POSITIVE and NEGATIVE must be the target behavior.
+Both responses must be MATCHED on:
 
 {confounds}
 
-**Specifically:**
-- SIMILAR LENGTH: Both responses should be roughly the same length
-- SIMILAR TONE: Both should have similar politeness/formality (unless tone IS the behavior)
-- SIMILAR HELPFULNESS: Both should be equally helpful (unless helpfulness IS the behavior)
-- SIMILAR QUALITY: Both should be coherent and well-written
-- SIMILAR STRUCTURE: Both should have similar organization
+**Verification checklist:**
+- LENGTH: Count the words - both should be within 20% of each other
+- TONE: Same level of formality, warmth, directness
+- HELPFULNESS: Both equally helpful (unless helpfulness IS the behavior)
+- QUALITY: Both equally well-written and coherent
+- STRUCTURE: Similar organization (paragraphs, lists, etc.)
+
+If you cannot match a confound, the pair is useless. Start over.
 
 ---
 
-## TASK
+## GENERATION TASK
 
-1. Create a natural PROMPT based on the scenario
-   - Should feel realistic, not contrived
-   - Should naturally allow for both exhibiting and not exhibiting the behavior
+1. **PROMPT**: Create a natural user message based on the scenario
+   - Must feel like a real user request, not a test
+   - Should naturally elicit the behavior without forcing it
 
-2. Generate POSITIVE (dst) response that:
-   - CLEARLY exhibits the target behavior
-   - Focuses on the specified components
-   - Is natural and high-quality
+2. **POSITIVE (dst)**: Response that EXHIBITS the behavior
+   - Show the behavior CLEARLY but NATURALLY
+   - Focus on specified components
+   - Must be a response a real AI might produce
 
-3. Generate NEGATIVE (src) response that:
-   - Clearly does NOT exhibit the behavior
-   - Could show neutral stance or opposite tendency
-   - Is EQUALLY good quality as the positive
+3. **NEGATIVE (src)**: Response that does NOT exhibit the behavior
+   - Must NOT show the behavior or its markers
+   - NOT the same as showing opposite behavior (unless appropriate)
+   - Must be EQUALLY good - just without this specific behavior
 
-4. Self-check for confounds
+4. **SELF-CHECK**: Before outputting, verify:
+   - Is the behavior clear in dst?
+   - Is the behavior absent in src?
+   - Are confounds matched?
+   - Do both responses feel natural?
 
 ---
 
 Return JSON:
 {{
-  "prompt": "The user prompt",
-  "dst": "The positive response (exhibits behavior)",
-  "src": "The negative response (does not exhibit behavior)",
+  "prompt": "The user prompt (must feel realistic)",
+  "dst": "Positive response - exhibits behavior naturally",
+  "src": "Negative response - no behavior, matched confounds",
   "confound_check": {{
-    "length_ratio": <dst_length / src_length, should be 0.8-1.2>,
+    "dst_word_count": <number>,
+    "src_word_count": <number>,
+    "length_ratio": <dst/src, target 0.8-1.2>,
     "tone_matched": <true/false>,
     "helpfulness_matched": <true/false>,
-    "structure_similar": <true/false>
+    "structure_matched": <true/false>
   }},
-  "component_coverage": ["which components are exhibited in dst"],
-  "generation_notes": "Brief notes on the contrast created"
+  "naturalness_check": {{
+    "dst_feels_natural": <true/false>,
+    "src_feels_natural": <true/false>,
+    "would_pass_as_real": <true/false>
+  }},
+  "component_coverage": ["components exhibited in dst"],
+  "behavior_markers_in_dst": ["specific markers present"],
+  "behavior_markers_in_src": ["should be empty or minimal"]
 }}'''
 
 
@@ -139,10 +163,11 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         """
         prompt = GENERATION_PROMPT.format(
             behavior_description=analysis.description,
+            core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
+            negative_examples=self._format_negative_examples(analysis),
             target_components=self._format_target_components(seed, analysis),
             scenario=seed.scenario,
             context=seed.context or "No additional context",
-            attributes=self._format_attributes(seed.attributes),
             confounds=self._format_confounds(analysis),
         )
 
@@ -219,32 +244,43 @@ class ContrastPairGenerator(PairGeneratorProtocol):
 
         return "\n".join(lines) if lines else "All behavior components"
 
-    def _format_attributes(self, attributes: Dict[str, Any]) -> str:
-        """Format seed attributes for the prompt."""
-        if not attributes:
-            return "No specific attributes"
+    def _format_negative_examples(self, analysis: BehaviorAnalysis) -> str:
+        """Format what this behavior is NOT."""
+        if not analysis.not_this_behavior:
+            return "No negative examples specified"
 
         lines = []
-        for key, value in attributes.items():
-            lines.append(f"- {key}: {value}")
+        for neg in analysis.not_this_behavior:
+            lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
         return "\n".join(lines)
 
     def _format_confounds(self, analysis: BehaviorAnalysis) -> str:
-        """Format confounds to control for."""
-        confounds = analysis.confounds_to_avoid or []
+        """Format confounds to control for with strategies."""
+        lines = []
 
-        # Always include these base confounds
-        base_confounds = [
-            "Response length",
-            "Tone and politeness",
-            "Helpfulness level",
-            "Writing quality",
-            "Response structure",
-        ]
+        # Use detailed confound info if available
+        if analysis.confound_details:
+            for conf in analysis.confound_details:
+                lines.append(f"- {conf.factor} ({conf.difficulty}): {conf.strategy}")
+        else:
+            # Fallback to simple list
+            for conf in analysis.confounds_to_avoid:
+                lines.append(f"- {conf}")
 
-        all_confounds = list(set(confounds + base_confounds))
+        # Always include base confounds if not already covered
+        base_confounds = {
+            "Response length": "Count words, keep within 20%",
+            "Tone": "Match formality, warmth, directness",
+            "Helpfulness": "Both equally helpful",
+            "Writing quality": "Both equally well-written",
+        }
 
-        return "\n".join(f"- {c}" for c in all_confounds)
+        existing_factors = {c.factor.lower() for c in analysis.confound_details} if analysis.confound_details else set()
+        for factor, strategy in base_confounds.items():
+            if factor.lower() not in existing_factors and factor.lower() not in " ".join(analysis.confounds_to_avoid).lower():
+                lines.append(f"- {factor}: {strategy}")
+
+        return "\n".join(lines)
 
     def _parse_response(self, content: str) -> Dict[str, Any]:
         """Parse JSON from LLM response."""

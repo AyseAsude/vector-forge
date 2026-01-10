@@ -22,16 +22,17 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-VALIDATION_PROMPT = '''Evaluate this contrast pair for behavior extraction training.
+VALIDATION_PROMPT = '''You are validating a contrast pair for steering vector extraction. Your job is to ensure we extract a CLEAN signal, not noise.
 
-## BEHAVIOR TO DETECT
+## BEHAVIOR
 {behavior_description}
+{core_definition}
+
+## WHAT THIS IS NOT (important boundaries)
+{negative_examples}
 
 ## BEHAVIOR COMPONENTS
 {components}
-
-## CONFOUNDS TO CHECK (these should be similar in both responses)
-{confounds}
 
 ---
 
@@ -47,47 +48,96 @@ VALIDATION_PROMPT = '''Evaluate this contrast pair for behavior extraction train
 
 ---
 
-## EVALUATION CRITERIA
+## MULTI-DIMENSIONAL EVALUATION
 
-1. **dst_behavior_score (0-10)**: How strongly does POSITIVE exhibit the behavior?
-   - 10: Extremely clear, unmistakable presence
-   - 7: Clear presence, easily recognizable
-   - 5: Moderate presence, noticeable
-   - 3: Weak presence, subtle
-   - 0: No presence at all
+Evaluate on these 4 critical dimensions:
 
-2. **src_behavior_score (0-10)**: How strongly does NEGATIVE exhibit the behavior?
-   - Should be LOW (ideally 0-3) for good contrast
-   - High score here means the negative is contaminated
+### 1. CONFOUND PARITY (0-10)
+Are dst and src MATCHED on everything EXCEPT the behavior?
+- 10: Perfect match on length, tone, helpfulness, quality, structure
+- 7: Minor differences that probably won't affect extraction
+- 5: Noticeable differences that may leak into the vector
+- 3: Significant confounds that will contaminate the signal
+- 0: Major confounds - pair is useless
 
-3. **contrast_quality (0-10)**: How clear is the contrast between them?
-   - 10: Immediately obvious difference
-   - 7: Clear difference upon reading
-   - 5: Noticeable but not stark
-   - 3: Subtle difference
-   - 0: No meaningful difference
+Check specifically:
+- Length: Count words. Ratio should be 0.8-1.2
+- Tone: Same formality, warmth, directness?
+- Helpfulness: Both equally helpful?
+- Structure: Similar organization?
 
-4. **confounds_detected**: List any problematic differences that aren't the target behavior:
-   - Length difference (one much longer/shorter)
-   - Tone difference (one aggressive, one friendly)
-   - Helpfulness difference (one helpful, one not)
-   - Quality difference (one coherent, one not)
+### 2. BEHAVIOR PURITY (0-10)
+Does dst show ONLY the target behavior, not a mixture of related behaviors?
+- 10: Clean, isolated behavior - only what we want
+- 7: Mostly the target behavior, minor other aspects
+- 5: Target behavior present but mixed with related behaviors
+- 3: Hard to separate target from other behaviors
+- 0: Behavior unclear or hopelessly mixed
 
-## GOOD CONTRAST CRITERIA
-- dst_behavior_score >= 7
-- src_behavior_score <= 3
-- contrast_quality >= 6
-- No major confounds detected
+Ask: If we extract a vector from this, will it represent ONE thing or a muddy mixture?
+
+### 3. NATURALNESS (0-10)
+Do responses feel like REAL AI outputs, not artificial test cases?
+- 10: Completely natural - would pass as real deployment
+- 7: Mostly natural with minor artificial elements
+- 5: Somewhat stilted or obviously constructed
+- 3: Clearly artificial or exaggerated
+- 0: Cartoonish, forced, or obvious test case
+
+Red flags: Exaggerated behavior ("I LOVE this!!!"), unnatural phrasing, obvious test setup
+
+### 4. CONTRAST SHARPNESS (0-10)
+Is the behavior CLEARLY present in dst and CLEARLY absent in src?
+- 10: Unmistakable presence/absence - anyone could see it
+- 7: Clear contrast - behavior obviously different
+- 5: Noticeable but not stark
+- 3: Subtle - need to look carefully
+- 0: No meaningful contrast
 
 ---
 
-Return your evaluation as JSON:
+## OVERALL VALIDITY
+
+A pair is VALID if ALL of:
+- Confound parity >= 7
+- Behavior purity >= 7
+- Naturalness >= 7
+- Contrast sharpness >= 7
+
+If ANY dimension fails, the pair needs regeneration.
+
+---
+
+Return JSON:
 {{
-  "dst_behavior_score": <0-10>,
-  "src_behavior_score": <0-10>,
-  "contrast_quality": <0-10>,
-  "confounds_detected": ["confound1", ...],
-  "reasoning": "Brief explanation of your evaluation"
+  "confound_parity": {{
+    "score": <0-10>,
+    "length_ratio": <dst_words/src_words>,
+    "tone_matched": <true/false>,
+    "helpfulness_matched": <true/false>,
+    "issues": ["specific confound issues"]
+  }},
+  "behavior_purity": {{
+    "score": <0-10>,
+    "target_behavior_clear": <true/false>,
+    "other_behaviors_detected": ["any contaminating behaviors"],
+    "issues": ["specific purity issues"]
+  }},
+  "naturalness": {{
+    "score": <0-10>,
+    "dst_natural": <true/false>,
+    "src_natural": <true/false>,
+    "artificial_elements": ["any unnatural aspects"]
+  }},
+  "contrast_sharpness": {{
+    "score": <0-10>,
+    "dst_behavior_strength": <0-10>,
+    "src_behavior_strength": <0-10>,
+    "issues": ["any contrast issues"]
+  }},
+  "overall_valid": <true/false>,
+  "primary_issue": "The main problem if not valid, or 'none' if valid",
+  "regeneration_focus": "What to focus on if regenerating"
 }}'''
 
 
@@ -137,7 +187,7 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         pair: ContrastPair,
         analysis: BehaviorAnalysis,
     ) -> ValidationResult:
-        """Validate contrast using LLM judge.
+        """Validate contrast using LLM judge with multi-dimensional scoring.
 
         Args:
             pair: The contrast pair to validate.
@@ -148,11 +198,12 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         """
         prompt = VALIDATION_PROMPT.format(
             behavior_description=analysis.description,
+            core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
+            negative_examples=self._format_negative_examples(analysis),
             components=self._format_components(analysis),
-            confounds=self._format_confounds(analysis),
-            prompt=self._truncate(pair.prompt, 300),
-            dst=self._truncate(pair.dst, 500),
-            src=self._truncate(pair.src, 500),
+            prompt=self._truncate(pair.prompt, 500),
+            dst=self._truncate(pair.dst, 800),
+            src=self._truncate(pair.src, 800),
         )
 
         try:
@@ -176,23 +227,51 @@ class LLMContrastValidator(ContrastValidatorProtocol):
                 reasoning=f"Validation error: {str(e)}",
             )
 
-        dst_score = float(data.get("dst_behavior_score", 5.0))
-        src_score = float(data.get("src_behavior_score", 5.0))
-        contrast_quality = float(data.get("contrast_quality", 5.0))
-        confounds = data.get("confounds_detected", [])
-        reasoning = data.get("reasoning", "")
+        # Extract multi-dimensional scores
+        confound_parity = data.get("confound_parity", {})
+        behavior_purity = data.get("behavior_purity", {})
+        naturalness = data.get("naturalness", {})
+        contrast_sharpness = data.get("contrast_sharpness", {})
 
-        # Ensure confounds is a list
-        if isinstance(confounds, str):
-            confounds = [confounds] if confounds else []
+        # Get individual dimension scores
+        confound_score = float(confound_parity.get("score", 5.0))
+        purity_score = float(behavior_purity.get("score", 5.0))
+        naturalness_score = float(naturalness.get("score", 5.0))
+        sharpness_score = float(contrast_sharpness.get("score", 5.0))
 
-        # Determine validity
-        is_valid = (
-            dst_score >= self._min_dst
-            and src_score <= self._max_src
-            and contrast_quality >= self._min_contrast
-            and len(confounds) == 0
-        )
+        # Extract behavior scores from contrast sharpness
+        dst_score = float(contrast_sharpness.get("dst_behavior_strength", 5.0))
+        src_score = float(contrast_sharpness.get("src_behavior_strength", 5.0))
+
+        # Collect all detected issues as confounds
+        confounds = []
+        confounds.extend(confound_parity.get("issues", []))
+        confounds.extend(behavior_purity.get("issues", []))
+        confounds.extend(naturalness.get("artificial_elements", []))
+        confounds.extend(contrast_sharpness.get("issues", []))
+
+        # Build reasoning from all dimensions
+        primary_issue = data.get("primary_issue", "none")
+        regeneration_focus = data.get("regeneration_focus", "")
+        reasoning = f"Confound:{confound_score:.0f} Purity:{purity_score:.0f} Natural:{naturalness_score:.0f} Sharp:{sharpness_score:.0f}"
+        if primary_issue and primary_issue != "none":
+            reasoning += f" | Issue: {primary_issue}"
+        if regeneration_focus:
+            reasoning += f" | Focus: {regeneration_focus}"
+
+        # Determine validity - ALL dimensions must pass
+        is_valid = data.get("overall_valid", False)
+        if not isinstance(is_valid, bool):
+            # Calculate if not provided
+            is_valid = (
+                confound_score >= 7.0
+                and purity_score >= 7.0
+                and naturalness_score >= 7.0
+                and sharpness_score >= 7.0
+            )
+
+        # Use minimum dimension score as contrast quality
+        contrast_quality = min(confound_score, purity_score, naturalness_score, sharpness_score)
 
         return ValidationResult(
             is_valid=is_valid,
@@ -212,17 +291,19 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         lines = []
         for c in analysis.components:
             lines.append(f"- {c.name}: {c.description}")
+            if c.markers:
+                lines.append(f"  Markers: {', '.join(c.markers[:3])}")
         return "\n".join(lines)
 
-    def _format_confounds(self, analysis: BehaviorAnalysis) -> str:
-        """Format confounds for prompt."""
-        confounds = analysis.confounds_to_avoid or [
-            "Response length",
-            "Tone/politeness",
-            "Helpfulness level",
-            "Response quality",
-        ]
-        return "\n".join(f"- {c}" for c in confounds)
+    def _format_negative_examples(self, analysis: BehaviorAnalysis) -> str:
+        """Format what this behavior is NOT."""
+        if not analysis.not_this_behavior:
+            return "No negative examples specified"
+
+        lines = []
+        for neg in analysis.not_this_behavior:
+            lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
+        return "\n".join(lines)
 
     def _truncate(self, text: str, max_length: int) -> str:
         """Truncate text to max length."""

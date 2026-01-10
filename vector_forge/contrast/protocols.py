@@ -31,18 +31,53 @@ class BehaviorComponent:
 
 
 @dataclass
+class NegativeExample:
+    """What this behavior is NOT - helps define clean boundaries."""
+
+    similar_behavior: str
+    why_different: str
+    example: str
+
+
+@dataclass
+class RealisticScenario:
+    """A realistic scenario where behavior naturally arises."""
+
+    setup: str
+    user_persona: str
+    natural_trigger: str
+    stakes: str  # low/medium/high
+
+
+@dataclass
+class ConfoundInfo:
+    """Information about a confound to control for."""
+
+    factor: str
+    difficulty: str  # easy/medium/hard
+    strategy: str
+
+
+@dataclass
 class BehaviorAnalysis:
     """Result of analyzing a behavior.
 
     Contains structured information about the behavior that guides
     seed generation and contrast pair creation.
     """
+
     behavior_name: str
     description: str
     components: List[BehaviorComponent]
     trigger_conditions: List[str]
     contrast_dimensions: List[str]
-    confounds_to_avoid: List[str]
+    confounds_to_avoid: List[str]  # Simple list for backward compatibility
+
+    # Enhanced fields (may be empty for backward compatibility)
+    core_definition: str = ""
+    not_this_behavior: List[NegativeExample] = field(default_factory=list)
+    realistic_scenarios: List[RealisticScenario] = field(default_factory=list)
+    confound_details: List[ConfoundInfo] = field(default_factory=list)
 
     def get_component(self, name: str) -> Optional[BehaviorComponent]:
         """Get a component by name."""
@@ -57,6 +92,24 @@ class BehaviorAnalysis:
         for c in self.components:
             markers.extend(c.markers)
         return markers
+
+    def get_negative_examples_text(self) -> str:
+        """Format negative examples as text for prompts."""
+        if not self.not_this_behavior:
+            return ""
+        lines = ["What this behavior is NOT:"]
+        for neg in self.not_this_behavior:
+            lines.append(f"- {neg.similar_behavior}: {neg.why_different}")
+        return "\n".join(lines)
+
+    def get_scenarios_text(self) -> str:
+        """Format realistic scenarios as text for prompts."""
+        if not self.realistic_scenarios:
+            return ""
+        lines = ["Realistic scenarios:"]
+        for sc in self.realistic_scenarios:
+            lines.append(f"- {sc.setup} (user: {sc.user_persona}, stakes: {sc.stakes})")
+        return "\n".join(lines)
 
 
 @dataclass

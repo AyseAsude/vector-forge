@@ -22,10 +22,14 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-REGENERATION_PROMPT = '''The previous contrast pair was insufficient. Generate an improved version.
+REGENERATION_PROMPT = '''The previous contrast pair failed validation. Generate an improved version.
 
 ## BEHAVIOR
 {behavior_description}
+{core_definition}
+
+## WHAT THIS IS NOT (avoid confusing with these)
+{negative_examples}
 
 ## ORIGINAL PAIR
 
@@ -39,30 +43,46 @@ REGENERATION_PROMPT = '''The previous contrast pair was insufficient. Generate a
 
 ---
 
-## PROBLEMS FOUND
+## VALIDATION RESULTS
+
+### PRIMARY ISSUE
+{primary_issue}
+
+### DIMENSION SCORES (all need >= 7 to pass)
+{dimension_scores}
+
+### SPECIFIC PROBLEMS
 {problems}
 
-## REQUIRED IMPROVEMENTS
-{improvements}
+### REGENERATION FOCUS
+{regeneration_focus}
 
 ---
 
 ## REGENERATION INSTRUCTIONS
 
-Based on the problems found, generate an IMPROVED pair.
-
-**Attempt {attempt} of 3** - Be more aggressive with improvements.
+**Attempt {attempt} of 3**
 
 {attempt_specific_instructions}
 
+## CRITICAL REQUIREMENTS
+
+1. **CONFOUND PARITY**: Length, tone, helpfulness must be MATCHED
+   - Count words: both responses within 20% of each other
+   - Same formality, warmth, structure
+
+2. **BEHAVIOR PURITY**: ONLY the target behavior should differ
+   - Don't mix in other behaviors
+   - Clean, isolated signal
+
+3. **NATURALNESS**: Responses must feel REAL, not artificial
+   - No exaggerated behavior ("I LOVE this!!!")
+   - Should pass as real deployment outputs
+
+4. **CONTRAST SHARPNESS**: Clear presence in dst, clear absence in src
+   - Anyone should immediately see the difference
+
 ---
-
-## REQUIREMENTS
-
-1. The new POSITIVE must CLEARLY exhibit the behavior (score >= 7)
-2. The new NEGATIVE must clearly NOT exhibit the behavior (score <= 3)
-3. They must be semantically different (not just reworded)
-4. Avoid confounds - keep length, tone, helpfulness similar
 
 Return JSON:
 {{
@@ -70,10 +90,11 @@ Return JSON:
   "dst": "The improved positive response",
   "src": "The improved negative response",
   "improvements_made": ["what you changed and why"],
-  "expected_scores": {{
-    "dst_behavior": <expected score>,
-    "src_behavior": <expected score>,
-    "contrast_quality": <expected score>
+  "dimension_improvements": {{
+    "confound_fix": "how you fixed confound issues",
+    "purity_fix": "how you improved behavior purity",
+    "naturalness_fix": "how you improved naturalness",
+    "sharpness_fix": "how you improved contrast"
   }}
 }}'''
 
@@ -151,7 +172,9 @@ class ContrastRegenerator(PairRegeneratorProtocol):
         Returns:
             New ContrastPair with improvements.
         """
-        problems, improvements = self._build_feedback(validation)
+        problems = self._build_problems(validation)
+        dimension_scores = self._extract_dimension_scores(validation)
+        primary_issue, regeneration_focus = self._extract_focus(validation)
 
         # Get attempt-specific instructions
         attempt_instructions = ATTEMPT_INSTRUCTIONS.get(
@@ -161,11 +184,15 @@ class ContrastRegenerator(PairRegeneratorProtocol):
 
         prompt = REGENERATION_PROMPT.format(
             behavior_description=analysis.description,
-            original_prompt=self._truncate(pair.prompt, 200),
-            original_dst=self._truncate(pair.dst, 300),
-            original_src=self._truncate(pair.src, 300),
+            core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
+            negative_examples=self._format_negative_examples(analysis),
+            original_prompt=self._truncate(pair.prompt, 300),
+            original_dst=self._truncate(pair.dst, 500),
+            original_src=self._truncate(pair.src, 500),
+            primary_issue=primary_issue,
+            dimension_scores=dimension_scores,
             problems=problems,
-            improvements=improvements,
+            regeneration_focus=regeneration_focus,
             attempt=attempt,
             attempt_specific_instructions=attempt_instructions,
         )
@@ -209,81 +236,97 @@ class ContrastRegenerator(PairRegeneratorProtocol):
             },
         )
 
-    def _build_feedback(
-        self,
-        validation: ValidationResult,
-    ) -> tuple[str, str]:
-        """Build specific feedback based on validation results.
-
-        Returns:
-            Tuple of (problems, improvements) strings.
-        """
+    def _build_problems(self, validation: ValidationResult) -> str:
+        """Build specific problems list from validation results."""
         problems: List[str] = []
-        improvements: List[str] = []
 
-        # Check dst behavior score
+        # Check behavior scores
         if validation.dst_behavior_score >= 0 and validation.dst_behavior_score < 7:
             problems.append(
-                f"POSITIVE too weak: behavior score = {validation.dst_behavior_score}/10 "
-                f"(need >= 7)"
+                f"POSITIVE too weak: behavior score = {validation.dst_behavior_score:.0f}/10"
             )
-            if validation.dst_behavior_score < 4:
-                improvements.append(
-                    "Make POSITIVE MUCH stronger - it barely shows the behavior"
-                )
-            else:
-                improvements.append(
-                    "Make POSITIVE more clearly exhibit the behavior"
-                )
 
-        # Check src behavior score
         if validation.src_behavior_score >= 0 and validation.src_behavior_score > 3:
             problems.append(
-                f"NEGATIVE still shows behavior: score = {validation.src_behavior_score}/10 "
-                f"(need <= 3)"
-            )
-            if validation.src_behavior_score > 6:
-                improvements.append(
-                    "Make NEGATIVE show the OPPOSITE tendency, not just less"
-                )
-            else:
-                improvements.append(
-                    "Make NEGATIVE more clearly NOT exhibit the behavior"
-                )
-
-        # Check semantic distance
-        if 0 <= validation.semantic_distance < 0.3:
-            problems.append(
-                f"Too semantically similar: distance = {validation.semantic_distance:.2f} "
-                f"(need >= 0.3)"
-            )
-            improvements.append(
-                "Make responses more different - change approach, wording, or structure"
-            )
-
-        # Check contrast quality
-        if validation.contrast_quality < 6:
-            problems.append(
-                f"Contrast not clear enough: quality = {validation.contrast_quality}/10 "
-                f"(need >= 6)"
-            )
-            improvements.append(
-                "Make the difference between responses immediately obvious"
+                f"NEGATIVE still shows behavior: score = {validation.src_behavior_score:.0f}/10"
             )
 
         # Check confounds
         if validation.confounds_detected:
-            confound_str = ", ".join(validation.confounds_detected)
-            problems.append(f"Confounding differences detected: {confound_str}")
-            improvements.append(
-                f"Fix confounds: make {confound_str} similar between responses"
-            )
+            for confound in validation.confounds_detected[:5]:  # Limit to top 5
+                problems.append(f"Confound: {confound}")
 
-        # Format as strings
-        problems_str = "\n".join(f"- {p}" for p in problems) or "- General quality issues"
-        improvements_str = "\n".join(f"- {i}" for i in improvements) or "- Improve overall contrast"
+        return "\n".join(f"- {p}" for p in problems) or "- General quality issues"
 
-        return problems_str, improvements_str
+    def _extract_dimension_scores(self, validation: ValidationResult) -> str:
+        """Extract dimension scores from validation reasoning."""
+        # Parse reasoning which contains scores like "Confound:8 Purity:7 Natural:6 Sharp:8"
+        reasoning = validation.reasoning or ""
+
+        # Try to extract scores from reasoning
+        lines = []
+        if "Confound:" in reasoning:
+            try:
+                parts = reasoning.split("|")[0].strip().split()
+                for part in parts:
+                    if ":" in part:
+                        dim, score = part.split(":")
+                        status = "✓" if float(score) >= 7 else "✗"
+                        lines.append(f"- {dim}: {score}/10 {status}")
+            except (ValueError, IndexError):
+                pass
+
+        if not lines:
+            # Fallback to basic info
+            lines.append(f"- Contrast Quality: {validation.contrast_quality:.0f}/10")
+            lines.append(f"- dst Behavior: {validation.dst_behavior_score:.0f}/10")
+            lines.append(f"- src Behavior: {validation.src_behavior_score:.0f}/10")
+
+        return "\n".join(lines)
+
+    def _extract_focus(self, validation: ValidationResult) -> tuple[str, str]:
+        """Extract primary issue and regeneration focus from validation."""
+        reasoning = validation.reasoning or ""
+
+        # Parse reasoning for Issue and Focus
+        primary_issue = "General quality issues"
+        regeneration_focus = "Improve overall contrast quality"
+
+        if "Issue:" in reasoning:
+            try:
+                issue_part = reasoning.split("Issue:")[1]
+                if "|" in issue_part:
+                    primary_issue = issue_part.split("|")[0].strip()
+                else:
+                    primary_issue = issue_part.strip()
+            except IndexError:
+                pass
+
+        if "Focus:" in reasoning:
+            try:
+                focus_part = reasoning.split("Focus:")[1]
+                if "|" in focus_part:
+                    regeneration_focus = focus_part.split("|")[0].strip()
+                else:
+                    regeneration_focus = focus_part.strip()
+            except IndexError:
+                pass
+
+        # If still default, infer from confounds
+        if primary_issue == "General quality issues" and validation.confounds_detected:
+            primary_issue = validation.confounds_detected[0]
+
+        return primary_issue, regeneration_focus
+
+    def _format_negative_examples(self, analysis: BehaviorAnalysis) -> str:
+        """Format what this behavior is NOT."""
+        if not analysis.not_this_behavior:
+            return "No negative examples specified"
+
+        lines = []
+        for neg in analysis.not_this_behavior:
+            lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
+        return "\n".join(lines)
 
     def _truncate(self, text: str, max_length: int) -> str:
         """Truncate text to max length."""

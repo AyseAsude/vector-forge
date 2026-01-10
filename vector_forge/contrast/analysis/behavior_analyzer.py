@@ -15,6 +15,9 @@ from vector_forge.contrast.protocols import (
     BehaviorAnalyzerProtocol,
     BehaviorAnalysis,
     BehaviorComponent,
+    NegativeExample,
+    RealisticScenario,
+    ConfoundInfo,
 )
 from vector_forge.core.protocols import Message
 from vector_forge.llm.base import BaseLLMClient
@@ -22,54 +25,100 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-ANALYSIS_PROMPT = '''Analyze this behavior for steering vector training data generation.
+ANALYSIS_PROMPT = '''You are analyzing a behavior for steering vector extraction. Your goal is to deeply understand this behavior so we can generate CLEAN training data with minimal noise.
 
 BEHAVIOR: {behavior_description}
 
-Provide a comprehensive analysis to help generate high-quality contrast pairs.
+Think carefully and thoroughly. The quality of your analysis determines whether we extract a clean signal or a noisy mixture.
 
-## 1. COMPONENTS
-Break this behavior into 4-6 distinct, measurable components.
-For each component:
-- Identify specific linguistic markers (phrases, patterns, words)
-- Identify what the OPPOSITE or ABSENCE looks like
+## 1. CORE DEFINITION
+First, deeply understand what this behavior IS:
+- What is the essence of this behavior?
+- What distinguishes it from superficially similar behaviors?
+- When exhibited strongly, what does it look like?
 
-## 2. TRIGGER CONDITIONS
-What situations naturally trigger or elicit this behavior?
-When would an AI most likely exhibit or suppress this behavior?
-Focus on scenarios where the behavior is most relevant.
+## 2. WHAT THIS IS NOT (Critical for clean extraction)
+List behaviors that might be CONFUSED with this but are NOT the same:
+- What similar-seeming behaviors should we NOT capture?
+- What's the boundary between this behavior and acceptable/normal behavior?
+- Example: "Sycophancy" is NOT the same as "politeness" or "being encouraging"
 
-## 3. CONTRAST DIMENSIONS
-What are the clearest ways to show presence vs absence of this behavior?
-How can we make the difference between "exhibits" and "does not exhibit" OBVIOUS?
+For each negative example, explain WHY it's different.
 
-## 4. CONFOUNDS TO AVOID
-What other behaviors or factors might correlate with this behavior?
-What should we control for to isolate THIS specific behavior?
-(e.g., response length, helpfulness, politeness, topic complexity)
+## 3. COMPONENTS
+Break into 3-5 distinct, SEPARABLE components. Each should be:
+- Observable in text (has linguistic markers)
+- Isolatable (can appear without the others)
+- Meaningful (captures a real aspect of the behavior)
 
-Return a JSON object with this structure:
+For each component, provide:
+- Specific markers (exact phrases, patterns, linguistic features)
+- What ABSENCE looks like (not just generic "doesn't do X")
+
+## 4. REALISTIC SCENARIOS
+Generate scenarios where this behavior would NATURALLY arise (not forced/artificial):
+- What real situations trigger this behavior?
+- Who is the user? What's their state? What are the stakes?
+- Make scenarios feel like real deployment, not contrived tests
+
+Avoid: Obviously fake scenarios, cartoon situations, or scenarios that scream "this is a test"
+
+## 5. CONFOUNDS (What to control for)
+List factors that might CORRELATE with this behavior but aren't the behavior itself:
+- Response length (verbose vs concise)
+- Tone (formal vs casual)
+- Helpfulness level
+- Writing quality
+- Emotional warmth
+- etc.
+
+For each confound, note if it's EASY or HARD to control for.
+
+## 6. CONTRAST STRATEGY
+How can we create pairs where:
+- dst CLEARLY shows the behavior
+- src CLEARLY doesn't show it
+- EVERYTHING ELSE is matched (length, tone, helpfulness, quality)
+
+Return JSON:
 {{
+  "core_definition": "one sentence capturing the essence",
+  "not_this_behavior": [
+    {{
+      "similar_behavior": "what it might be confused with",
+      "why_different": "why it's not the same thing",
+      "example": "concrete example of the non-behavior"
+    }}
+  ],
   "components": [
     {{
       "name": "short_name",
       "description": "what this component represents",
-      "markers": ["phrase1", "phrase2", "pattern1"],
-      "opposite_markers": ["opposite_phrase1", "neutral_phrase1"]
+      "markers": ["specific phrase", "linguistic pattern"],
+      "opposite_markers": ["what absence looks like"],
+      "isolation_note": "can this appear independently?"
     }}
   ],
-  "trigger_conditions": [
-    "condition or scenario that triggers the behavior"
+  "realistic_scenarios": [
+    {{
+      "setup": "the situation",
+      "user_persona": "who the user is",
+      "natural_trigger": "why behavior would arise here",
+      "stakes": "low/medium/high"
+    }}
   ],
-  "contrast_dimensions": [
-    "dimension along which contrast is clearest"
-  ],
+  "trigger_conditions": ["when this behavior naturally manifests"],
+  "contrast_dimensions": ["clearest ways to show presence vs absence"],
   "confounds_to_avoid": [
-    "factor that might correlate but isn't the behavior"
+    {{
+      "factor": "the confound",
+      "difficulty": "easy/medium/hard to control",
+      "strategy": "how to control for it"
+    }}
   ]
 }}
 
-Be specific and actionable. The output will be used to generate training data.'''
+Be specific, nuanced, and thoughtful. Vague analysis produces noisy vectors.'''
 
 
 class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
@@ -146,18 +195,33 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
                 )
             ]
 
+        # Extract enhanced fields
+        negative_examples = self._extract_negative_examples(data)
+        realistic_scenarios = self._extract_realistic_scenarios(data)
+        confound_details = self._extract_confound_details(data)
+
+        # Extract simple confounds list for backward compatibility
+        confounds_simple = self._extract_confounds_simple(data)
+
         analysis = BehaviorAnalysis(
             behavior_name=self._extract_name(behavior_description),
             description=behavior_description,
             components=components,
             trigger_conditions=data.get("trigger_conditions", []),
             contrast_dimensions=data.get("contrast_dimensions", []),
-            confounds_to_avoid=data.get("confounds_to_avoid", []),
+            confounds_to_avoid=confounds_simple,
+            # Enhanced fields
+            core_definition=data.get("core_definition", ""),
+            not_this_behavior=negative_examples,
+            realistic_scenarios=realistic_scenarios,
+            confound_details=confound_details,
         )
 
         logger.info(
             f"Behavior analysis complete: {len(analysis.components)} components, "
-            f"{len(analysis.trigger_conditions)} triggers"
+            f"{len(analysis.trigger_conditions)} triggers, "
+            f"{len(analysis.not_this_behavior)} negative examples, "
+            f"{len(analysis.realistic_scenarios)} scenarios"
         )
 
         return analysis
@@ -228,3 +292,60 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
         if len(name) > 50:
             name = name[:47] + "..."
         return name
+
+    def _extract_negative_examples(self, data: Dict[str, Any]) -> list[NegativeExample]:
+        """Extract negative examples (what this behavior is NOT)."""
+        examples = []
+        for item in data.get("not_this_behavior", []):
+            if not isinstance(item, dict):
+                continue
+            examples.append(
+                NegativeExample(
+                    similar_behavior=item.get("similar_behavior", ""),
+                    why_different=item.get("why_different", ""),
+                    example=item.get("example", ""),
+                )
+            )
+        return examples
+
+    def _extract_realistic_scenarios(self, data: Dict[str, Any]) -> list[RealisticScenario]:
+        """Extract realistic scenarios from analysis."""
+        scenarios = []
+        for item in data.get("realistic_scenarios", []):
+            if not isinstance(item, dict):
+                continue
+            scenarios.append(
+                RealisticScenario(
+                    setup=item.get("setup", ""),
+                    user_persona=item.get("user_persona", ""),
+                    natural_trigger=item.get("natural_trigger", ""),
+                    stakes=item.get("stakes", "medium"),
+                )
+            )
+        return scenarios
+
+    def _extract_confound_details(self, data: Dict[str, Any]) -> list[ConfoundInfo]:
+        """Extract detailed confound information."""
+        confounds = []
+        for item in data.get("confounds_to_avoid", []):
+            if isinstance(item, dict):
+                confounds.append(
+                    ConfoundInfo(
+                        factor=item.get("factor", ""),
+                        difficulty=item.get("difficulty", "medium"),
+                        strategy=item.get("strategy", ""),
+                    )
+                )
+        return confounds
+
+    def _extract_confounds_simple(self, data: Dict[str, Any]) -> list[str]:
+        """Extract simple confound list for backward compatibility."""
+        confounds = []
+        for item in data.get("confounds_to_avoid", []):
+            if isinstance(item, str):
+                confounds.append(item)
+            elif isinstance(item, dict):
+                factor = item.get("factor", "")
+                if factor:
+                    confounds.append(factor)
+        return confounds

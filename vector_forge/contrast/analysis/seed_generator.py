@@ -22,58 +22,73 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-SEED_GENERATION_PROMPT = '''Generate high-quality training scenarios for this behavior.
+SEED_GENERATION_PROMPT = '''Generate high-quality training scenarios for steering vector extraction.
 
-BEHAVIOR: {behavior_description}
+## BEHAVIOR
+{behavior_description}
+{core_definition}
+
+## WHAT THIS IS NOT (Critical - avoid confusing with these)
+{negative_examples}
 
 ## BEHAVIOR COMPONENTS
 {components_description}
 
-## TRIGGER CONDITIONS (situations where this behavior manifests)
+## EXISTING REALISTIC SCENARIOS (from behavior analysis)
+{existing_scenarios}
+
+## TRIGGER CONDITIONS
 {trigger_conditions}
 
-## CONFOUNDS TO AVOID (control for these factors)
+## CONFOUNDS TO CONTROL
 {confounds}
 
 ---
 
 Generate {count} diverse, high-quality scenarios for creating contrast pairs.
 
+## CRITICAL: REALISM REQUIREMENT
+
+Your scenarios must feel like REAL deployment situations, not artificial tests.
+- NO obviously contrived setups
+- NO scenarios that scream "this is a test case"
+- Think: Would a real user in real life actually send this message?
+
+Good scenario: "User shares their startup idea and asks for feedback"
+Bad scenario: "User says 2+2=5 and asks if they are right" (too obvious)
+
+## SCENARIO REQUIREMENTS
+
 Each scenario should:
-1. NATURALLY trigger the behavior (not forced or artificial)
-2. Allow CLEAR contrast between exhibiting and not exhibiting the behavior
-3. AVOID the confounding factors listed above
-4. Target specific behavior components
-5. Vary in context, formality, emotional tone, and domain
+1. **NATURALLY** trigger the behavior (not forced)
+2. Allow **CLEAR** contrast between exhibiting and not exhibiting
+3. **CONTROL** for confounding factors
+4. Target **SPECIFIC** behavior components
+5. **VARY** in context, formality, emotional tone, and domain
+
+## OUTPUT FORMAT
 
 For each scenario, provide:
-- scenario: The situation setup (what is happening)
-- context: Additional context (user state, stakes, background)
-- attributes: Key attributes (emotion, formality, domain, stakes)
-- target_components: Which behavior components this tests
-- expected_contrast_strength: How clear the contrast can be (1-10)
-- example_prompt: A concrete example prompt for this scenario
+- scenario: The realistic situation setup
+- context: Who is the user? What's their state? What are the stakes?
+- target_components: Which specific behavior components this tests
+- expected_contrast_strength: How clear can the contrast be (1-10)
+- example_prompt: A concrete, realistic example prompt
 
 Return JSON:
 {{
   "scenarios": [
     {{
-      "scenario": "User presents a factually incorrect claim and asks for confirmation",
-      "context": "The user seems confident and invested in their belief",
-      "attributes": {{
-        "emotion": "confident",
-        "formality": "casual",
-        "domain": "science",
-        "stakes": "low"
-      }},
-      "target_components": ["excessive_agreement", "avoiding_correction"],
-      "expected_contrast_strength": 9,
-      "example_prompt": "I read that humans only use 10% of their brains. That's true, right?"
+      "scenario": "User shares their creative work seeking feedback",
+      "context": "Amateur writer who put significant effort into their work and is emotionally invested",
+      "target_components": ["excessive_praise", "avoiding_criticism"],
+      "expected_contrast_strength": 8,
+      "example_prompt": "I just finished writing my first short story! It took me three months. Would you mind reading it and telling me what you think?"
     }}
   ]
 }}
 
-Generate diverse scenarios that cover different aspects of the behavior.'''
+Generate diverse scenarios covering different aspects and contexts.'''
 
 
 SEED_SCORING_PROMPT = '''Score these scenarios for training data quality.
@@ -183,9 +198,12 @@ class SeedGenerator(SeedGeneratorProtocol):
 
         prompt = SEED_GENERATION_PROMPT.format(
             behavior_description=analysis.description,
+            core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
+            negative_examples=self._format_negative_examples(analysis),
             components_description=self._format_components(analysis),
+            existing_scenarios=self._format_existing_scenarios(analysis),
             trigger_conditions=self._format_list(analysis.trigger_conditions),
-            confounds=self._format_list(analysis.confounds_to_avoid),
+            confounds=self._format_confounds(analysis),
             count=target_count,
         )
 
@@ -308,6 +326,38 @@ class SeedGenerator(SeedGeneratorProtocol):
             if c.opposite_markers:
                 lines.append(f"  - Opposite: {', '.join(c.opposite_markers[:3])}")
         return "\n".join(lines) if lines else "No components specified"
+
+    def _format_negative_examples(self, analysis: BehaviorAnalysis) -> str:
+        """Format what this behavior is NOT."""
+        if not analysis.not_this_behavior:
+            return "No negative examples specified"
+
+        lines = []
+        for neg in analysis.not_this_behavior:
+            lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
+        return "\n".join(lines)
+
+    def _format_existing_scenarios(self, analysis: BehaviorAnalysis) -> str:
+        """Format existing realistic scenarios from analysis."""
+        if not analysis.realistic_scenarios:
+            return "None provided - generate fresh scenarios"
+
+        lines = ["Use these as inspiration (but generate diverse variations):"]
+        for sc in analysis.realistic_scenarios:
+            lines.append(f"- {sc.setup} (user: {sc.user_persona}, trigger: {sc.natural_trigger})")
+        return "\n".join(lines)
+
+    def _format_confounds(self, analysis: BehaviorAnalysis) -> str:
+        """Format confounds with control strategies."""
+        if analysis.confound_details:
+            lines = []
+            for conf in analysis.confound_details:
+                lines.append(f"- {conf.factor}: {conf.strategy}")
+            return "\n".join(lines)
+        elif analysis.confounds_to_avoid:
+            return "\n".join(f"- {c}" for c in analysis.confounds_to_avoid)
+        else:
+            return "- Response length\n- Tone\n- Helpfulness\n- Quality"
 
     def _format_list(self, items: List[str]) -> str:
         """Format a list of items for prompt."""
