@@ -9,6 +9,14 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 
+class ContrastQuality(str, Enum):
+    """Contrast generation quality preset."""
+
+    FAST = "fast"
+    STANDARD = "standard"
+    THOROUGH = "thorough"
+
+
 class LayerStrategy(str, Enum):
     """Strategy for selecting which layers to optimize."""
 
@@ -27,6 +35,145 @@ class AggregationStrategy(str, Enum):
     WEIGHTED_AVERAGE = "weighted_average"
     PCA_PRINCIPAL = "pca_principal"
     STRATEGY_GROUPED = "strategy_grouped"
+
+
+class ContrastConfig(BaseModel):
+    """Configuration for contrast pair generation pipeline.
+
+    Controls the quality and validation settings for generating
+    high-quality contrast pairs used in steering vector extraction.
+    """
+
+    # Pool settings
+    core_pool_size: int = Field(
+        default=80,
+        ge=20,
+        le=500,
+        description="Number of pairs in the shared core pool",
+    )
+
+    core_seeds_per_sample: int = Field(
+        default=40,
+        ge=10,
+        le=200,
+        description="How many core seeds each sample uses",
+    )
+
+    unique_seeds_per_sample: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description="How many unique seeds each sample generates",
+    )
+
+    # Validation thresholds
+    min_semantic_distance: float = Field(
+        default=0.3,
+        ge=0.1,
+        le=0.9,
+        description="Minimum semantic distance between dst and src",
+    )
+
+    min_dst_score: float = Field(
+        default=7.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum behavior score for dst (exhibits behavior)",
+    )
+
+    max_src_score: float = Field(
+        default=3.0,
+        ge=0.0,
+        le=9.0,
+        description="Maximum behavior score for src (no behavior)",
+    )
+
+    min_contrast_quality: float = Field(
+        default=6.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum overall contrast quality score",
+    )
+
+    # Regeneration settings
+    max_regeneration_attempts: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum attempts to regenerate a failed pair",
+    )
+
+    # Seed quality
+    min_seed_quality: float = Field(
+        default=6.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum quality score for seeds",
+    )
+
+    # Generation settings
+    generation_temperature: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=2.0,
+        description="Temperature for pair generation",
+    )
+
+    # Parallelism
+    max_concurrent_generations: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum concurrent pair generations",
+    )
+
+    @property
+    def pairs_per_sample(self) -> int:
+        """Total pairs per sample (core + unique)."""
+        return self.core_seeds_per_sample + self.unique_seeds_per_sample
+
+    @classmethod
+    def fast(cls) -> "ContrastConfig":
+        """Fast configuration for testing and iteration."""
+        return cls(
+            core_pool_size=30,
+            core_seeds_per_sample=20,
+            unique_seeds_per_sample=5,
+            max_regeneration_attempts=1,
+            min_seed_quality=5.0,
+            min_dst_score=6.0,
+            max_src_score=4.0,
+            min_contrast_quality=5.0,
+        )
+
+    @classmethod
+    def standard(cls) -> "ContrastConfig":
+        """Standard configuration for normal use."""
+        return cls()
+
+    @classmethod
+    def thorough(cls) -> "ContrastConfig":
+        """Thorough configuration for production quality."""
+        return cls(
+            core_pool_size=120,
+            core_seeds_per_sample=50,
+            unique_seeds_per_sample=15,
+            max_regeneration_attempts=3,
+            min_seed_quality=7.0,
+            min_dst_score=8.0,
+            max_src_score=2.0,
+            min_contrast_quality=7.0,
+            max_concurrent_generations=8,
+        )
+
+    @classmethod
+    def from_preset(cls, preset: ContrastQuality) -> "ContrastConfig":
+        """Create configuration from preset."""
+        if preset == ContrastQuality.FAST:
+            return cls.fast()
+        elif preset == ContrastQuality.THOROUGH:
+            return cls.thorough()
+        return cls.standard()
 
 
 class SampleConfig(BaseModel):
@@ -245,26 +392,18 @@ class TaskConfig(BaseModel):
         description="Different datapoint counts to try",
     )
 
-    # Contrast pair generation
+    # Contrast pair generation (new pipeline)
+    contrast: ContrastConfig = Field(
+        default_factory=ContrastConfig,
+        description="Contrast pair generation configuration",
+    )
+
+    # Legacy field (deprecated, use contrast.pairs_per_sample instead)
     contrast_pair_count: int = Field(
         default=100,
         ge=20,
         le=500,
-        description="Total contrast pairs to generate",
-    )
-
-    contrast_domains: List[str] = Field(
-        default_factory=lambda: [
-            "science",
-            "personal_advice",
-            "factual_qa",
-            "opinion",
-            "creative",
-            "technical",
-            "ethics",
-            "current_events",
-        ],
-        description="Domains for contrast pair diversity",
+        description="[DEPRECATED] Use contrast config instead",
     )
 
     # Parallelism control
@@ -332,7 +471,8 @@ class TaskConfig(BaseModel):
             layer_strategies=[LayerStrategy.AUTO],
             temperatures=[0.7],
             datapoint_counts=[30],
-            contrast_pair_count=30,
+            contrast=ContrastConfig.fast(),
+            contrast_pair_count=25,  # 20 core + 5 unique
             max_concurrent_extractions=4,
             evaluation=EvaluationConfig.fast(),
             top_k=2,
@@ -341,7 +481,10 @@ class TaskConfig(BaseModel):
     @classmethod
     def standard(cls) -> "TaskConfig":
         """Standard configuration for normal use."""
-        return cls()
+        return cls(
+            contrast=ContrastConfig.standard(),
+            contrast_pair_count=50,  # 40 core + 10 unique
+        )
 
     @classmethod
     def comprehensive(cls) -> "TaskConfig":
@@ -357,7 +500,8 @@ class TaskConfig(BaseModel):
             ],
             temperatures=[0.3, 0.5, 0.7, 1.0],
             datapoint_counts=[50, 100, 150],
-            contrast_pair_count=200,
+            contrast=ContrastConfig.thorough(),
+            contrast_pair_count=65,  # 50 core + 15 unique
             max_concurrent_extractions=16,
             max_concurrent_evaluations=32,
             evaluation=EvaluationConfig.thorough(),

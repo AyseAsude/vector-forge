@@ -7,7 +7,13 @@ from textual.screen import Screen
 from textual.widgets import Static, Input, Button, TextArea
 from textual.message import Message
 
-from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
+from vector_forge.tasks.config import (
+    TaskConfig,
+    LayerStrategy,
+    AggregationStrategy,
+    ContrastQuality,
+    ContrastConfig,
+)
 from vector_forge.storage.models import ModelConfig, ModelConfigManager
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.widgets.model_card import ModelCard
@@ -366,6 +372,7 @@ class CreateTaskScreen(Screen):
         self._expanding = False
         self._layer_strategy = "auto"
         self._aggregation = "top_k_average"
+        self._contrast_quality = "standard"
 
         # Model configurations
         self._model_manager = ModelConfigManager()
@@ -400,7 +407,7 @@ class CreateTaskScreen(Screen):
             # Parameters section
             yield Static("PARAMETERS", classes="main-section")
             with Vertical(id="params-container"):
-                # Row 1: Sampling & Parallelism
+                # Row 1: Sampling & Contrast
                 with Horizontal(classes="params-row"):
                     with ParamSection("SAMPLING"):
                         yield ParamRow("Samples", "inp-samples", "16")
@@ -408,13 +415,27 @@ class CreateTaskScreen(Screen):
                         yield ParamRow("Temperatures", "inp-temps", "0.5, 0.7, 1.0", "comma separated")
                         yield ParamRow("Datapoints", "inp-datapoints", "30, 50, 100", "comma separated")
 
+                    with ParamSection("CONTRAST"):
+                        yield ParamRow("Core Pool", "inp-core-pool", "80", "shared pairs")
+                        yield ParamRow("Core/Sample", "inp-core-per-sample", "40")
+                        yield ParamRow("Unique/Sample", "inp-unique-per-sample", "10")
+                        yield ParamRow("Max Regen", "inp-max-regen", "2", "retry attempts")
+
+                # Row 2: Parallelism & Validation
+                with Horizontal(classes="params-row"):
                     with ParamSection("PARALLELISM"):
                         yield ParamRow("Extractions", "inp-extractions", "8")
                         yield ParamRow("Evaluations", "inp-evaluations", "16")
-                        yield ParamRow("Contrast Pairs", "inp-contrast", "100")
+                        yield ParamRow("Generations", "inp-generations", "5", "contrast gen")
                         yield ParamRow("Top K", "inp-topk", "5")
 
-                # Row 2: Strategy options
+                    with ParamSection("VALIDATION"):
+                        yield ParamRow("Min Quality", "inp-min-quality", "6.0", "contrast score")
+                        yield ParamRow("Min DST", "inp-min-dst", "7.0", "behavior score")
+                        yield ParamRow("Max SRC", "inp-max-src", "3.0", "behavior score")
+                        yield ParamRow("Min Distance", "inp-min-dist", "0.3", "semantic")
+
+                # Row 3: Strategy options
                 with Horizontal(classes="option-row"):
                     yield Static("Layer", classes="option-label")
                     with Horizontal(classes="option-pills"):
@@ -430,6 +451,13 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("aggregation", "best_single", "Best", id="agg-best")
                         yield OptionPill("aggregation", "weighted_average", "Weighted", id="agg-weighted")
                         yield OptionPill("aggregation", "pca_principal", "PCA", id="agg-pca")
+
+                with Horizontal(classes="option-row"):
+                    yield Static("Contrast", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("contrast", "fast", "Fast", id="contrast-fast")
+                        yield OptionPill("contrast", "standard", "Standard", selected=True, id="contrast-standard")
+                        yield OptionPill("contrast", "thorough", "Thorough", id="contrast-thorough")
 
                 # Row 3: Models (clickable cards)
                 yield Static("MODELS", classes="main-section")
@@ -473,6 +501,13 @@ class CreateTaskScreen(Screen):
             for pill in self.query(OptionPill):
                 if pill.group == "aggregation":
                     pill.set_selected(pill.value == event.value)
+        elif event.group == "contrast":
+            self._contrast_quality = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "contrast":
+                    pill.set_selected(pill.value == event.value)
+            # Update contrast fields based on preset
+            self._apply_contrast_preset(event.value)
 
     def on_model_card_clicked(self, event: ModelCard.Clicked) -> None:
         """Handle model card click - open selector."""
@@ -505,15 +540,30 @@ class CreateTaskScreen(Screen):
         }
         cfg = configs.get(profile, TaskConfig.standard())
 
-        # Update all fields
+        # Update sampling fields
         self.query_one("#inp-samples", Input).value = str(cfg.num_samples)
         self.query_one("#inp-seeds", Input).value = str(cfg.num_seeds)
         self.query_one("#inp-temps", Input).value = ", ".join(str(t) for t in cfg.temperatures)
         self.query_one("#inp-datapoints", Input).value = ", ".join(str(d) for d in cfg.datapoint_counts)
+
+        # Update parallelism fields
         self.query_one("#inp-extractions", Input).value = str(cfg.max_concurrent_extractions)
         self.query_one("#inp-evaluations", Input).value = str(cfg.max_concurrent_evaluations)
-        self.query_one("#inp-contrast", Input).value = str(cfg.contrast_pair_count)
+        self.query_one("#inp-generations", Input).value = str(cfg.contrast.max_concurrent_generations)
         self.query_one("#inp-topk", Input).value = str(cfg.top_k)
+
+        # Update contrast fields
+        contrast = cfg.contrast
+        self.query_one("#inp-core-pool", Input).value = str(contrast.core_pool_size)
+        self.query_one("#inp-core-per-sample", Input).value = str(contrast.core_seeds_per_sample)
+        self.query_one("#inp-unique-per-sample", Input).value = str(contrast.unique_seeds_per_sample)
+        self.query_one("#inp-max-regen", Input).value = str(contrast.max_regeneration_attempts)
+
+        # Update validation fields
+        self.query_one("#inp-min-quality", Input).value = str(contrast.min_contrast_quality)
+        self.query_one("#inp-min-dst", Input).value = str(contrast.min_dst_score)
+        self.query_one("#inp-max-src", Input).value = str(contrast.max_src_score)
+        self.query_one("#inp-min-dist", Input).value = str(contrast.min_semantic_distance)
 
         # Update layer strategy pills
         strategy = cfg.layer_strategies[0].value if cfg.layer_strategies else "auto"
@@ -527,6 +577,39 @@ class CreateTaskScreen(Screen):
         for pill in self.query(OptionPill):
             if pill.group == "aggregation":
                 pill.set_selected(pill.value == cfg.aggregation_strategy.value)
+
+        # Update contrast quality pills based on profile
+        contrast_preset = {
+            "quick": "fast",
+            "standard": "standard",
+            "comprehensive": "thorough",
+        }.get(profile, "standard")
+        self._contrast_quality = contrast_preset
+        for pill in self.query(OptionPill):
+            if pill.group == "contrast":
+                pill.set_selected(pill.value == contrast_preset)
+
+    def _apply_contrast_preset(self, preset: str) -> None:
+        """Apply a contrast quality preset to the fields."""
+        preset_map = {
+            "fast": ContrastConfig.fast(),
+            "standard": ContrastConfig.standard(),
+            "thorough": ContrastConfig.thorough(),
+        }
+        contrast = preset_map.get(preset, ContrastConfig.standard())
+
+        # Update contrast fields
+        self.query_one("#inp-core-pool", Input).value = str(contrast.core_pool_size)
+        self.query_one("#inp-core-per-sample", Input).value = str(contrast.core_seeds_per_sample)
+        self.query_one("#inp-unique-per-sample", Input).value = str(contrast.unique_seeds_per_sample)
+        self.query_one("#inp-max-regen", Input).value = str(contrast.max_regeneration_attempts)
+        self.query_one("#inp-generations", Input).value = str(contrast.max_concurrent_generations)
+
+        # Update validation fields
+        self.query_one("#inp-min-quality", Input).value = str(contrast.min_contrast_quality)
+        self.query_one("#inp-min-dst", Input).value = str(contrast.min_dst_score)
+        self.query_one("#inp-max-src", Input).value = str(contrast.max_src_score)
+        self.query_one("#inp-min-dist", Input).value = str(contrast.min_semantic_distance)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
@@ -634,13 +717,30 @@ DOMAINS: {', '.join(result.domains[:6])}
             self._judge_config.model if self._judge_config else "gpt-5.2"
         )
 
+        # Build contrast config from fields
+        core_per_sample = int(self.query_one("#inp-core-per-sample", Input).value or "40")
+        unique_per_sample = int(self.query_one("#inp-unique-per-sample", Input).value or "10")
+
+        contrast_config = ContrastConfig(
+            core_pool_size=int(self.query_one("#inp-core-pool", Input).value or "80"),
+            core_seeds_per_sample=core_per_sample,
+            unique_seeds_per_sample=unique_per_sample,
+            max_regeneration_attempts=int(self.query_one("#inp-max-regen", Input).value or "2"),
+            max_concurrent_generations=int(self.query_one("#inp-generations", Input).value or "5"),
+            min_contrast_quality=float(self.query_one("#inp-min-quality", Input).value or "6.0"),
+            min_dst_score=float(self.query_one("#inp-min-dst", Input).value or "7.0"),
+            max_src_score=float(self.query_one("#inp-max-src", Input).value or "3.0"),
+            min_semantic_distance=float(self.query_one("#inp-min-dist", Input).value or "0.3"),
+        )
+
         return TaskConfig(
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
             layer_strategies=[layer_strategy],
             temperatures=temps or [0.7],
             datapoint_counts=datapoints or [50],
-            contrast_pair_count=int(self.query_one("#inp-contrast", Input).value or "100"),
+            contrast=contrast_config,
+            contrast_pair_count=core_per_sample + unique_per_sample,  # Legacy field
             max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "8"),
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,

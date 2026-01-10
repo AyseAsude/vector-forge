@@ -27,7 +27,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "steering-vectors",
     "litellm>=1.80.0",
     "pydantic>=2.12.0",
     "numpy>=2.0.0",
