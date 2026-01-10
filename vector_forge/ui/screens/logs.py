@@ -469,7 +469,6 @@ class LogsScreen(Screen):
         # Actions
         Binding("n", "new_task", "New Task"),
         Binding("q", "quit", "Quit"),
-        Binding("?", "help", "Help"),
     ]
 
     DEFAULT_CSS = """
@@ -606,9 +605,6 @@ class LogsScreen(Screen):
 
     def action_new_task(self) -> None:
         self.app.push_screen("create_task")
-
-    def action_help(self) -> None:
-        self.app.push_screen("help")
 
     def action_quit(self) -> None:
         self.app.exit()

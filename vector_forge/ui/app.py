@@ -26,7 +26,6 @@ from vector_forge.ui.state import (
 from vector_forge.ui.screens.dashboard import DashboardScreen
 from vector_forge.ui.screens.samples import SamplesScreen
 from vector_forge.ui.screens.logs import LogsScreen
-from vector_forge.ui.screens.help import HelpModal
 from vector_forge.ui.screens.create_task import CreateTaskScreen
 
 logger = logging.getLogger(__name__)
@@ -42,13 +41,13 @@ class VectorForgeApp(App):
         "dashboard": DashboardScreen,
         "samples": SamplesScreen,
         "logs": LogsScreen,
-        "help": HelpModal,
         "create_task": CreateTaskScreen,
     }
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", show=False, priority=True),
         Binding("n", "new_task", "New Task", show=True),
+        Binding("?", "toggle_help_panel", "Help"),
     ]
 
     def __init__(
@@ -123,7 +122,7 @@ class VectorForgeApp(App):
             )
 
     def switch_screen(self, screen_name: str) -> None:
-        if screen_name in ("help", "create_task"):
+        if screen_name == "create_task":
             self.push_screen(screen_name)
         elif screen_name in ("dashboard", "samples", "logs"):
             current = getattr(self.screen, "name", None)
@@ -137,6 +136,13 @@ class VectorForgeApp(App):
 
     def action_new_task(self) -> None:
         self.push_screen("create_task")
+
+    def action_toggle_help_panel(self) -> None:
+        from textual.widgets import HelpPanel
+        try:
+            self.screen.query_one(HelpPanel).remove()
+        except Exception:
+            self.screen.mount(HelpPanel())
 
     def on_create_task_screen_task_created(
         self,
