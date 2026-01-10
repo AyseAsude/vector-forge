@@ -35,8 +35,12 @@ class LogDetailRenderer(ABC):
         """
         pass
 
-    def _truncate(self, text: str, max_len: int = 2000) -> str:
-        """Truncate text with ellipsis if too long."""
+    def _truncate(self, text: str, max_len: int = 100000) -> str:
+        """Truncate text with ellipsis if too long.
+
+        Note: Detail view should show full content, so default limit is very high.
+        Truncation only happens for truly massive content to prevent UI issues.
+        """
         if len(text) > max_len:
             return text[:max_len - 3] + "..."
         return text
@@ -78,7 +82,7 @@ class LLMRequestRenderer(LogDetailRenderer):
                 role = msg.get("role", "unknown").upper()
                 content = msg.get("content", "")
                 # Truncate very long messages but keep them readable
-                content = self._truncate(content, 1500)
+                content = self._truncate(content)
                 msg_lines.append(f"[{role}]\n{content}")
             sections.append(("MESSAGES", "\n\n".join(msg_lines)))
 
@@ -119,7 +123,7 @@ class LLMResponseRenderer(LogDetailRenderer):
         # Content
         content = payload.get("content", "")
         if content:
-            sections.append(("RESPONSE", self._truncate(content, 2000)))
+            sections.append(("RESPONSE", self._truncate(content)))
 
         # Tool calls
         tool_calls = payload.get("tool_calls", [])
@@ -135,7 +139,7 @@ class LLMResponseRenderer(LogDetailRenderer):
                     args_str = self._format_json(args_obj)
                 except (json.JSONDecodeError, TypeError):
                     args_str = str(args)
-                tc_lines.append(f"[{name}]\n{self._truncate(args_str, 500)}")
+                tc_lines.append(f"[{name}]\n{self._truncate(args_str)}")
             sections.append(("TOOL CALLS", "\n\n".join(tc_lines)))
 
         return sections
@@ -167,26 +171,32 @@ class ContrastPairRenderer(LogDetailRenderer):
             dst_score = payload.get("dst_score", 0.0)
             src_score = payload.get("src_score", 0.0)
             quality = payload.get("contrast_quality", 0.0)
+            semantic_dist = payload.get("semantic_distance", 0.0)
             scores = f"Status: {status}\n"
             scores += f"Target score: {dst_score:.3f} | Source score: {src_score:.3f}\n"
-            scores += f"Contrast quality: {quality:.3f}"
+            scores += f"Contrast quality: {quality:.3f} | Semantic distance: {semantic_dist:.3f}"
             if not is_valid:
                 reason = payload.get("rejection_reason", "unknown")
                 scores += f"\nRejection reason: {reason}"
-            sections.append(("VALIDATION", scores))
+            sections.append(("VALIDATION SCORES", scores))
 
         # Prompt
         prompt = payload.get("prompt", "")
         if prompt:
-            sections.append(("PROMPT", self._truncate(prompt, 1000)))
+            sections.append(("PROMPT", self._truncate(prompt)))
 
         # Responses side by side
         dst = payload.get("dst_response", "")
         src = payload.get("src_response", "")
         if dst:
-            sections.append(("TARGET RESPONSE (desired behavior)", self._truncate(dst, 1000)))
+            sections.append(("TARGET RESPONSE (desired behavior)", self._truncate(dst)))
         if src:
-            sections.append(("SOURCE RESPONSE (baseline)", self._truncate(src, 1000)))
+            sections.append(("SOURCE RESPONSE (baseline)", self._truncate(src)))
+
+        # If validation event without content, show note and raw payload
+        if entry.event_type == "contrast.pair_validated" and not prompt and not dst:
+            sections.append(("NOTE", "Pair content available in 'contrast.pair_generated' event"))
+            sections.append(("RAW PAYLOAD", self._format_json(payload)))
 
         return sections
 
@@ -222,15 +232,15 @@ class DatapointRenderer(LogDetailRenderer):
         # Prompt
         prompt = payload.get("prompt", "")
         if prompt:
-            sections.append(("PROMPT", self._truncate(prompt, 1000)))
+            sections.append(("PROMPT", self._truncate(prompt)))
 
         # Completions
         positive = payload.get("positive_completion", "")
         negative = payload.get("negative_completion", "")
         if positive:
-            sections.append(("POSITIVE COMPLETION", self._truncate(positive, 800)))
+            sections.append(("POSITIVE COMPLETION", self._truncate(positive)))
         if negative:
-            sections.append(("NEGATIVE COMPLETION", self._truncate(negative, 800)))
+            sections.append(("NEGATIVE COMPLETION", self._truncate(negative)))
 
         return sections
 
@@ -347,9 +357,9 @@ class EvaluationRenderer(LogDetailRenderer):
             label = "BASELINE" if is_baseline else f"STRENGTH {strength:.2f}"
             sections.append(("CONDITION", label))
             if prompt:
-                sections.append(("PROMPT", self._truncate(prompt, 500)))
+                sections.append(("PROMPT", self._truncate(prompt)))
             if output:
-                sections.append(("OUTPUT", self._truncate(output, 1000)))
+                sections.append(("OUTPUT", self._truncate(output)))
 
         elif event_type == "evaluation.completed":
             eval_id = payload.get("evaluation_id", "")[:12]
@@ -379,7 +389,7 @@ class EvaluationRenderer(LogDetailRenderer):
             # Raw judge output (if available)
             raw_output = payload.get("raw_judge_output", "")
             if raw_output:
-                sections.append(("RAW JUDGE OUTPUT", self._truncate(raw_output, 1500)))
+                sections.append(("RAW JUDGE OUTPUT", self._truncate(raw_output)))
 
         return sections
 
@@ -418,7 +428,7 @@ class ToolEventRenderer(LogDetailRenderer):
 
             if output is not None:
                 output_str = self._format_json(output) if isinstance(output, (dict, list)) else str(output)
-                sections.append(("OUTPUT", self._truncate(output_str, 1500)))
+                sections.append(("OUTPUT", self._truncate(output_str)))
 
         return sections
 
@@ -540,8 +550,8 @@ class SeedEventRenderer(LogDetailRenderer):
 
             core_label = "[$accent]CORE[/]" if is_core else "UNIQUE"
             sections.append(("SEED", f"ID: {seed_id}\nType: {core_label}\nQuality: {quality:.3f}"))
-            sections.append(("SCENARIO", self._truncate(scenario, 800)))
-            sections.append(("CONTEXT", self._truncate(context, 800)))
+            sections.append(("SCENARIO", self._truncate(scenario)))
+            sections.append(("CONTEXT", self._truncate(context)))
 
         elif entry.event_type == "seed.assigned":
             sample_idx = payload.get("sample_idx", 0)
