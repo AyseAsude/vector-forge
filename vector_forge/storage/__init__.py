@@ -73,6 +73,14 @@ from vector_forge.storage.store import (
     SessionStore,
     StorageManager,
 )
+from vector_forge.storage.models import (
+    Provider,
+    ModelConfig,
+    ModelConfigStore,
+    ModelConfigManager,
+    COMMON_MODELS,
+    API_KEY_ENV_VARS,
+)
 
 __all__ = [
     # Config
@@ -118,4 +126,11 @@ __all__ = [
     "StateUpdateEvent",
     "IterationStartedEvent",
     "IterationCompletedEvent",
+    # Model configuration
+    "Provider",
+    "ModelConfig",
+    "ModelConfigStore",
+    "ModelConfigManager",
+    "COMMON_MODELS",
+    "API_KEY_ENV_VARS",
 ]

@@ -307,24 +307,19 @@ class TaskConfig(BaseModel):
         description="Directory for saving results",
     )
 
-    save_all_vectors: bool = Field(
-        default=False,
-        description="Save all candidate vectors, not just final",
-    )
-
     # LLM settings
     extractor_model: str = Field(
-        default="gpt-4o",
+        default="gpt-5.2",
         description="Model for datapoint generation",
     )
 
     judge_model: str = Field(
-        default="gpt-4o",
+        default="gpt-5.2",
         description="Model for evaluation judging",
     )
 
     expander_model: str = Field(
-        default="gpt-4o",
+        default="gpt-5.2",
         description="Model for behavior expansion",
     )
 
@@ -367,5 +362,4 @@ class TaskConfig(BaseModel):
             max_concurrent_evaluations=32,
             evaluation=EvaluationConfig.thorough(),
             top_k=8,
-            save_all_vectors=True,
         )

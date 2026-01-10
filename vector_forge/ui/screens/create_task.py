@@ -8,8 +8,11 @@ from textual.widgets import Static, Input, Button, TextArea
 from textual.message import Message
 
 from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
+from vector_forge.storage.models import ModelConfig, ModelConfigManager
 from vector_forge.ui.theme import COLORS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
+from vector_forge.ui.widgets.model_card import ModelCard
+from vector_forge.ui.screens.model_selector import ModelSelectorScreen
 
 
 class ProfileCard(Static):
@@ -364,7 +367,12 @@ class CreateTaskScreen(Screen):
         self._expanding = False
         self._layer_strategy = "auto"
         self._aggregation = "top_k_average"
-        self._save_all = False
+
+        # Model configurations
+        self._model_manager = ModelConfigManager()
+        default_config = self._model_manager.get_default()
+        self._extractor_config: ModelConfig | None = default_config
+        self._judge_config: ModelConfig | None = default_config
 
     def compose(self) -> ComposeResult:
         # Header
@@ -424,18 +432,21 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("aggregation", "weighted_average", "Weighted", id="agg-weighted")
                         yield OptionPill("aggregation", "pca_principal", "PCA", id="agg-pca")
 
-                # Row 3: Models
+                # Row 3: Models (clickable cards)
+                yield Static("MODELS", classes="main-section")
                 with Horizontal(classes="params-row"):
-                    with ParamSection("MODELS"):
-                        yield ParamRow("Extractor", "inp-extractor", "gpt-4o")
-                        yield ParamRow("Judge", "inp-judge", "gpt-4o")
-
-                    with ParamSection("OPTIONS"):
-                        with Horizontal(classes="option-row"):
-                            yield Static("Save All", classes="option-label")
-                            with Horizontal(classes="option-pills"):
-                                yield OptionPill("save_all", "false", "No", selected=True, id="save-no")
-                                yield OptionPill("save_all", "true", "Yes", id="save-yes")
+                    yield ModelCard(
+                        field_name="extractor",
+                        label="EXTRACTOR",
+                        config=self._extractor_config,
+                        id="model-extractor",
+                    )
+                    yield ModelCard(
+                        field_name="judge",
+                        label="JUDGE",
+                        config=self._judge_config,
+                        id="model-judge",
+                    )
 
         # Footer
         with Horizontal(id="footer"):
@@ -463,10 +474,29 @@ class CreateTaskScreen(Screen):
             for pill in self.query(OptionPill):
                 if pill.group == "aggregation":
                     pill.set_selected(pill.value == event.value)
-        elif event.group == "save_all":
-            self._save_all = event.value == "true"
-            self.query_one("#save-no", OptionPill).set_selected(event.value == "false")
-            self.query_one("#save-yes", OptionPill).set_selected(event.value == "true")
+
+    def on_model_card_clicked(self, event: ModelCard.Clicked) -> None:
+        """Handle model card click - open selector."""
+        current_config = (
+            self._extractor_config if event.field_name == "extractor"
+            else self._judge_config
+        )
+        self.app.push_screen(
+            ModelSelectorScreen(event.field_name, current_config),
+            callback=self._on_model_selected,
+        )
+
+    def _on_model_selected(self, result: ModelSelectorScreen.ModelSelected | None) -> None:
+        """Handle model selection from modal."""
+        if result is None:
+            return
+
+        if result.field_name == "extractor":
+            self._extractor_config = result.config
+            self.query_one("#model-extractor", ModelCard).set_config(result.config)
+        elif result.field_name == "judge":
+            self._judge_config = result.config
+            self.query_one("#model-judge", ModelCard).set_config(result.config)
 
     def _apply_profile(self, profile: str) -> None:
         configs = {
@@ -485,8 +515,6 @@ class CreateTaskScreen(Screen):
         self.query_one("#inp-evaluations", Input).value = str(cfg.max_concurrent_evaluations)
         self.query_one("#inp-contrast", Input).value = str(cfg.contrast_pair_count)
         self.query_one("#inp-topk", Input).value = str(cfg.top_k)
-        self.query_one("#inp-extractor", Input).value = cfg.extractor_model
-        self.query_one("#inp-judge", Input).value = cfg.judge_model
 
         # Update layer strategy pills
         strategy = cfg.layer_strategies[0].value if cfg.layer_strategies else "auto"
@@ -500,11 +528,6 @@ class CreateTaskScreen(Screen):
         for pill in self.query(OptionPill):
             if pill.group == "aggregation":
                 pill.set_selected(pill.value == cfg.aggregation_strategy.value)
-
-        # Update save all
-        self._save_all = cfg.save_all_vectors
-        self.query_one("#save-no", OptionPill).set_selected(not cfg.save_all_vectors)
-        self.query_one("#save-yes", OptionPill).set_selected(cfg.save_all_vectors)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
@@ -534,7 +557,9 @@ class CreateTaskScreen(Screen):
             from vector_forge.tasks.expander import BehaviorExpander
             from vector_forge.llm import create_client
 
-            llm = create_client("gpt-4o")
+            # Use extractor model for expansion, or default to gpt-5.2
+            model = self._extractor_config.model if self._extractor_config else "gpt-5.2"
+            llm = create_client(model)
             expander = BehaviorExpander(llm)
             result = await expander.expand(text)
 
@@ -602,6 +627,14 @@ DOMAINS: {', '.join(result.domains[:6])}
         }
         aggregation = agg_map.get(self._aggregation, AggregationStrategy.TOP_K_AVERAGE)
 
+        # Get model names from configs
+        extractor_model = (
+            self._extractor_config.model if self._extractor_config else "gpt-5.2"
+        )
+        judge_model = (
+            self._judge_config.model if self._judge_config else "gpt-5.2"
+        )
+
         return TaskConfig(
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
@@ -613,9 +646,8 @@ DOMAINS: {', '.join(result.domains[:6])}
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
-            save_all_vectors=self._save_all,
-            extractor_model=self.query_one("#inp-extractor", Input).value or "gpt-4o",
-            judge_model=self.query_one("#inp-judge", Input).value or "gpt-4o",
+            extractor_model=extractor_model,
+            judge_model=judge_model,
         )
 
     def action_cancel(self) -> None:

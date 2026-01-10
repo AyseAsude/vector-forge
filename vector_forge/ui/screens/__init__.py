@@ -5,6 +5,7 @@ from vector_forge.ui.screens.samples import SamplesScreen
 from vector_forge.ui.screens.logs import LogsScreen
 from vector_forge.ui.screens.help import HelpModal
 from vector_forge.ui.screens.create_task import CreateTaskScreen
+from vector_forge.ui.screens.model_selector import ModelSelectorScreen
 
 __all__ = [
     "DashboardScreen",
@@ -12,4 +13,5 @@ __all__ = [
     "LogsScreen",
     "HelpModal",
     "CreateTaskScreen",
+    "ModelSelectorScreen",
 ]

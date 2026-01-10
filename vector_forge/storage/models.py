@@ -1,0 +1,378 @@
+"""Model configuration storage and management.
+
+Stores LLM provider configurations for reuse across tasks.
+Supports OpenAI, Anthropic, Azure, Ollama, and custom providers.
+"""
+
+import json
+import os
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timezone
+import uuid
+
+from pydantic import BaseModel, Field
+
+
+class Provider(str, Enum):
+    """Supported LLM providers."""
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    OPENROUTER = "openrouter"
+    AZURE = "azure"
+    OLLAMA = "ollama"
+    CUSTOM = "custom"
+
+
+# Common models for quick selection (January 2026)
+COMMON_MODELS: Dict[Provider, List[str]] = {
+    Provider.OPENAI: [
+        "gpt-5.2",
+        "gpt-5.2-pro",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "o3",
+        "o3-pro",
+        "o4-mini",
+    ],
+    Provider.ANTHROPIC: [
+        "claude-4.5-sonnet",
+        "claude-4.5-opus",
+        "claude-4-sonnet",
+        "claude-4-opus",
+    ],
+    Provider.OPENROUTER: [
+        "openrouter/anthropic/claude-4.5-sonnet",
+        "openrouter/anthropic/claude-4.5-opus",
+        "openrouter/openai/gpt-5.2",
+        "openrouter/openai/gpt-5.2-pro",
+        "openrouter/google/gemini-3-flash",
+        "openrouter/google/gemini-2.5-flash",
+        "openrouter/x-ai/grok-4.1-fast",
+        "openrouter/deepseek/deepseek-v3.2",
+        "openrouter/meta-llama/llama-4-maverick",
+    ],
+    Provider.AZURE: [
+        "azure/gpt-5.2",
+        "azure/gpt-5.2-pro",
+        "azure/gpt-5-mini",
+    ],
+    Provider.OLLAMA: [
+        "ollama/llama4",
+        "ollama/qwen3",
+        "ollama/deepseek-v3",
+        "ollama/mistral-large",
+    ],
+}
+
+# Environment variable names for API keys by provider
+API_KEY_ENV_VARS: Dict[Provider, str] = {
+    Provider.OPENAI: "OPENAI_API_KEY",
+    Provider.ANTHROPIC: "ANTHROPIC_API_KEY",
+    Provider.OPENROUTER: "OPENROUTER_API_KEY",
+    Provider.AZURE: "AZURE_API_KEY",
+}
+
+# Default API base URLs by provider
+DEFAULT_API_BASES: Dict[Provider, str] = {
+    Provider.OPENROUTER: "https://openrouter.ai/api/v1",
+    Provider.OLLAMA: "http://localhost:11434",
+}
+
+
+class ModelConfig(BaseModel):
+    """Configuration for a single LLM model.
+
+    Stores all parameters needed to connect to an LLM via litellm.
+
+    Example:
+        >>> config = ModelConfig(
+        ...     id="my-gpt4",
+        ...     name="GPT-4o",
+        ...     provider=Provider.OPENAI,
+        ...     model="gpt-4o",
+        ... )
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    name: str = Field(..., description="Display name for the model")
+    provider: Provider = Field(default=Provider.OPENAI)
+    model: str = Field(..., description="LiteLLM model identifier")
+
+    # Optional configuration
+    api_base: Optional[str] = Field(default=None, description="Custom API endpoint")
+    api_key: Optional[str] = Field(default=None, description="API key (or use env var)")
+    api_key_env: Optional[str] = Field(default=None, description="Environment variable for API key")
+
+    # Azure-specific
+    api_version: Optional[str] = Field(default=None, description="Azure API version")
+
+    # Generation defaults
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    max_tokens: int = Field(default=4096, gt=0)
+
+    # Metadata
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_used: Optional[datetime] = None
+    is_default: bool = False
+
+    def get_api_key(self) -> Optional[str]:
+        """Get API key from config or environment."""
+        if self.api_key:
+            return self.api_key
+        if self.api_key_env:
+            return os.environ.get(self.api_key_env)
+        # Fallback to default env var for provider
+        default_env = API_KEY_ENV_VARS.get(self.provider)
+        if default_env:
+            return os.environ.get(default_env)
+        return None
+
+    def to_llm_config(self) -> Dict[str, Any]:
+        """Convert to LLMConfig-compatible dict for litellm."""
+        config = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        if self.api_base:
+            config["api_base"] = self.api_base
+        api_key = self.get_api_key()
+        if api_key:
+            config["api_key"] = api_key
+        return config
+
+    @classmethod
+    def from_provider(
+        cls,
+        provider: Provider,
+        model: str,
+        name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "ModelConfig":
+        """Create a config from provider and model name."""
+        if name is None:
+            # Generate a nice name
+            provider_names = {
+                Provider.OPENAI: "OpenAI",
+                Provider.ANTHROPIC: "Anthropic",
+                Provider.AZURE: "Azure",
+                Provider.OLLAMA: "Ollama",
+                Provider.CUSTOM: "Custom",
+            }
+            model_short = model.split("/")[-1].replace("-", " ").title()
+            name = f"{provider_names[provider]} {model_short}"
+
+        return cls(
+            name=name,
+            provider=provider,
+            model=model,
+            api_key_env=API_KEY_ENV_VARS.get(provider),
+            **kwargs,
+        )
+
+
+class ModelConfigStore(BaseModel):
+    """Storage for all model configurations."""
+
+    version: int = 1
+    configs: List[ModelConfig] = Field(default_factory=list)
+
+    def get(self, config_id: str) -> Optional[ModelConfig]:
+        """Get config by ID."""
+        for config in self.configs:
+            if config.id == config_id:
+                return config
+        return None
+
+    def get_default(self) -> Optional[ModelConfig]:
+        """Get the default model config."""
+        for config in self.configs:
+            if config.is_default:
+                return config
+        # Return first if no default
+        return self.configs[0] if self.configs else None
+
+    def add(self, config: ModelConfig) -> None:
+        """Add a new config."""
+        # Remove any existing with same ID
+        self.configs = [c for c in self.configs if c.id != config.id]
+        self.configs.append(config)
+
+    def remove(self, config_id: str) -> bool:
+        """Remove a config by ID."""
+        original_len = len(self.configs)
+        self.configs = [c for c in self.configs if c.id != config_id]
+        return len(self.configs) < original_len
+
+    def set_default(self, config_id: str) -> None:
+        """Set a config as default."""
+        for config in self.configs:
+            config.is_default = config.id == config_id
+
+    def list_by_provider(self, provider: Provider) -> List[ModelConfig]:
+        """Get all configs for a provider."""
+        return [c for c in self.configs if c.provider == provider]
+
+
+class ModelConfigManager:
+    """Manages model configuration storage and retrieval.
+
+    Stores configurations in ~/.vector-forge/models.json
+
+    Example:
+        >>> manager = ModelConfigManager()
+        >>> manager.add(ModelConfig(name="My GPT", provider=Provider.OPENAI, model="gpt-4o"))
+        >>> configs = manager.list_all()
+    """
+
+    def __init__(self, base_path: Optional[Path] = None) -> None:
+        """Initialize the manager.
+
+        Args:
+            base_path: Base path for config storage. Defaults to ~/.vector-forge
+        """
+        if base_path is None:
+            base_path = Path.home() / ".vector-forge"
+
+        self.base_path = Path(base_path)
+        self.config_file = self.base_path / "models.json"
+        self._store: Optional[ModelConfigStore] = None
+
+    def _ensure_dir(self) -> None:
+        """Ensure config directory exists."""
+        self.base_path.mkdir(parents=True, exist_ok=True)
+
+    def _load(self) -> ModelConfigStore:
+        """Load store from disk."""
+        if self._store is not None:
+            return self._store
+
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._store = ModelConfigStore.model_validate(data)
+            except (json.JSONDecodeError, Exception):
+                # Start fresh on error
+                self._store = self._create_defaults()
+        else:
+            self._store = self._create_defaults()
+
+        return self._store
+
+    def _save(self) -> None:
+        """Save store to disk."""
+        self._ensure_dir()
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            json.dump(
+                self._store.model_dump(mode="json"),
+                f,
+                indent=2,
+                default=str,
+            )
+
+    def _create_defaults(self) -> ModelConfigStore:
+        """Create default model configurations."""
+        store = ModelConfigStore()
+
+        # Add default OpenAI models
+        store.add(ModelConfig(
+            id="openai-gpt52",
+            name="GPT-5.2",
+            provider=Provider.OPENAI,
+            model="gpt-5.2",
+            is_default=True,
+        ))
+        store.add(ModelConfig(
+            id="openai-gpt5-mini",
+            name="GPT-5 Mini",
+            provider=Provider.OPENAI,
+            model="gpt-5-mini",
+        ))
+
+        # Add default Anthropic models
+        store.add(ModelConfig(
+            id="anthropic-sonnet-4.5",
+            name="Claude 4.5 Sonnet",
+            provider=Provider.ANTHROPIC,
+            model="claude-4.5-sonnet",
+        ))
+        store.add(ModelConfig(
+            id="anthropic-opus-4.5",
+            name="Claude 4.5 Opus",
+            provider=Provider.ANTHROPIC,
+            model="claude-4.5-opus",
+        ))
+
+        # Add OpenRouter default
+        store.add(ModelConfig(
+            id="openrouter-claude-4.5",
+            name="Claude 4.5 Sonnet (OpenRouter)",
+            provider=Provider.OPENROUTER,
+            model="openrouter/anthropic/claude-4.5-sonnet",
+            api_base="https://openrouter.ai/api/v1",
+        ))
+
+        return store
+
+    def list_all(self) -> List[ModelConfig]:
+        """List all saved model configs."""
+        return self._load().configs.copy()
+
+    def list_by_provider(self, provider: Provider) -> List[ModelConfig]:
+        """List configs for a specific provider."""
+        return self._load().list_by_provider(provider)
+
+    def get(self, config_id: str) -> Optional[ModelConfig]:
+        """Get a config by ID."""
+        return self._load().get(config_id)
+
+    def get_default(self) -> Optional[ModelConfig]:
+        """Get the default model config."""
+        return self._load().get_default()
+
+    def add(self, config: ModelConfig) -> None:
+        """Add or update a model config."""
+        store = self._load()
+        store.add(config)
+        self._save()
+
+    def remove(self, config_id: str) -> bool:
+        """Remove a config."""
+        store = self._load()
+        removed = store.remove(config_id)
+        if removed:
+            self._save()
+        return removed
+
+    def set_default(self, config_id: str) -> None:
+        """Set a config as the default."""
+        store = self._load()
+        store.set_default(config_id)
+        self._save()
+
+    def update_last_used(self, config_id: str) -> None:
+        """Update the last_used timestamp for a config."""
+        store = self._load()
+        config = store.get(config_id)
+        if config:
+            config.last_used = datetime.now(timezone.utc)
+            self._save()
+
+    def get_common_models(self, provider: Provider) -> List[str]:
+        """Get list of common models for a provider."""
+        return COMMON_MODELS.get(provider, [])
+
+    def create_from_common(
+        self,
+        provider: Provider,
+        model: str,
+        name: Optional[str] = None,
+    ) -> ModelConfig:
+        """Create and save a config from common model presets."""
+        config = ModelConfig.from_provider(provider, model, name)
+        self.add(config)
+        return config
