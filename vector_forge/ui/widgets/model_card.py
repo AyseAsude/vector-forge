@@ -199,6 +199,7 @@ class ModelCardCompact(Static):
     ModelCardCompact {
         height: auto;
         padding: 1 2;
+        margin-right: 2;
         background: $surface;
     }
 

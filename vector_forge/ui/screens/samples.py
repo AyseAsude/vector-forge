@@ -185,6 +185,7 @@ class MessageBlock(Vertical):
     MessageBlock {
         height: auto;
         margin-bottom: 1;
+        margin-right: 2;
     }
 
     MessageBlock .msg-header {
@@ -240,6 +241,7 @@ class WorkerCard(Static):
         height: auto;
         padding: 1;
         margin-bottom: 1;
+        margin-right: 2;
         background: $boost;
     }
 
@@ -330,7 +332,7 @@ class WorkersList(Vertical):
     WorkersList {
         width: 1fr;
         max-width: 40;
-        padding: 1 2;
+        padding: 1 0 1 2;
         background: $surface;
     }
 
@@ -338,22 +340,26 @@ class WorkersList(Vertical):
         height: 1;
         text-style: bold;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     WorkersList .count {
         height: 1;
         color: $foreground-muted;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     WorkersList .list {
         height: 1fr;
+        scrollbar-gutter: stable;
     }
 
     WorkersList .empty {
         padding: 2;
         color: $foreground-muted;
         text-align: center;
+        margin-right: 2;
     }
     """
 
@@ -435,14 +441,16 @@ class ConversationPanel(Vertical):
 
     ConversationPanel .messages {
         height: 1fr;
-        padding: 1 2;
+        padding: 1 0 1 2;
         background: $background;
+        scrollbar-gutter: stable;
     }
 
     ConversationPanel .empty {
         height: 1fr;
         content-align: center middle;
         color: $foreground-muted;
+        margin-right: 2;
     }
     """
 

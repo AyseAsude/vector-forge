@@ -51,6 +51,7 @@ class TaskCard(Static):
         height: auto;
         padding: 1 2;
         margin-bottom: 1;
+        margin-right: 2;
         background: $surface;
     }
 
@@ -342,12 +343,13 @@ class DashboardScreen(Screen):
 
     DashboardScreen #left {
         width: 1fr;
-        padding: 1 2;
+        padding: 1 0 1 2;
     }
 
     DashboardScreen #header {
         height: 1;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     DashboardScreen #title {
@@ -381,12 +383,14 @@ class DashboardScreen(Screen):
 
     DashboardScreen #tasks {
         height: 1fr;
+        scrollbar-gutter: stable;
     }
 
     DashboardScreen .empty {
         height: 1fr;
         content-align: center middle;
         color: $foreground-muted;
+        margin-right: 2;
     }
 
     DashboardScreen #right {

@@ -326,6 +326,7 @@ class LogRow(Static):
     DEFAULT_CSS = """
     LogRow {
         height: 1;
+        margin-right: 2;
     }
 
     LogRow:hover {
@@ -404,14 +405,16 @@ class LogPanel(Vertical):
 
     LogPanel .log-stream {
         height: 1fr;
-        padding: 1 2;
+        padding: 1 0 1 2;
         background: $background;
+        scrollbar-gutter: stable;
     }
 
     LogPanel .empty {
         height: 1fr;
         content-align: center middle;
         color: $foreground-muted;
+        margin-right: 2;
     }
     """
 

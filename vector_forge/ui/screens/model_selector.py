@@ -71,6 +71,7 @@ class ModelSelectorScreen(ModalScreen):
         height: 2;
         content-align: center middle;
         color: $foreground-muted;
+        margin-right: 2;
     }
 
     /* Buttons - taller for better visibility */

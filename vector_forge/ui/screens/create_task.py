@@ -255,10 +255,11 @@ class CreateTaskScreen(Screen):
         width: auto;
     }
 
-    /* Content */
+    /* Content - scrollbar at edge */
     CreateTaskScreen #content {
         height: 1fr;
-        padding: 1 2;
+        padding: 1 0 1 2;
+        scrollbar-gutter: stable;
     }
 
     CreateTaskScreen .main-section {
@@ -266,24 +267,28 @@ class CreateTaskScreen(Screen):
         color: $foreground-muted;
         margin-bottom: 1;
         margin-top: 1;
+        padding-right: 2;
     }
 
     /* Profiles */
     CreateTaskScreen #profiles {
         height: 3;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     /* Models */
     CreateTaskScreen #models-row {
         height: auto;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     /* Behavior */
     CreateTaskScreen #behavior-box {
         height: auto;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     CreateTaskScreen #behavior-input {
@@ -324,6 +329,7 @@ class CreateTaskScreen(Screen):
     CreateTaskScreen #params-container {
         height: auto;
         margin-bottom: 1;
+        padding-right: 2;
     }
 
     CreateTaskScreen .params-row {
