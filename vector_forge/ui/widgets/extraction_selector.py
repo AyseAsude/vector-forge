@@ -36,6 +36,10 @@ class ExtractionOption(Widget):
         background: $surface;
     }
 
+    ExtractionOption.-selected:hover {
+        background: $boost;
+    }
+
     ExtractionOption .opt-row {
         height: 1;
     }

@@ -251,6 +251,10 @@ class WorkerCard(Static):
         background: $primary 20%;
     }
 
+    WorkerCard.-selected:hover {
+        background: $primary 25%;
+    }
+
     WorkerCard .header {
         height: 1;
         margin-bottom: 1;

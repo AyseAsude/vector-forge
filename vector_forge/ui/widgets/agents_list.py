@@ -33,6 +33,10 @@ class AgentItem(Widget):
         padding-left: 0;
     }
 
+    AgentItem.-selected:hover {
+        background: $boost;
+    }
+
     AgentItem .agent-row {
         height: 1;
     }

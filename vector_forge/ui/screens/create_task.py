@@ -12,7 +12,6 @@ from vector_forge.tasks.config import (
     TaskConfig,
     LayerStrategy,
     AggregationStrategy,
-    ContrastQuality,
     ContrastConfig,
     OptimizationConfig,
 )
@@ -41,6 +40,10 @@ class ProfileCard(Static):
     ProfileCard.-selected {
         background: $primary 20%;
     }
+
+    ProfileCard.-selected:hover {
+        background: $primary 30%;
+    }
     """
 
     class Selected(Message):
@@ -49,6 +52,10 @@ class ProfileCard(Static):
             self.profile = profile
 
     def __init__(self, profile: str, name: str, desc: str, selected: bool = False, **kwargs) -> None:
+        # Merge -selected class into classes parameter if selected
+        if selected:
+            existing_classes = kwargs.get("classes", "")
+            kwargs["classes"] = f"{existing_classes} -selected".strip()
         super().__init__(**kwargs)
         self._profile = profile
         self._name = name
@@ -96,6 +103,10 @@ class OptionPill(Static):
     OptionPill.-selected {
         background: $primary 25%;
     }
+
+    OptionPill.-selected:hover {
+        background: $primary 35%;
+    }
     """
 
     class Selected(Message):
@@ -105,6 +116,10 @@ class OptionPill(Static):
             self.value = value
 
     def __init__(self, group: str, value: str, label: str, selected: bool = False, **kwargs) -> None:
+        # Merge -selected class into classes parameter if selected
+        if selected:
+            existing_classes = kwargs.get("classes", "")
+            kwargs["classes"] = f"{existing_classes} -selected".strip()
         super().__init__(**kwargs)
         self._group = group
         self._value = value
@@ -252,6 +267,12 @@ class CreateTaskScreen(Screen):
         margin-bottom: 1;
     }
 
+    /* Models */
+    CreateTaskScreen #models-row {
+        height: auto;
+        margin-bottom: 1;
+    }
+
     /* Behavior */
     CreateTaskScreen #behavior-box {
         height: auto;
@@ -381,6 +402,7 @@ class CreateTaskScreen(Screen):
         default_config = self._model_manager.get_default()
         self._extractor_config: ModelConfig | None = default_config
         self._judge_config: ModelConfig | None = default_config
+        self._expander_config: ModelConfig | None = default_config
 
     def compose(self) -> ComposeResult:
         # Header
@@ -396,6 +418,28 @@ class CreateTaskScreen(Screen):
                 yield ProfileCard("quick", "Quick", "4 samples", id="profile-quick")
                 yield ProfileCard("standard", "Standard", "16 samples", selected=True, id="profile-standard")
                 yield ProfileCard("comprehensive", "Full", "32 samples", id="profile-comprehensive")
+
+            # Models section (moved to top for visibility)
+            yield Static("MODELS", classes="main-section")
+            with Horizontal(id="models-row"):
+                yield ModelCard(
+                    field_name="extractor",
+                    label="EXTRACTOR",
+                    config=self._extractor_config,
+                    id="model-extractor",
+                )
+                yield ModelCard(
+                    field_name="judge",
+                    label="JUDGE",
+                    config=self._judge_config,
+                    id="model-judge",
+                )
+                yield ModelCard(
+                    field_name="expander",
+                    label="EXPANDER",
+                    config=self._expander_config,
+                    id="model-expander",
+                )
 
             # Behavior section
             yield Static("BEHAVIOR", classes="main-section")
@@ -468,22 +512,6 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("contrast", "standard", "Standard", selected=True, id="contrast-standard")
                         yield OptionPill("contrast", "thorough", "Thorough", id="contrast-thorough")
 
-                # Row 4: Models (clickable cards)
-                yield Static("MODELS", classes="main-section")
-                with Horizontal(classes="params-row"):
-                    yield ModelCard(
-                        field_name="extractor",
-                        label="EXTRACTOR",
-                        config=self._extractor_config,
-                        id="model-extractor",
-                    )
-                    yield ModelCard(
-                        field_name="judge",
-                        label="JUDGE",
-                        config=self._judge_config,
-                        id="model-judge",
-                    )
-
         # Footer
         with Horizontal(id="footer"):
             yield Static("", id="status")
@@ -520,10 +548,12 @@ class CreateTaskScreen(Screen):
 
     def on_model_card_clicked(self, event: ModelCard.Clicked) -> None:
         """Handle model card click - open selector."""
-        current_config = (
-            self._extractor_config if event.field_name == "extractor"
-            else self._judge_config
-        )
+        config_map = {
+            "extractor": self._extractor_config,
+            "judge": self._judge_config,
+            "expander": self._expander_config,
+        }
+        current_config = config_map.get(event.field_name)
         self.app.push_screen(
             ModelSelectorScreen(event.field_name, current_config),
             callback=self._on_model_selected,
@@ -540,6 +570,9 @@ class CreateTaskScreen(Screen):
         elif result.field_name == "judge":
             self._judge_config = result.config
             self.query_one("#model-judge", ModelCard).set_config(result.config)
+        elif result.field_name == "expander":
+            self._expander_config = result.config
+            self.query_one("#model-expander", ModelCard).set_config(result.config)
 
     def _apply_profile(self, profile: str) -> None:
         configs = {
@@ -654,8 +687,8 @@ class CreateTaskScreen(Screen):
             from vector_forge.tasks.expander import BehaviorExpander
             from vector_forge.llm import create_client
 
-            # Use extractor model for expansion, or default
-            model = self._extractor_config.model if self._extractor_config else DEFAULT_MODEL
+            # Use expander model, or default
+            model = self._expander_config.model if self._expander_config else DEFAULT_MODEL
             llm = create_client(model)
             expander = BehaviorExpander(llm)
             result = await expander.expand(text)

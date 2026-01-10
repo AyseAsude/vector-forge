@@ -52,6 +52,10 @@ ExtractionOption.-selected {
     background: $surface;
 }
 
+ExtractionOption.-selected:hover {
+    background: $boost;
+}
+
 /* Progress Section */
 #progress-section {
     height: auto;
@@ -125,6 +129,10 @@ AgentItem.-selected {
     background: $surface;
     border-left: wide $accent;
     padding-left: 0;
+}
+
+AgentItem.-selected:hover {
+    background: $boost;
 }
 
 AgentInspector {

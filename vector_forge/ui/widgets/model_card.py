@@ -222,6 +222,14 @@ class ModelCardCompact(Static):
         background: $primary 20%;
     }
 
+    ModelCardCompact.-selected:hover {
+        background: $primary 30%;
+    }
+
+    ModelCardCompact.-selected:focus {
+        background: $primary 30%;
+    }
+
     ModelCardCompact .header-row {
         height: 1;
     }
@@ -276,6 +284,10 @@ class ModelCardCompact(Static):
         is_selected: bool = False,
         **kwargs,
     ) -> None:
+        # Merge -selected class into classes parameter if selected
+        if is_selected:
+            existing_classes = kwargs.get("classes", "")
+            kwargs["classes"] = f"{existing_classes} -selected".strip()
         super().__init__(**kwargs)
         self._config = config
         self._is_selected = is_selected
@@ -293,7 +305,6 @@ class ModelCardCompact(Static):
 
     def on_mount(self) -> None:
         self._update_display()
-        self.set_class(self._is_selected, "-selected")
 
     def on_delete_button_clicked(self, event: DeleteButton.Clicked) -> None:
         """Handle delete button click."""

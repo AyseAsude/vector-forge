@@ -62,6 +62,10 @@ class TaskCard(Static):
         background: $primary 20%;
     }
 
+    TaskCard.-selected:hover {
+        background: $primary 30%;
+    }
+
     TaskCard .header-row {
         height: 1;
         margin-bottom: 1;
