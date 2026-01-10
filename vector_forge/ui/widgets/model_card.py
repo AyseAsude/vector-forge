@@ -39,11 +39,15 @@ class ModelCard(Static):
 
     DEFAULT_CSS = """
     ModelCard {
-        height: 4;
+        height: 5;
         width: 1fr;
-        padding: 0 1;
+        padding: 1 1;
         background: $surface;
-        margin-bottom: 1;
+        margin-right: 1;
+    }
+
+    ModelCard:last-child {
+        margin-right: 0;
     }
 
     ModelCard:hover {
@@ -56,8 +60,9 @@ class ModelCard(Static):
 
     ModelCard .label {
         height: 1;
-        color: $text-muted;
+        color: $accent;
         text-style: bold;
+        margin-bottom: 1;
     }
 
     ModelCard .model-row {
@@ -168,21 +173,31 @@ class ModelCardCompact(Static):
 
     DEFAULT_CSS = """
     ModelCardCompact {
-        height: 2;
+        height: 3;
         padding: 0 1;
         background: $surface;
+        margin-bottom: 1;
+    }
+
+    ModelCardCompact:last-child {
+        margin-bottom: 0;
     }
 
     ModelCardCompact:hover {
         background: $surface-hl;
     }
 
+    ModelCardCompact:focus {
+        background: $surface-hl;
+    }
+
     ModelCardCompact.-selected {
-        background: $primary 25%;
+        background: $primary 20%;
     }
 
     ModelCardCompact .top-row {
         height: 1;
+        margin-bottom: 0;
     }
 
     ModelCardCompact .icon {
@@ -203,6 +218,8 @@ class ModelCardCompact(Static):
         color: $text-muted;
     }
     """
+
+    can_focus = True
 
     class Selected(Message):
         """Emitted when this card is selected."""
@@ -234,6 +251,10 @@ class ModelCardCompact(Static):
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self._config))
+
+    def on_key(self, event) -> None:
+        if event.key in ("enter", "space"):
+            self.post_message(self.Selected(self._config))
 
     def set_selected(self, selected: bool) -> None:
         """Set selection state."""

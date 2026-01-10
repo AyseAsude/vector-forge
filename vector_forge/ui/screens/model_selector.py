@@ -13,7 +13,7 @@ from vector_forge.storage.models import (
     Provider,
     COMMON_MODELS,
 )
-from vector_forge.ui.theme import COLORS
+from vector_forge.ui.theme import COLORS, ICONS
 from vector_forge.ui.widgets.model_card import ModelCardCompact, PROVIDER_INFO
 
 
@@ -30,38 +30,85 @@ class ModelSelectorScreen(ModalScreen):
     }
 
     ModelSelectorScreen #dialog {
-        width: 70;
+        width: 72;
         height: auto;
-        max-height: 80%;
+        max-height: 85%;
         background: $surface;
         padding: 1 2;
     }
 
+    /* Header */
+    ModelSelectorScreen #header {
+        height: 2;
+        margin-bottom: 1;
+    }
+
     ModelSelectorScreen #title {
+        width: 1fr;
+        text-style: bold;
+    }
+
+    ModelSelectorScreen #close-btn {
+        width: auto;
+        color: $text-muted;
+    }
+
+    ModelSelectorScreen #close-btn:hover {
+        color: $text;
+    }
+
+    /* Section titles */
+    ModelSelectorScreen .section-title {
         height: 1;
+        color: $accent;
         text-style: bold;
         margin-bottom: 1;
     }
 
-    ModelSelectorScreen #subtitle {
-        height: 1;
-        color: $text-muted;
-        margin-bottom: 1;
-    }
-
-    ModelSelectorScreen .section-title {
-        height: 1;
-        color: $accent;
-        margin-top: 1;
-        margin-bottom: 1;
-    }
-
-    ModelSelectorScreen #models-list {
+    /* Models list - scrollable */
+    ModelSelectorScreen #models-scroll {
         height: auto;
-        max-height: 15;
+        min-height: 4;
+        max-height: 16;
+        margin-bottom: 1;
+        scrollbar-gutter: stable;
+    }
+
+    ModelSelectorScreen #models-scroll:focus-within {
+        scrollbar-color: $accent;
+    }
+
+    ModelSelectorScreen .empty-list {
+        height: 3;
+        content-align: center middle;
+        color: $text-muted;
+    }
+
+    /* Add new button row */
+    ModelSelectorScreen #add-row {
+        height: 3;
         margin-bottom: 1;
     }
 
+    ModelSelectorScreen #btn-add {
+        width: 1fr;
+        height: 3;
+        background: $background;
+        color: $text-muted;
+        border: none;
+        content-align: center middle;
+    }
+
+    ModelSelectorScreen #btn-add:hover {
+        background: $surface-hl;
+        color: $text;
+    }
+
+    ModelSelectorScreen #btn-add:focus {
+        background: $surface-hl;
+    }
+
+    /* New model form */
     ModelSelectorScreen #new-model-form {
         height: auto;
         padding: 1;
@@ -80,8 +127,9 @@ class ModelSelectorScreen(ModalScreen):
     }
 
     ModelSelectorScreen .form-label {
-        width: 12;
-        height: 1;
+        width: 10;
+        height: 3;
+        content-align: left middle;
         color: $text-muted;
     }
 
@@ -92,6 +140,7 @@ class ModelSelectorScreen(ModalScreen):
     ModelSelectorScreen Input {
         background: $surface;
         border: none;
+        height: 3;
     }
 
     ModelSelectorScreen Input:focus {
@@ -101,51 +150,67 @@ class ModelSelectorScreen(ModalScreen):
     ModelSelectorScreen Select {
         background: $surface;
         border: none;
+        height: 3;
     }
 
-    ModelSelectorScreen #buttons {
+    ModelSelectorScreen Select:focus {
+        background: $surface-hl;
+    }
+
+    /* Form buttons */
+    ModelSelectorScreen #form-buttons {
         height: 3;
         margin-top: 1;
     }
 
-    ModelSelectorScreen #btn-add {
-        width: auto;
-        min-width: 12;
-        height: 1;
-        background: $accent;
-        color: $background;
-        border: none;
-        padding: 0 1;
+    ModelSelectorScreen #form-spacer {
+        width: 1fr;
     }
 
-    ModelSelectorScreen #btn-add:hover {
-        background: $accent 80%;
-    }
-
-    ModelSelectorScreen #btn-cancel {
+    ModelSelectorScreen #btn-form-cancel {
         width: auto;
         min-width: 10;
-        height: 1;
+        height: 3;
         background: $surface-hl;
         color: $text;
         border: none;
-        padding: 0 1;
-        margin-left: 1;
+        margin-right: 1;
+    }
+
+    ModelSelectorScreen #btn-form-cancel:hover {
+        background: $primary 20%;
     }
 
     ModelSelectorScreen #btn-save {
         width: auto;
         min-width: 10;
-        height: 1;
+        height: 3;
         background: $success;
         color: $background;
         border: none;
-        padding: 0 1;
-        margin-left: 1;
+        text-style: bold;
     }
 
-    ModelSelectorScreen #spacer {
+    ModelSelectorScreen #btn-save:hover {
+        background: $success 80%;
+    }
+
+    /* Bottom cancel */
+    ModelSelectorScreen #bottom-row {
+        height: 3;
+    }
+
+    ModelSelectorScreen #btn-cancel {
         width: 1fr;
+        height: 3;
+        background: $surface-hl;
+        color: $text-muted;
+        border: none;
+    }
+
+    ModelSelectorScreen #btn-cancel:hover {
+        background: $primary 20%;
+        color: $text;
     }
     """
 
@@ -172,22 +237,23 @@ class ModelSelectorScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Static("SELECT MODEL", id="title")
-            yield Static(f"for {self.field_name}", id="subtitle")
+            # Header
+            with Horizontal(id="header"):
+                field_display = self.field_name.upper()
+                yield Static(f"SELECT {field_display} MODEL", id="title")
+                yield Static(f"[{COLORS.text_dim}]ESC[/]", id="close-btn")
 
-            # Saved models list
+            # Saved models section
             yield Static("SAVED MODELS", classes="section-title")
-            yield VerticalScroll(id="models-list")
+            yield VerticalScroll(id="models-scroll")
 
-            # Add new button
-            with Horizontal(id="buttons"):
-                yield Button("+ Add New", id="btn-add")
-                yield Static("", id="spacer")
-                yield Button("Cancel", id="btn-cancel")
+            # Add new button (hidden when form is visible)
+            with Horizontal(id="add-row"):
+                yield Button(f"[{COLORS.text_dim}]+[/] Add New Model", id="btn-add")
 
             # New model form (hidden by default)
             with Vertical(id="new-model-form"):
-                yield Static("ADD NEW MODEL", classes="section-title")
+                yield Static("NEW MODEL", classes="section-title")
 
                 with Horizontal(classes="form-row"):
                     yield Static("Provider", classes="form-label")
@@ -208,33 +274,42 @@ class ModelSelectorScreen(ModalScreen):
 
                 with Horizontal(classes="form-row"):
                     yield Static("Name", classes="form-label")
-                    yield Input(placeholder="Display name", id="inp-name", classes="form-input")
+                    yield Input(placeholder="Display name (optional)", id="inp-name", classes="form-input")
 
                 with Horizontal(classes="form-row"):
                     yield Static("API Base", classes="form-label")
-                    yield Input(placeholder="Optional custom endpoint", id="inp-api-base", classes="form-input")
+                    yield Input(placeholder="Custom endpoint (optional)", id="inp-api-base", classes="form-input")
 
                 with Horizontal(classes="form-row"):
                     yield Static("API Key", classes="form-label")
-                    yield Input(placeholder="Optional (uses env var)", id="inp-api-key", password=True, classes="form-input")
+                    yield Input(placeholder="Uses env var if empty", id="inp-api-key", password=True, classes="form-input")
 
-                with Horizontal(id="buttons"):
-                    yield Static("", id="spacer")
+                with Horizontal(id="form-buttons"):
+                    yield Static("", id="form-spacer")
                     yield Button("Cancel", id="btn-form-cancel")
-                    yield Button("Save", id="btn-save")
+                    yield Button("Save Model", id="btn-save")
+
+            # Bottom cancel
+            with Horizontal(id="bottom-row"):
+                yield Button("Cancel", id="btn-cancel")
 
     def on_mount(self) -> None:
         self._populate_models()
 
     def _populate_models(self) -> None:
         """Populate the models list."""
-        models_list = self.query_one("#models-list", VerticalScroll)
-        models_list.remove_children()
+        models_scroll = self.query_one("#models-scroll", VerticalScroll)
+        models_scroll.remove_children()
 
         configs = self._manager.list_all()
 
         if not configs:
-            models_list.mount(Static(f"[{COLORS.text_muted}]No saved models[/]"))
+            models_scroll.mount(
+                Static(
+                    f"[{COLORS.text_muted}]No saved models\nClick 'Add New Model' to create one[/]",
+                    classes="empty-list"
+                )
+            )
             return
 
         for config in configs:
@@ -243,21 +318,20 @@ class ModelSelectorScreen(ModalScreen):
                 and self.current_config.id == config.id
             )
             card = ModelCardCompact(config, is_selected=is_selected)
-            models_list.mount(card)
+            models_scroll.mount(card)
 
     def on_model_card_compact_selected(self, event: ModelCardCompact.Selected) -> None:
         """Handle model selection."""
         self._manager.update_last_used(event.config.id)
-        self.post_message(self.ModelSelected(self.field_name, event.config))
-        self.dismiss()
+        self.dismiss(self.ModelSelected(self.field_name, event.config))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
-            self.dismiss()
+            self.dismiss(None)
         elif event.button.id == "btn-add":
-            self._toggle_new_form(True)
+            self._show_form()
         elif event.button.id == "btn-form-cancel":
-            self._toggle_new_form(False)
+            self._hide_form()
         elif event.button.id == "btn-save":
             self._save_new_model()
 
@@ -281,11 +355,28 @@ class ModelSelectorScreen(ModalScreen):
         if models:
             model_select.value = models[0]
 
-    def _toggle_new_form(self, show: bool) -> None:
-        """Toggle the new model form visibility."""
-        self._show_new_form = show
+    def _show_form(self) -> None:
+        """Show the new model form."""
+        self._show_new_form = True
         form = self.query_one("#new-model-form")
-        form.set_class(show, "-visible")
+        form.set_class(True, "-visible")
+        add_row = self.query_one("#add-row")
+        add_row.display = False
+
+    def _hide_form(self) -> None:
+        """Hide the new model form."""
+        self._show_new_form = False
+        form = self.query_one("#new-model-form")
+        form.set_class(False, "-visible")
+        add_row = self.query_one("#add-row")
+        add_row.display = True
+        self._clear_form()
+
+    def _clear_form(self) -> None:
+        """Clear form inputs."""
+        self.query_one("#inp-name", Input).value = ""
+        self.query_one("#inp-api-base", Input).value = ""
+        self.query_one("#inp-api-key", Input).value = ""
 
     def _save_new_model(self) -> None:
         """Save a new model configuration."""
@@ -315,12 +406,7 @@ class ModelSelectorScreen(ModalScreen):
 
         self._manager.add(config)
         self._populate_models()
-        self._toggle_new_form(False)
-
-        # Clear form
-        name_input.value = ""
-        api_base_input.value = ""
-        api_key_input.value = ""
+        self._hide_form()
 
     def action_cancel(self) -> None:
-        self.dismiss()
+        self.dismiss(None)
