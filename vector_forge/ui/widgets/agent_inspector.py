@@ -47,15 +47,8 @@ class ToolCallDisplay(Widget):
         super().__init__(**kwargs)
         self.tool_call = tool_call
 
-    def compose(self) -> ComposeResult:
-        yield Static(id="tool-header", classes="tool-header")
-        yield Static(id="tool-args", classes="tool-args")
-        yield Static(id="tool-result", classes="tool-result")
-
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def _update_display(self) -> None:
+    def _get_display_content(self) -> tuple:
+        """Get display content for header, args, and result."""
         tc = self.tool_call
 
         # Status icon and color
@@ -73,25 +66,30 @@ class ToolCallDisplay(Widget):
             duration_str = f" [$foreground-disabled]{tc.duration_ms}ms[/]"
 
         # Header
-        header = self.query_one("#tool-header", Static)
-        header.update(f"[{color}]{icon}[/] [$secondary]{tc.name}[/]{duration_str}")
+        header = f"[{color}]{icon}[/] [$secondary]{tc.name}[/]{duration_str}"
 
-        # Arguments (truncated, escaped to prevent markup interpretation)
-        args_widget = self.query_one("#tool-args", Static)
+        # Arguments (truncated, escaped)
         args = tc.arguments
         if len(args) > 100:
             args = args[:97] + "..."
-        args_widget.update(escape_markup(args))
+        args_content = escape_markup(args)
 
-        # Result (if available, truncated, escaped to prevent markup interpretation)
-        result_widget = self.query_one("#tool-result", Static)
+        # Result (if available, truncated, escaped)
         if tc.result:
             result = tc.result
             if len(result) > 100:
                 result = result[:97] + "..."
-            result_widget.update(f"→ {escape_markup(result)}")
+            result_content = f"→ {escape_markup(result)}"
         else:
-            result_widget.update("")
+            result_content = ""
+
+        return header, args_content, result_content
+
+    def compose(self) -> ComposeResult:
+        header, args_content, result_content = self._get_display_content()
+        yield Static(header, id="tool-header", classes="tool-header")
+        yield Static(args_content, id="tool-args", classes="tool-args")
+        yield Static(result_content, id="tool-result", classes="tool-result")
 
 
 class MessageDisplay(Widget):
@@ -138,20 +136,12 @@ class MessageDisplay(Widget):
     def __init__(self, message: AgentMessage, **kwargs) -> None:
         super().__init__(**kwargs)
         self.message = message
+        # Add role class immediately
+        self.add_class(f"-{message.role.value}")
 
-    def compose(self) -> ComposeResult:
-        yield Static(id="msg-header", classes="msg-header")
-        yield Static(id="msg-content", classes="msg-content")
-        yield Vertical(id="msg-tools", classes="msg-tools")
-
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def _update_display(self) -> None:
+    def _get_display_content(self) -> tuple:
+        """Get display content for header and message content."""
         msg = self.message
-
-        # Add role class
-        self.add_class(f"-{msg.role.value}")
 
         # Role colors and icons
         role_styles = {
@@ -162,26 +152,24 @@ class MessageDisplay(Widget):
         }
         color, label = role_styles.get(msg.role, ("$foreground-muted", "???"))
 
-        # Header: role label and timestamp
-        header = self.query_one("#msg-header", Static)
-        header.update(
-            f"[{color} bold]{label}[/] [$foreground-disabled]{msg.time_str}[/]"
-        )
+        # Header
+        header = f"[{color} bold]{label}[/] [$foreground-disabled]{msg.time_str}[/]"
 
-        # Content (escaped to prevent markup interpretation)
-        content_widget = self.query_one("#msg-content", Static)
+        # Content (escaped)
         content = msg.content
         if len(content) > 500:
             content = content[:497] + "..."
-        content_widget.update(f"[$foreground]{escape_markup(content)}[/]")
+        content_str = f"[$foreground]{escape_markup(content)}[/]"
 
-        # Tool calls
-        tools_container = self.query_one("#msg-tools", Vertical)
-        for child in list(tools_container.children):
-            child.remove()
+        return header, content_str
 
-        for tool_call in msg.tool_calls:
-            tools_container.mount(ToolCallDisplay(tool_call))
+    def compose(self) -> ComposeResult:
+        header, content_str = self._get_display_content()
+        yield Static(header, id="msg-header", classes="msg-header")
+        yield Static(content_str, id="msg-content", classes="msg-content")
+        with Vertical(id="msg-tools", classes="msg-tools"):
+            for tool_call in self.message.tool_calls:
+                yield ToolCallDisplay(tool_call)
 
 
 class AgentInspector(Widget):

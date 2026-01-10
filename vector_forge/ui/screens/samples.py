@@ -281,14 +281,28 @@ class WorkerCard(Static):
         super().__init__(**kwargs)
         self.agent = agent
 
-    def compose(self) -> ComposeResult:
-        with Horizontal(classes="header"):
-            yield Static(classes="name")
-            yield Static(classes="time")
-        yield Static(classes="meta")
+    def _get_display_values(self) -> tuple:
+        """Get display values for the agent."""
+        status_map = {
+            AgentStatus.IDLE: (ICONS.pending, "$foreground-muted", "IDLE"),
+            AgentStatus.RUNNING: (ICONS.running, "$accent", "RUNNING"),
+            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted", "WAITING"),
+            AgentStatus.COMPLETE: (ICONS.complete, "$success", "DONE"),
+            AgentStatus.ERROR: (ICONS.failed, "$error", "ERROR"),
+        }
+        return status_map.get(self.agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
-    def on_mount(self) -> None:
-        self._update_display()
+    def compose(self) -> ComposeResult:
+        agent = self.agent
+        icon, color, label = self._get_display_values()
+
+        with Horizontal(classes="header"):
+            yield Static(f"[{color}]{icon}[/] [bold]{agent.name}[/]", classes="name")
+            yield Static(agent.elapsed_str, classes="time")
+        yield Static(
+            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools",
+            classes="meta"
+        )
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self.agent.id))
@@ -300,21 +314,10 @@ class WorkerCard(Static):
 
     def _update_display(self) -> None:
         agent = self.agent
+        icon, color, label = self._get_display_values()
 
-        status_map = {
-            AgentStatus.IDLE: (ICONS.pending, "$foreground-muted", "IDLE"),
-            AgentStatus.RUNNING: (ICONS.running, "$accent", "RUNNING"),
-            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted", "WAITING"),
-            AgentStatus.COMPLETE: (ICONS.complete, "$success", "DONE"),
-            AgentStatus.ERROR: (ICONS.failed, "$error", "ERROR"),
-        }
-        icon, color, label = status_map.get(agent.status, (ICONS.pending, "$foreground-muted", "?"))
-
-        # Header: icon + name on left, time on right
         self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
         self.query_one(".time", Static).update(agent.elapsed_str)
-
-        # Meta: status label + stats
         self.query_one(".meta", Static).update(
             f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools"
         )

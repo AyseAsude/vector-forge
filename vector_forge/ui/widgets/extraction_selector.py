@@ -59,28 +59,8 @@ class ExtractionOption(Widget):
         self.extraction = extraction
         self.extraction_id = extraction.id
 
-    def compose(self) -> ComposeResult:
-        yield Static(id="opt-line1", classes="opt-row")
-        yield Static(id="opt-line2", classes="opt-row")
-
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def on_click(self) -> None:
-        self.post_message(self.Selected(self.extraction_id))
-
-    def watch_selected(self, selected: bool) -> None:
-        if selected:
-            self.add_class("-selected")
-        else:
-            self.remove_class("-selected")
-
-    def update_extraction(self, extraction: ExtractionUIState) -> None:
-        self.extraction = extraction
-        if self.is_mounted:
-            self._update_display()
-
-    def _update_display(self) -> None:
+    def _get_display_content(self) -> tuple:
+        """Get display content for the two lines."""
         ext = self.extraction
 
         # Status icon and color
@@ -105,8 +85,7 @@ class ExtractionOption(Widget):
         )
 
         # Line 1: icon, name, progress, percentage
-        line1 = self.query_one("#opt-line1", Static)
-        line1.update(
+        line1 = (
             f"[{color}]{icon}[/] [$foreground]{ext.behavior_name}[/]  "
             f"{progress_bar} [$foreground-muted]{int(ext.progress)}%[/]"
         )
@@ -115,8 +94,33 @@ class ExtractionOption(Widget):
         desc = ext.behavior_description
         if len(desc) > 50:
             desc = desc[:47] + "..."
-        line2 = self.query_one("#opt-line2", Static)
-        line2.update(f"  [$foreground-disabled]{desc}[/]")
+        line2 = f"  [$foreground-disabled]{desc}[/]"
+
+        return line1, line2
+
+    def compose(self) -> ComposeResult:
+        line1, line2 = self._get_display_content()
+        yield Static(line1, id="opt-line1", classes="opt-row")
+        yield Static(line2, id="opt-line2", classes="opt-row")
+
+    def on_click(self) -> None:
+        self.post_message(self.Selected(self.extraction_id))
+
+    def watch_selected(self, selected: bool) -> None:
+        if selected:
+            self.add_class("-selected")
+        else:
+            self.remove_class("-selected")
+
+    def update_extraction(self, extraction: ExtractionUIState) -> None:
+        self.extraction = extraction
+        if self.is_mounted:
+            self._update_display()
+
+    def _update_display(self) -> None:
+        line1, line2 = self._get_display_content()
+        self.query_one("#opt-line1", Static).update(line1)
+        self.query_one("#opt-line2", Static).update(line2)
 
 
 class ExtractionSelector(Widget):
@@ -183,15 +187,64 @@ class ExtractionSelector(Widget):
     selected_id: reactive[Optional[str]] = reactive(None, init=False)
     expanded: reactive[bool] = reactive(False)
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="selector-header"):
-            yield Static(id="header-line1", classes="header-row")
-            yield Static(id="header-line2", classes="header-row")
-            yield Static(id="header-line3", classes="header-row")
-        yield Vertical(id="dropdown-container")
+    def _get_header_content(self) -> tuple:
+        """Get content for the three header lines."""
+        ext = self.extractions.get(self.selected_id) if self.selected_id else None
 
-    def on_mount(self) -> None:
-        self._update_header()
+        if ext is None:
+            return (
+                "[$foreground-muted]No extraction selected[/]",
+                "[$foreground-disabled]Start an extraction to begin[/]",
+                ""
+            )
+
+        # Status icon and color
+        status_map = {
+            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-disabled", "pending"),
+            ExtractionStatus.RUNNING: (ICONS.running, "$accent", "running"),
+            ExtractionStatus.PAUSED: (ICONS.paused, "$warning", "paused"),
+            ExtractionStatus.COMPLETE: (ICONS.complete, "$success", "complete"),
+            ExtractionStatus.FAILED: (ICONS.failed, "$error", "failed"),
+        }
+        icon, color, status_text = status_map.get(
+            ext.status, (ICONS.pending, "$foreground-disabled", "unknown")
+        )
+
+        # Chevron for dropdown
+        chevron = "▾" if not self.expanded else "▴"
+
+        # Line 1: Name and status
+        line1 = (
+            f"[{color}]{icon}[/] [$foreground bold]{ext.behavior_name}[/] "
+            f"[$foreground-muted]· {status_text}[/] "
+            f"[$foreground-muted]{chevron}[/]"
+        )
+
+        # Line 2: Description
+        desc = ext.behavior_description
+        if len(desc) > 60:
+            desc = desc[:57] + "..."
+        line2 = f"  [$foreground-disabled]{desc}[/]"
+
+        # Line 3: Progress info
+        phase_text = ext.phase.value
+        progress_text = f"{int(ext.progress)}%"
+        iter_text = f"iter {ext.outer_iteration}/{ext.max_outer_iterations}"
+        line3 = (
+            f"  [$foreground-muted]{phase_text}[/] "
+            f"[$accent]{progress_text}[/] "
+            f"[$foreground-disabled]· {iter_text} · {ext.elapsed_str}[/]"
+        )
+
+        return line1, line2, line3
+
+    def compose(self) -> ComposeResult:
+        line1, line2, line3 = self._get_header_content()
+        with Vertical(id="selector-header"):
+            yield Static(line1, id="header-line1", classes="header-row")
+            yield Static(line2, id="header-line2", classes="header-row")
+            yield Static(line3, id="header-line3", classes="header-row")
+        yield Vertical(id="dropdown-container")
 
     def watch_extractions(self, extractions: Dict[str, ExtractionUIState]) -> None:
         if self.is_mounted:
@@ -215,55 +268,10 @@ class ExtractionSelector(Widget):
 
     def _update_header(self) -> None:
         """Update the header display with current extraction."""
-        ext = self.extractions.get(self.selected_id) if self.selected_id else None
-
-        line1 = self.query_one("#header-line1", Static)
-        line2 = self.query_one("#header-line2", Static)
-        line3 = self.query_one("#header-line3", Static)
-
-        if ext is None:
-            line1.update("[$foreground-muted]No extraction selected[/]")
-            line2.update("[$foreground-disabled]Start an extraction to begin[/]")
-            line3.update("")
-            return
-
-        # Status icon and color
-        status_map = {
-            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-disabled", "pending"),
-            ExtractionStatus.RUNNING: (ICONS.running, "$accent", "running"),
-            ExtractionStatus.PAUSED: (ICONS.paused, "$warning", "paused"),
-            ExtractionStatus.COMPLETE: (ICONS.complete, "$success", "complete"),
-            ExtractionStatus.FAILED: (ICONS.failed, "$error", "failed"),
-        }
-        icon, color, status_text = status_map.get(
-            ext.status, (ICONS.pending, "$foreground-disabled", "unknown")
-        )
-
-        # Chevron for dropdown
-        chevron = "▾" if not self.expanded else "▴"
-
-        # Line 1: Name and status
-        line1.update(
-            f"[{color}]{icon}[/] [$foreground bold]{ext.behavior_name}[/] "
-            f"[$foreground-muted]· {status_text}[/] "
-            f"[$foreground-muted]{chevron}[/]"
-        )
-
-        # Line 2: Description
-        desc = ext.behavior_description
-        if len(desc) > 60:
-            desc = desc[:57] + "..."
-        line2.update(f"  [$foreground-disabled]{desc}[/]")
-
-        # Line 3: Progress info
-        phase_text = ext.phase.value
-        progress_text = f"{int(ext.progress)}%"
-        iter_text = f"iter {ext.outer_iteration}/{ext.max_outer_iterations}"
-        line3.update(
-            f"  [$foreground-muted]{phase_text}[/] "
-            f"[$accent]{progress_text}[/] "
-            f"[$foreground-disabled]· {iter_text} · {ext.elapsed_str}[/]"
-        )
+        line1_content, line2_content, line3_content = self._get_header_content()
+        self.query_one("#header-line1", Static).update(line1_content)
+        self.query_one("#header-line2", Static).update(line2_content)
+        self.query_one("#header-line3", Static).update(line3_content)
 
     def _refresh_dropdown(self) -> None:
         """Refresh the dropdown options."""

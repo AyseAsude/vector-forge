@@ -56,13 +56,48 @@ class AgentItem(Widget):
         self.agent = agent
         self.agent_id = agent.id
 
-    def compose(self) -> ComposeResult:
-        yield Static(id="agent-line1", classes="agent-row")
-        yield Static(id="agent-line2", classes="agent-row")
-        yield Static(id="agent-line3", classes="agent-row")
+    def _get_display_content(self) -> tuple:
+        """Get display content for the three lines."""
+        agent = self.agent
+        status_map = {
+            AgentStatus.IDLE: (ICONS.pending, "$foreground-disabled"),
+            AgentStatus.RUNNING: (ICONS.running, "$accent"),
+            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted"),
+            AgentStatus.COMPLETE: (ICONS.complete, "$success"),
+            AgentStatus.ERROR: (ICONS.failed, "$error"),
+        }
+        icon, color = status_map.get(agent.status, (ICONS.pending, "$foreground-disabled"))
 
-    def on_mount(self) -> None:
-        self._update_display()
+        # Line 1: Status icon and name
+        line1 = (
+            f"[{color}]{icon}[/] [$foreground bold]{agent.name}[/] "
+            f"[$foreground-disabled]({agent.role})[/]"
+        )
+
+        # Line 2: Current activity or tool
+        if agent.status == AgentStatus.RUNNING and agent.current_tool:
+            line2 = f"  [$accent]{ICONS.active}[/] [$foreground-muted]{agent.current_tool}[/]"
+        elif agent.last_message:
+            content = agent.last_message.content
+            if len(content) > 40:
+                content = content[:37] + "..."
+            line2 = f"  [$foreground-disabled]{content}[/]"
+        else:
+            line2 = "  [$foreground-disabled]No activity[/]"
+
+        # Line 3: Stats
+        line3 = (
+            f"  [$foreground-disabled]{agent.turns} turns · "
+            f"{agent.tool_calls_count} tools · {agent.elapsed_str}[/]"
+        )
+
+        return line1, line2, line3
+
+    def compose(self) -> ComposeResult:
+        line1, line2, line3 = self._get_display_content()
+        yield Static(line1, id="agent-line1", classes="agent-row")
+        yield Static(line2, id="agent-line2", classes="agent-row")
+        yield Static(line3, id="agent-line3", classes="agent-row")
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self.agent_id))
@@ -79,44 +114,10 @@ class AgentItem(Widget):
             self._update_display()
 
     def _update_display(self) -> None:
-        agent = self.agent
-
-        # Status icon and color
-        status_map = {
-            AgentStatus.IDLE: (ICONS.pending, "$foreground-disabled"),
-            AgentStatus.RUNNING: (ICONS.running, "$accent"),
-            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted"),
-            AgentStatus.COMPLETE: (ICONS.complete, "$success"),
-            AgentStatus.ERROR: (ICONS.failed, "$error"),
-        }
-        icon, color = status_map.get(agent.status, (ICONS.pending, "$foreground-disabled"))
-
-        # Line 1: Status icon and name
-        line1 = self.query_one("#agent-line1", Static)
-        line1.update(
-            f"[{color}]{icon}[/] [$foreground bold]{agent.name}[/] "
-            f"[$foreground-disabled]({agent.role})[/]"
-        )
-
-        # Line 2: Current activity or tool
-        line2 = self.query_one("#agent-line2", Static)
-        if agent.status == AgentStatus.RUNNING and agent.current_tool:
-            line2.update(f"  [$accent]{ICONS.active}[/] [$foreground-muted]{agent.current_tool}[/]")
-        elif agent.last_message:
-            # Show truncated last message
-            content = agent.last_message.content
-            if len(content) > 40:
-                content = content[:37] + "..."
-            line2.update(f"  [$foreground-disabled]{content}[/]")
-        else:
-            line2.update("  [$foreground-disabled]No activity[/]")
-
-        # Line 3: Stats
-        line3 = self.query_one("#agent-line3", Static)
-        line3.update(
-            f"  [$foreground-disabled]{agent.turns} turns · "
-            f"{agent.tool_calls_count} tools · {agent.elapsed_str}[/]"
-        )
+        line1, line2, line3 = self._get_display_content()
+        self.query_one("#agent-line1", Static).update(line1)
+        self.query_one("#agent-line2", Static).update(line2)
+        self.query_one("#agent-line3", Static).update(line3)
 
 
 class AgentsList(Widget):

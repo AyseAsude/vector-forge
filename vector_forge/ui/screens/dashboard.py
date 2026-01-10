@@ -117,22 +117,41 @@ class TaskCard(Static):
         super().__init__(**kwargs)
         self.extraction = extraction
 
+    def _get_display_values(self) -> tuple:
+        """Get display values for the extraction."""
+        ext = self.extraction
+        status_map = {
+            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-muted"),
+            ExtractionStatus.RUNNING: (ICONS.running, "$accent"),
+            ExtractionStatus.PAUSED: (ICONS.paused, "$warning"),
+            ExtractionStatus.COMPLETE: (ICONS.complete, "$success"),
+            ExtractionStatus.FAILED: (ICONS.failed, "$error"),
+        }
+        icon, color = status_map.get(ext.status, (ICONS.pending, "$foreground-muted"))
+        runs = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
+        layer = f"L{ext.current_layer}" if ext.current_layer else "—"
+        score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
+        return icon, color, runs, layer, score
+
     def compose(self) -> ComposeResult:
+        ext = self.extraction
+        icon, color, runs, layer, score = self._get_display_values()
+
         with Horizontal(classes="header-row"):
-            yield Static(classes="name")
-            yield Static(classes="time")
+            yield Static(f"[{color}]{icon}[/] [bold]{ext.behavior_name}[/]", classes="name")
+            yield Static(ext.elapsed_str, classes="time")
         yield ProgressBar(classes="progress")
         with Horizontal(classes="meta-row"):
-            yield Static(classes="meta")
+            yield Static(
+                f"[$accent]{ext.phase.value.upper()}[/] · {runs} runs · {layer} · {score}",
+                classes="meta"
+            )
             yield DeleteButton()
 
     def on_delete_button_clicked(self, event: DeleteButton.Clicked) -> None:
         """Handle delete button click."""
         event.stop()
         self.post_message(self.DeleteRequested(self.extraction.id))
-
-    def on_mount(self) -> None:
-        self._update_display()
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self.extraction.id))
@@ -144,34 +163,13 @@ class TaskCard(Static):
 
     def _update_display(self) -> None:
         ext = self.extraction
+        icon, color, runs, layer, score = self._get_display_values()
 
-        # Status icon and color
-        status_map = {
-            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-muted"),
-            ExtractionStatus.RUNNING: (ICONS.running, "$accent"),
-            ExtractionStatus.PAUSED: (ICONS.paused, "$warning"),
-            ExtractionStatus.COMPLETE: (ICONS.complete, "$success"),
-            ExtractionStatus.FAILED: (ICONS.failed, "$error"),
-        }
-        icon, color = status_map.get(ext.status, (ICONS.pending, "$foreground-muted"))
-
-        # Name with status icon
         self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{ext.behavior_name}[/]")
-
-        # Time on the right
         self.query_one(".time", Static).update(ext.elapsed_str)
-
-        # Progress bar
         self.query_one(ProgressBar).set_value(ext.progress * 100)
-
-        # Meta: phase, runs, layer, score
-        runs = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
-        layer = f"L{ext.current_layer}" if ext.current_layer else "—"
-        score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
-
         self.query_one(".meta", Static).update(
-            f"[$accent]{ext.phase.value.upper()}[/] · "
-            f"{runs} runs · {layer} · {score}"
+            f"[$accent]{ext.phase.value.upper()}[/] · {runs} runs · {layer} · {score}"
         )
 
 
