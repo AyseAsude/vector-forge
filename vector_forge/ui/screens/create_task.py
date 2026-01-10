@@ -511,7 +511,7 @@ class CreateTaskScreen(Screen):
                 # Row 3: Parallelism
                 with Horizontal(classes="params-row"):
                     with ParamSection("PARALLELISM"):
-                        yield ParamRow("Extractions", "inp-extractions", "8")
+                        yield ParamRow("Extractions", "inp-extractions", "2")
                         yield ParamRow("Evaluations", "inp-evaluations", "16")
                         yield ParamRow("Generations", "inp-generations", "5", "contrast gen")
                         yield ParamRow("Top K", "inp-topk", "5")
