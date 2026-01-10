@@ -235,6 +235,7 @@ class UIStateSynchronizer:
                 "session.completed": self._handle_session_completed,
                 "llm.request": self._handle_llm_request,
                 "llm.response": self._handle_llm_response,
+                "llm.chunk": self._handle_llm_chunk,
                 "tool.call": self._handle_tool_call,
                 "tool.result": self._handle_tool_result,
                 "datapoint.added": self._handle_datapoint_added,
@@ -346,6 +347,23 @@ class UIStateSynchronizer:
         agent = self._get_or_create_agent(extraction, source)
         agent.status = AgentStatus.RUNNING
 
+        # Add user message with prompt content for visibility
+        messages = payload.get("messages", [])
+        if messages:
+            # Get the last user message (the actual prompt)
+            last_msg = messages[-1] if messages else {}
+            content = last_msg.get("content", "")
+            role = last_msg.get("role", "user")
+
+            # Truncate very long prompts for display
+            display_content = content[:1000] + "..." if len(content) > 1000 else content
+
+            if role == "user" and display_content:
+                agent.add_message(
+                    role=MessageRole.USER,
+                    content=display_content,
+                )
+
         # Log the request
         self._ui_state.add_log(
             source=source,
@@ -354,6 +372,8 @@ class UIStateSynchronizer:
             extraction_id=session_id,
             agent_id=agent.id,
         )
+
+        self._ui_state._notify()
 
     def _handle_llm_response(self, session_id: str, event: EventEnvelope) -> None:
         """Handle llm.response event."""
@@ -390,6 +410,46 @@ class UIStateSynchronizer:
             )
             agent.tool_calls_count += len(tool_calls)
 
+        self._ui_state._notify()
+
+    def _handle_llm_chunk(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle llm.chunk event for real-time streaming display."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        source = event.source
+        request_id = payload.get("request_id", "")
+        accumulated = payload.get("accumulated", "")
+
+        agent = self._get_or_create_agent(extraction, source)
+
+        # Update or create streaming message
+        # Use request_id to track which message to update
+        streaming_key = f"streaming_{request_id}"
+
+        if not hasattr(agent, '_streaming_messages'):
+            agent._streaming_messages = {}
+
+        if streaming_key not in agent._streaming_messages:
+            # Create new streaming message
+            agent.add_message(
+                role=MessageRole.ASSISTANT,
+                content=accumulated,
+            )
+            agent._streaming_messages[streaming_key] = len(agent.messages) - 1
+        else:
+            # Update existing message content
+            msg_idx = agent._streaming_messages[streaming_key]
+            if msg_idx < len(agent.messages):
+                agent.messages[msg_idx].content = accumulated
+
+        # Notify UI - this enables real-time display
         self._ui_state._notify()
 
     def _handle_tool_call(self, session_id: str, event: EventEnvelope) -> None:

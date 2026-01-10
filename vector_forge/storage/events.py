@@ -88,6 +88,16 @@ class LLMResponseEvent(BaseModel):
     error: Optional[str] = None
 
 
+class LLMChunkEvent(BaseModel):
+    """Captures streaming LLM chunk for real-time display."""
+
+    event_type: Literal["llm.chunk"] = "llm.chunk"
+    request_id: str
+    chunk: str  # The token(s) in this chunk
+    chunk_index: int  # Position in stream (0, 1, 2, ...)
+    accumulated: str  # Full content so far (for UI convenience)
+
+
 # =============================================================================
 # Tool Events
 # =============================================================================

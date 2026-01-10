@@ -324,3 +324,113 @@ class LiteLLMClient(BaseLLMClient):
         )
 
         self._store.append_event(event, source="llm")
+
+    def _emit_chunk_event(
+        self,
+        request_id: str,
+        chunk: str,
+        chunk_index: int,
+        accumulated: str,
+    ) -> None:
+        """Emit LLM chunk event for streaming display."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import LLMChunkEvent
+
+        event = LLMChunkEvent(
+            request_id=request_id,
+            chunk=chunk,
+            chunk_index=chunk_index,
+            accumulated=accumulated,
+        )
+
+        self._store.append_event(event, source="llm")
+
+    async def generate_streaming(
+        self,
+        messages: List[dict],
+        **kwargs: Any,
+    ) -> str:
+        """Generate a text response with real-time streaming.
+
+        Emits llm.chunk events as tokens arrive for real-time UI display.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys.
+            **kwargs: Additional arguments (model, temperature, etc).
+
+        Returns:
+            Complete generated text content.
+        """
+        merged_kwargs = self._merge_kwargs(**kwargs)
+
+        # Generate request ID for linking request/response/chunks
+        request_id = str(uuid.uuid4())
+
+        # Capture request event
+        self._emit_request_event(
+            request_id=request_id,
+            messages=messages,
+            tools=None,
+            kwargs=merged_kwargs,
+        )
+
+        start_time = time.time()
+        accumulated = ""
+        chunk_index = 0
+
+        try:
+            response = await litellm.acompletion(
+                model=self.config.model,
+                messages=messages,
+                api_base=self.config.api_base,
+                stream=True,
+                **merged_kwargs,
+            )
+
+            async for chunk in response:
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None) or ""
+
+                if content:
+                    accumulated += content
+
+                    # Emit chunk for real-time display
+                    self._emit_chunk_event(
+                        request_id=request_id,
+                        chunk=content,
+                        chunk_index=chunk_index,
+                        accumulated=accumulated,
+                    )
+                    chunk_index += 1
+
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Emit final response event
+            self._emit_response_event(
+                request_id=request_id,
+                content=accumulated,
+                tool_calls=[],
+                finish_reason="stop",
+                usage=None,  # Streaming doesn't provide usage in chunks
+                latency_ms=latency_ms,
+            )
+
+            return accumulated
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Capture error response event
+            self._emit_response_event(
+                request_id=request_id,
+                content=None,
+                tool_calls=[],
+                finish_reason="error",
+                usage=None,
+                latency_ms=latency_ms,
+                error=str(e),
+            )
+
+            raise

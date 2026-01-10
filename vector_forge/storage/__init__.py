@@ -39,6 +39,7 @@ from vector_forge.storage.events import (
     # LLM events
     LLMRequestEvent,
     LLMResponseEvent,
+    LLMChunkEvent,
     # Tool events
     ToolCallEvent,
     ToolResultEvent,
@@ -143,6 +144,7 @@ __all__ = [
     # LLM events
     "LLMRequestEvent",
     "LLMResponseEvent",
+    "LLMChunkEvent",
     # Tool events
     "ToolCallEvent",
     "ToolResultEvent",

@@ -53,6 +53,8 @@ class EventEmitter:
     Provides typed methods for emitting specific events, ensuring
     consistent event creation across all components.
 
+    Supports optional real-time notification callback for immediate UI updates.
+
     Example:
         >>> emitter = EventEmitter(session_store)
         >>> emitter.emit_seed_generated(
@@ -62,17 +64,31 @@ class EventEmitter:
         ...     quality_score=8.5,
         ...     is_core=True,
         ... )
+
+        # With real-time callback:
+        >>> emitter = EventEmitter(
+        ...     store=session_store,
+        ...     on_event=lambda env: ui_synchronizer.handle(env),
+        ... )
     """
 
-    def __init__(self, store: Any, default_source: str = "pipeline") -> None:
+    def __init__(
+        self,
+        store: Any,
+        default_source: str = "pipeline",
+        on_event: Optional[callable] = None,
+    ) -> None:
         """Initialize the emitter.
 
         Args:
             store: SessionStore instance for persistence.
             default_source: Default source identifier for events.
+            on_event: Optional callback for real-time event notification.
+                     Called with EventEnvelope after each event is persisted.
         """
         self._store = store
         self._default_source = default_source
+        self._on_event = on_event
 
     def emit(self, event: Any, source: Optional[str] = None) -> None:
         """Emit a raw event to the store.
@@ -81,7 +97,14 @@ class EventEmitter:
             event: The event payload to emit.
             source: Optional source override.
         """
-        self._store.append_event(event, source=source or self._default_source)
+        envelope = self._store.append_event(event, source=source or self._default_source)
+
+        # Immediate notification for real-time UI updates
+        if self._on_event is not None:
+            try:
+                self._on_event(envelope)
+            except Exception:
+                pass  # Don't let notification errors break event emission
 
     # =========================================================================
     # Contrast Pipeline Events

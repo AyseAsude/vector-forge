@@ -151,7 +151,7 @@ class ExtractionRunner:
                 message="Generating contrast pairs...",
             ))
 
-            # Step 2: Create LLM clients with event logging
+            # Step 2: Create LLM clients with event logging and real-time notification
             from vector_forge.services.task_executor import EventEmittingLLMClient
             from vector_forge.storage import EventEmitter
 
@@ -159,12 +159,24 @@ class ExtractionRunner:
             raw_extractor = create_client(config.extractor_model)
             raw_judge = create_client(config.judge_model)
 
-            # Wrap with event emission so ALL LLM calls are logged
-            extractor_llm = EventEmittingLLMClient(raw_extractor, store, source="contrast_extractor")
-            judge_llm = EventEmittingLLMClient(raw_judge, store, source="contrast_judge")
+            # Create notification callback for real-time UI updates
+            def on_event(envelope):
+                self._session_service._notify_event(session_id, envelope)
 
-            # Create event emitter for complete event sourcing
-            event_emitter = EventEmitter(store, default_source="extraction_runner")
+            # Wrap with event emission so ALL LLM calls are logged + notify UI
+            extractor_llm = EventEmittingLLMClient(
+                raw_extractor, store,
+                source="contrast_extractor",
+                on_event=on_event,
+            )
+            judge_llm = EventEmittingLLMClient(
+                raw_judge, store,
+                source="contrast_judge",
+                on_event=on_event,
+            )
+
+            # Create event emitter for complete event sourcing with notification
+            event_emitter = EventEmitter(store, default_source="extraction_runner", on_event=on_event)
 
             # Step 3: Build contrast config from task config
             contrast_config = ContrastPipelineConfig(
