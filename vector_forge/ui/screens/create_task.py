@@ -511,9 +511,9 @@ class CreateTaskScreen(Screen):
                 # Row 3: Parallelism
                 with Horizontal(classes="params-row"):
                     with ParamSection("PARALLELISM"):
-                        yield ParamRow("Extractions", "inp-extractions", "2")
+                        yield ParamRow("Extractions", "inp-extractions", "8")
                         yield ParamRow("Evaluations", "inp-evaluations", "16")
-                        yield ParamRow("Generations", "inp-generations", "5", "contrast gen")
+                        yield ParamRow("Generations", "inp-generations", "16", "LLM API calls")
                         yield ParamRow("Top K", "inp-topk", "5")
 
                 # Strategy options
@@ -852,7 +852,7 @@ DOMAINS: {', '.join(result.domains[:6])}
             core_seeds_per_sample=int(self.query_one("#inp-core-per-sample", Input).value or "40"),
             unique_seeds_per_sample=int(self.query_one("#inp-unique-per-sample", Input).value or "10"),
             max_regeneration_attempts=int(self.query_one("#inp-max-regen", Input).value or "2"),
-            max_concurrent_generations=int(self.query_one("#inp-generations", Input).value or "5"),
+            max_concurrent_generations=int(self.query_one("#inp-generations", Input).value or "16"),
             min_contrast_quality=float(self.query_one("#inp-min-quality", Input).value or "6.0"),
             min_dst_score=float(self.query_one("#inp-min-dst", Input).value or "7.0"),
             max_src_score=float(self.query_one("#inp-max-src", Input).value or "3.0"),
@@ -871,7 +871,7 @@ DOMAINS: {', '.join(result.domains[:6])}
             optimization=optimization_config,
             contrast=contrast_config,
             datapoints_per_sample=int(self.query_one("#inp-datapoints", Input).value or "50"),
-            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "2"),
+            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "8"),
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),

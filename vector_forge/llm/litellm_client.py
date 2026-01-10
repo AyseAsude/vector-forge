@@ -120,6 +120,7 @@ class LiteLLMClient(BaseLLMClient):
                 model=self.config.model,
                 messages=messages_dict,
                 api_base=self.config.api_base,
+                num_retries=10,
                 **merged_kwargs,
             )
 
@@ -200,6 +201,7 @@ class LiteLLMClient(BaseLLMClient):
                 messages=messages_dict,
                 tools=tools_dict,
                 api_base=self.config.api_base,
+                num_retries=10,
                 **merged_kwargs,
             )
 
@@ -386,6 +388,7 @@ class LiteLLMClient(BaseLLMClient):
                 messages=messages,
                 api_base=self.config.api_base,
                 stream=True,
+                num_retries=10,
                 **merged_kwargs,
             )
 
