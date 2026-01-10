@@ -1,6 +1,7 @@
 """Main pipeline orchestrator for steering vector extraction."""
 
-from typing import Optional, Any
+import time
+from typing import Optional, Any, TYPE_CHECKING
 
 from vector_forge.core.protocols import EventEmitter
 from vector_forge.core.state import ExtractionState
@@ -14,6 +15,9 @@ from vector_forge.agents.judge import JudgeAgent
 from vector_forge.strategies.noise import AveragingReducer, PCAReducer
 from vector_forge.core.config import NoiseReductionType
 
+if TYPE_CHECKING:
+    from vector_forge.storage import StorageManager, SessionStore
+
 
 class ExtractionPipeline(EventEmitter):
     """
@@ -21,6 +25,9 @@ class ExtractionPipeline(EventEmitter):
 
     Coordinates the extractor agent (inner loop) and judge (outer loop)
     to autonomously find high-quality steering vectors.
+
+    Automatically captures all events to the session store for
+    complete reproducibility.
 
     Example:
         >>> from steering_vectors import HuggingFaceBackend
@@ -38,19 +45,34 @@ class ExtractionPipeline(EventEmitter):
         self,
         model_backend: Any,
         config: Optional[PipelineConfig] = None,
+        storage_manager: Optional["StorageManager"] = None,
     ):
         """
         Args:
             model_backend: Backend for the model being steered (e.g., HuggingFaceBackend).
             config: Pipeline configuration. Uses defaults if not provided.
+            storage_manager: Optional storage manager for session tracking.
         """
         super().__init__()
         self.backend = model_backend
         self.config = config or PipelineConfig()
+        self._storage_manager = storage_manager
+        self._store: Optional["SessionStore"] = None
 
-        # Create LLM clients
-        self._extractor_llm = LiteLLMClient(self.config.extractor_llm)
-        self._judge_llm = LiteLLMClient(self.config.judge_llm)
+        # LLM clients will be created per-extraction to inject store
+        self._extractor_llm: Optional[LiteLLMClient] = None
+        self._judge_llm: Optional[LiteLLMClient] = None
+
+    def _create_llm_clients(self) -> None:
+        """Create LLM clients with current store."""
+        self._extractor_llm = LiteLLMClient(
+            self.config.extractor_llm,
+            store=self._store,
+        )
+        self._judge_llm = LiteLLMClient(
+            self.config.judge_llm,
+            store=self._store,
+        )
 
     async def extract(
         self,
@@ -70,6 +92,29 @@ class ExtractionPipeline(EventEmitter):
             ExtractionResult with the best vector found.
         """
         max_outer = max_outer_iterations or self.config.max_outer_iterations
+        started_at = time.time()
+        llm_call_count = 0
+
+        # Create session if storage manager is available
+        if self._storage_manager is not None:
+            self._store = self._storage_manager.create_session(
+                behavior=behavior.name,
+                config=self.config.model_dump() if hasattr(self.config, 'model_dump') else {},
+            )
+
+            # Emit session started event
+            from vector_forge.storage import SessionStartedEvent
+            self._store.append_event(
+                SessionStartedEvent(
+                    behavior_name=behavior.name,
+                    behavior_description=behavior.description,
+                    config=self.config.model_dump() if hasattr(self.config, 'model_dump') else {},
+                ),
+                source="pipeline",
+            )
+
+        # Create LLM clients with store
+        self._create_llm_clients()
 
         self.emit(create_event(
             EventType.PIPELINE_STARTED,
@@ -78,11 +123,13 @@ class ExtractionPipeline(EventEmitter):
         ))
 
         state = ExtractionState()
+        state.set_store(self._store)
+
         best_result: Optional[ExtractionResult] = None
 
         try:
             for outer_iter in range(max_outer):
-                state.outer_iteration = outer_iter
+                state.set_iteration("outer", outer_iter)
 
                 self.emit(create_event(
                     EventType.OUTER_ITERATION_STARTED,
@@ -142,6 +189,11 @@ class ExtractionPipeline(EventEmitter):
                 # Update best result
                 if best_result is None or evaluation.scores.overall > best_result.evaluation.scores.overall:
                     best_result = result
+                    state.update_best(
+                        result.recommended_layer,
+                        result.recommended_strength,
+                        evaluation.scores.overall,
+                    )
 
                 # Check if we're done
                 if evaluation.verdict == Verdict.ACCEPTED:
@@ -190,13 +242,27 @@ class ExtractionPipeline(EventEmitter):
                     success=True,
                     score=best_result.evaluation.scores.overall,
                 ))
+
+                # Emit session completed event
+                self._emit_session_completed(
+                    success=True,
+                    result=best_result,
+                    started_at=started_at,
+                )
             else:
                 self.emit(create_event(
                     EventType.PIPELINE_FAILED,
                     source="pipeline",
                     reason="No valid result produced",
                 ))
-                # Return a minimal result
+
+                self._emit_session_completed(
+                    success=False,
+                    result=None,
+                    started_at=started_at,
+                    error="No valid result produced",
+                )
+
                 raise RuntimeError("Pipeline failed to produce a valid result")
 
             return best_result
@@ -207,7 +273,62 @@ class ExtractionPipeline(EventEmitter):
                 source="pipeline",
                 reason=str(e),
             ))
+
+            self._emit_session_completed(
+                success=False,
+                result=None,
+                started_at=started_at,
+                error=str(e),
+            )
+
             raise
+
+    def _emit_session_completed(
+        self,
+        success: bool,
+        result: Optional[ExtractionResult],
+        started_at: float,
+        error: Optional[str] = None,
+    ) -> None:
+        """Emit session completed event and finalize store."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import SessionCompletedEvent
+
+        duration = time.time() - started_at
+
+        # Get token count from LLM clients
+        total_tokens = 0
+        total_llm_calls = 0
+
+        if self._extractor_llm:
+            total_tokens += self._extractor_llm.total_tokens_used
+        if self._judge_llm:
+            total_tokens += self._judge_llm.total_tokens_used
+
+        # Count LLM calls from events
+        for event in self._store.iter_events(event_types=["llm.response"]):
+            total_llm_calls += 1
+
+        # Determine final vector reference
+        final_vector_ref = None
+        if result and result.vector is not None:
+            final_vector_ref = self._store.save_final_vector(result.vector)
+
+        event = SessionCompletedEvent(
+            success=success,
+            final_vector_ref=final_vector_ref,
+            final_layer=result.recommended_layer if result else None,
+            final_score=result.evaluation.scores.overall if result and result.evaluation else None,
+            total_llm_calls=total_llm_calls,
+            total_tokens=total_tokens,
+            duration_seconds=duration,
+            error=error,
+        )
+
+        self._store.append_event(event, source="pipeline")
+        self._store.finalize(success=success, error=error)
 
     async def _apply_noise_reduction(
         self,
@@ -232,8 +353,11 @@ class ExtractionPipeline(EventEmitter):
         for seed in range(1, num_seeds):
             torch.manual_seed(seed * 42)
 
+            # Create fresh state without store (we don't want to capture noise reduction runs)
+            noise_state = ExtractionState()
+
             extractor = ExtractorAgent(
-                state=ExtractionState(),  # Fresh state
+                state=noise_state,
                 llm_client=self._extractor_llm,
                 model_backend=self.backend,
                 behavior=behavior,

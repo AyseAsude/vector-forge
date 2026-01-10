@@ -1,7 +1,7 @@
 """Base class for LLM clients."""
 
 from abc import ABC, abstractmethod
-from typing import List, Any, Optional
+from typing import List, Any, Optional, TYPE_CHECKING
 
 from vector_forge.core.protocols import (
     Message,
@@ -13,6 +13,9 @@ from vector_forge.core.protocols import (
 from vector_forge.core.config import LLMConfig
 from vector_forge.core.events import EventType, create_event
 
+if TYPE_CHECKING:
+    from vector_forge.storage import SessionStore
+
 
 class BaseLLMClient(EventEmitter, ABC):
     """
@@ -20,11 +23,20 @@ class BaseLLMClient(EventEmitter, ABC):
 
     Provides common functionality and event emission.
     Subclasses implement the actual API calls.
+
+    Args:
+        config: LLM configuration.
+        store: Optional session store for event capture.
     """
 
-    def __init__(self, config: LLMConfig):
+    def __init__(
+        self,
+        config: LLMConfig,
+        store: Optional["SessionStore"] = None,
+    ):
         super().__init__()
         self.config = config
+        self._store = store
         self._total_tokens_used = 0
 
     @property

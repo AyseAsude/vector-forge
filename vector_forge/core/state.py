@@ -1,7 +1,7 @@
 """Mutable state for the extraction process."""
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, TYPE_CHECKING
 from datetime import datetime
 import copy
 import uuid
@@ -15,6 +15,9 @@ from vector_forge.core.results import (
     EvaluationResult,
     DatapointQuality,
 )
+
+if TYPE_CHECKING:
+    from vector_forge.storage import SessionStore
 
 
 @dataclass
@@ -61,6 +64,7 @@ class ExtractionState:
 
     Tracks datapoints, optimization results, evaluations, and checkpoints.
     Designed to be serializable for saving/resuming extractions.
+    Emits events to session store for complete reproducibility.
     """
 
     # Training data
@@ -90,6 +94,20 @@ class ExtractionState:
     # Transcript for judge review
     transcript: List[TranscriptEntry] = field(default_factory=list)
 
+    # Session store for event capture (not part of state serialization)
+    _store: Optional["SessionStore"] = field(default=None, repr=False, compare=False)
+
+    # Vector version tracking per layer
+    _vector_versions: Dict[int, int] = field(default_factory=dict, repr=False, compare=False)
+
+    def set_store(self, store: Optional["SessionStore"]) -> None:
+        """Set the session store for event capture.
+
+        Args:
+            store: Session store to use.
+        """
+        self._store = store
+
     def add_datapoint(self, datapoint: TrainingDatapoint) -> str:
         """
         Add a datapoint and return its ID.
@@ -103,14 +121,19 @@ class ExtractionState:
         dp_id = f"dp_{len(self.datapoints)}"
         self.datapoints.append(datapoint)
         self.datapoint_qualities[dp_id] = DatapointQuality(datapoint_id=dp_id)
+
+        # Emit event
+        self._emit_datapoint_added(dp_id, datapoint)
+
         return dp_id
 
-    def remove_datapoint(self, dp_id: str) -> bool:
+    def remove_datapoint(self, dp_id: str, reason: str = "") -> bool:
         """
         Remove a datapoint by ID.
 
         Args:
             dp_id: ID of the datapoint to remove.
+            reason: Reason for removal.
 
         Returns:
             True if removed, False if not found.
@@ -120,12 +143,37 @@ class ExtractionState:
             if 0 <= idx < len(self.datapoints):
                 self.datapoints.pop(idx)
                 self.datapoint_qualities.pop(dp_id, None)
+
+                # Emit event
+                self._emit_datapoint_removed(dp_id, reason)
+
                 return True
         except (ValueError, IndexError):
             pass
         return False
 
-    def set_vector(self, layer: int, vector: torch.Tensor, metrics: OptimizationMetrics) -> None:
+    def update_datapoint_quality(
+        self,
+        dp_id: str,
+        quality: DatapointQuality,
+    ) -> None:
+        """Update quality metrics for a datapoint.
+
+        Args:
+            dp_id: Datapoint ID.
+            quality: Quality metrics.
+        """
+        self.datapoint_qualities[dp_id] = quality
+
+        # Emit event
+        self._emit_datapoint_quality(dp_id, quality)
+
+    def set_vector(
+        self,
+        layer: int,
+        vector: torch.Tensor,
+        metrics: OptimizationMetrics,
+    ) -> None:
         """
         Store optimization result for a layer.
 
@@ -136,6 +184,9 @@ class ExtractionState:
         """
         self.vectors[layer] = vector
         self.optimization_metrics[layer] = metrics
+
+        # Emit event and save vector
+        self._emit_vector_created(layer, vector, metrics)
 
     def update_best(self, layer: int, strength: float, score: float) -> None:
         """
@@ -151,6 +202,9 @@ class ExtractionState:
             self.best_strength = strength
             self.best_score = score
 
+            # Emit event
+            self._emit_vector_selected(layer, strength, score)
+
     def create_checkpoint(self, description: str) -> str:
         """
         Create a checkpoint of current state.
@@ -164,6 +218,10 @@ class ExtractionState:
         checkpoint = Checkpoint.create(self, description)
         self.checkpoints[checkpoint.id] = checkpoint
         self.log_action("checkpoint_created", {"id": checkpoint.id, "description": description})
+
+        # Emit event
+        self._emit_checkpoint_created(checkpoint.id, description)
+
         return checkpoint.id
 
     def rollback_to(self, checkpoint_id: str) -> bool:
@@ -196,7 +254,25 @@ class ExtractionState:
         self.inner_iteration = snapshot.inner_iteration
 
         self.log_action("rollback", {"checkpoint_id": checkpoint_id})
+
+        # Emit event
+        self._emit_checkpoint_rollback(checkpoint_id)
+
         return True
+
+    def set_iteration(self, iteration_type: str, iteration: int) -> None:
+        """Set iteration number and emit event.
+
+        Args:
+            iteration_type: "outer" or "inner".
+            iteration: Iteration number.
+        """
+        if iteration_type == "outer":
+            self.outer_iteration = iteration
+        else:
+            self.inner_iteration = iteration
+
+        self._emit_iteration_started(iteration_type, iteration)
 
     def log_action(self, action: str, details: Dict[str, Any], agent: str = "extractor") -> None:
         """
@@ -225,3 +301,158 @@ class ExtractionState:
         self.optimization_metrics.clear()
         self.best_layer = None
         self.best_score = 0.0
+
+    # =========================================================================
+    # Event emission methods
+    # =========================================================================
+
+    def _emit_datapoint_added(self, dp_id: str, datapoint: TrainingDatapoint) -> None:
+        """Emit datapoint added event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import DatapointAddedEvent
+
+        event = DatapointAddedEvent(
+            datapoint_id=dp_id,
+            prompt=getattr(datapoint, 'prompt', ''),
+            positive_completion=getattr(datapoint, 'positive_str', getattr(datapoint, 'positive', '')),
+            negative_completion=getattr(datapoint, 'negative_str', getattr(datapoint, 'negative', None)),
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_datapoint_removed(self, dp_id: str, reason: str) -> None:
+        """Emit datapoint removed event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import DatapointRemovedEvent
+
+        event = DatapointRemovedEvent(
+            datapoint_id=dp_id,
+            reason=reason,
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_datapoint_quality(self, dp_id: str, quality: DatapointQuality) -> None:
+        """Emit datapoint quality event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import DatapointQualityEvent
+
+        event = DatapointQualityEvent(
+            datapoint_id=dp_id,
+            leave_one_out_influence=quality.leave_one_out_influence,
+            gradient_alignment=quality.gradient_alignment or 0.0,
+            avg_loss_contribution=quality.avg_loss_contribution or 0.0,
+            quality_score=0.0,  # Computed elsewhere
+            recommendation="KEEP",  # Default
+            is_outlier=quality.is_outlier or False,
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_vector_created(
+        self,
+        layer: int,
+        vector: torch.Tensor,
+        metrics: OptimizationMetrics,
+    ) -> None:
+        """Emit vector created event and save vector file."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import VectorCreatedEvent
+
+        # Increment version for this layer
+        version = self._vector_versions.get(layer, 0) + 1
+        self._vector_versions[layer] = version
+
+        # Save vector to file
+        vector_ref = self._store.save_vector(vector, layer, version)
+
+        # Generate vector ID
+        vector_id = f"vec_L{layer}_v{version}"
+
+        event = VectorCreatedEvent(
+            vector_id=vector_id,
+            layer=layer,
+            vector_ref=vector_ref,
+            shape=list(vector.shape),
+            dtype=str(vector.dtype),
+            norm=vector.norm().item(),
+            optimization_metrics={
+                "final_loss": metrics.final_loss,
+                "iterations": metrics.iterations,
+                "vector_norm": metrics.vector_norm,
+            },
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_vector_selected(self, layer: int, strength: float, score: float) -> None:
+        """Emit vector selected event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import VectorSelectedEvent
+
+        # Find vector ID for this layer
+        version = self._vector_versions.get(layer, 1)
+        vector_id = f"vec_L{layer}_v{version}"
+
+        event = VectorSelectedEvent(
+            vector_id=vector_id,
+            layer=layer,
+            strength=strength,
+            score=score,
+            reason="highest_score",
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_checkpoint_created(self, checkpoint_id: str, description: str) -> None:
+        """Emit checkpoint created event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import CheckpointCreatedEvent
+
+        event = CheckpointCreatedEvent(
+            checkpoint_id=checkpoint_id,
+            description=description,
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_checkpoint_rollback(self, checkpoint_id: str) -> None:
+        """Emit checkpoint rollback event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import CheckpointRollbackEvent
+
+        # Get current sequence for rollback tracking
+        # (Events before this point are effectively "rolled back")
+        event = CheckpointRollbackEvent(
+            checkpoint_id=checkpoint_id,
+        )
+
+        self._store.append_event(event, source="state")
+
+    def _emit_iteration_started(self, iteration_type: str, iteration: int) -> None:
+        """Emit iteration started event."""
+        if self._store is None:
+            return
+
+        from vector_forge.storage import IterationStartedEvent
+
+        event = IterationStartedEvent(
+            iteration_type=iteration_type,
+            iteration=iteration,
+        )
+
+        self._store.append_event(event, source="state")
