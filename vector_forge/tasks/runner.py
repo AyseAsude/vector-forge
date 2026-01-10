@@ -7,14 +7,19 @@ Architecture:
 - Uses SteeringOptimizer for gradient-based vector extraction
 - Supports multiple layer strategies with dynamic layer detection
 - Full reproducibility via comprehensive result tracking
+- Complete event sourcing for reproducibility and debugging
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Callable, Protocol
+from typing import List, Dict, Any, Optional, Callable, Protocol, TYPE_CHECKING
 import asyncio
 import time
 import logging
 import random
+import uuid
+
+if TYPE_CHECKING:
+    from vector_forge.storage.emitter import EventEmitter
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizer
@@ -170,6 +175,7 @@ class TaskRunner:
         llm_client: LLMClient,
         max_concurrent_extractions: int = 8,
         max_concurrent_evaluations: int = 16,
+        event_emitter: Optional["EventEmitter"] = None,
     ) -> None:
         """Initialize the task runner.
 
@@ -178,12 +184,14 @@ class TaskRunner:
             llm_client: Client for LLM API calls.
             max_concurrent_extractions: Max parallel extraction workers.
             max_concurrent_evaluations: Max parallel evaluation generations.
+            event_emitter: Optional event emitter for complete event sourcing.
         """
         self._backend = model_backend
         self._llm = llm_client
         self._max_extractions = max_concurrent_extractions
         self._max_evaluations = max_concurrent_evaluations
         self._progress_callback: Optional[Callable[[RunnerProgress], None]] = None
+        self._emitter = event_emitter
 
         # Create steering-vectors backend
         self._sv_backend = HuggingFaceBackend(
@@ -203,6 +211,20 @@ class TaskRunner:
     def on_progress(self, callback: Callable[[RunnerProgress], None]) -> None:
         """Register a progress callback."""
         self._progress_callback = callback
+
+    def _emit(self, method_name: str, **kwargs) -> None:
+        """Emit an event if emitter is available."""
+        if self._emitter is not None:
+            method = getattr(self._emitter, method_name, None)
+            if method:
+                try:
+                    method(**kwargs)
+                except Exception as e:
+                    logger.warning(f"Event emission failed: {e}")
+
+    def _generate_id(self, prefix: str = "") -> str:
+        """Generate a unique ID."""
+        return f"{prefix}_{uuid.uuid4().hex[:12]}" if prefix else uuid.uuid4().hex[:12]
 
     @property
     def num_layers(self) -> int:
@@ -356,6 +378,18 @@ class TaskRunner:
                         datapoints, task.config.datapoints_per_sample
                     )
 
+                # Emit datapoint events for complete traceability
+                for dp in datapoints:
+                    self._emit(
+                        "emit_datapoint_added",
+                        datapoint_id=self._generate_id("dp"),
+                        prompt=dp.prompt[:500] if dp.prompt else "",
+                        positive_completion=dp.positive[:500] if dp.positive else "",
+                        negative_completion=dp.negative[:500] if dp.negative else None,
+                        domain=f"sample_{sample_idx}",
+                        format_type="contrast_pair",
+                    )
+
                 try:
                     extraction = await self._extract_vector(
                         sample, datapoints, task.config
@@ -425,7 +459,22 @@ class TaskRunner:
         Returns:
             ExtractionResult with vector and metadata.
         """
+        start_time = time.time()
+        sample_idx = sample.config.seed % 1000  # Use seed as sample identifier
+
         if not datapoints:
+            self._emit(
+                "emit_optimization_completed",
+                sample_idx=sample_idx,
+                layer=0,
+                final_loss=0.0,
+                iterations=0,
+                loss_history=[],
+                datapoints_used=0,
+                duration_seconds=0.0,
+                success=False,
+                error="No datapoints provided",
+            )
             return ExtractionResult(
                 vector=None,
                 layer=0,
@@ -448,6 +497,22 @@ class TaskRunner:
             max_norm=opt_config.max_norm,
             normalize_by_length=opt_config.normalize_by_length,
             use_one_minus=opt_config.use_one_minus,
+        )
+
+        # Emit optimization started event
+        self._emit(
+            "emit_optimization_started",
+            sample_idx=sample_idx,
+            layer=layer,
+            num_datapoints=len(datapoints),
+            config={
+                "lr": sv_config.lr,
+                "max_iters": sv_config.max_iters,
+                "coldness": sv_config.coldness,
+                "starting_norm": sv_config.starting_norm,
+                "max_norm": sv_config.max_norm,
+                "seed": sample.config.seed,
+            },
         )
 
         # Set up callbacks for tracking
@@ -474,30 +539,63 @@ class TaskRunner:
             callbacks=callbacks,
         )
 
-        # Run optimization (synchronous, wrap in executor for async)
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: optimizer.optimize(datapoints, layer=layer),
-        )
+        try:
+            # Run optimization (synchronous, wrap in executor for async)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: optimizer.optimize(datapoints, layer=layer),
+            )
 
-        return ExtractionResult(
-            vector=result.vector,
-            layer=layer,
-            final_loss=result.final_loss,
-            iterations=result.iterations,
-            loss_history=history_callback.losses,
-            datapoints_used=len(datapoints),
-            config_used={
-                "lr": sv_config.lr,
-                "max_iters": sv_config.max_iters,
-                "coldness": sv_config.coldness,
-                "starting_norm": sv_config.starting_norm,
-                "max_norm": sv_config.max_norm,
-                "layer": layer,
-                "seed": sample.config.seed,
-            },
-        )
+            duration = time.time() - start_time
+
+            # Emit optimization completed event
+            self._emit(
+                "emit_optimization_completed",
+                sample_idx=sample_idx,
+                layer=layer,
+                final_loss=result.final_loss,
+                iterations=result.iterations,
+                loss_history=history_callback.losses[:50],  # Limit to first 50 for storage
+                datapoints_used=len(datapoints),
+                duration_seconds=duration,
+                success=True,
+                error=None,
+            )
+
+            return ExtractionResult(
+                vector=result.vector,
+                layer=layer,
+                final_loss=result.final_loss,
+                iterations=result.iterations,
+                loss_history=history_callback.losses,
+                datapoints_used=len(datapoints),
+                config_used={
+                    "lr": sv_config.lr,
+                    "max_iters": sv_config.max_iters,
+                    "coldness": sv_config.coldness,
+                    "starting_norm": sv_config.starting_norm,
+                    "max_norm": sv_config.max_norm,
+                    "layer": layer,
+                    "seed": sample.config.seed,
+                },
+            )
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self._emit(
+                "emit_optimization_completed",
+                sample_idx=sample_idx,
+                layer=layer,
+                final_loss=0.0,
+                iterations=0,
+                loss_history=history_callback.losses[:50] if history_callback.losses else [],
+                datapoints_used=len(datapoints),
+                duration_seconds=duration,
+                success=False,
+                error=str(e),
+            )
+            raise
 
     def _get_target_layer(self, sample: ExtractionSample) -> int:
         """Determine target layer based on sample configuration."""
@@ -573,6 +671,19 @@ class TaskRunner:
         async def evaluate_one(result: SampleResult) -> None:
             nonlocal completed
             start_time = time.time()
+            eval_id = self._generate_id("eval")
+            sample_idx = result.sample.config.seed % 1000
+
+            # Emit evaluation started event
+            self._emit(
+                "emit_evaluation_started",
+                evaluation_id=eval_id,
+                eval_type="comprehensive",
+                vector_id=f"vector_{sample_idx}",
+                layer=result.layer,
+                strength_levels=config.evaluation.strength_levels,
+                num_prompts=config.evaluation.behavior_prompts,
+            )
 
             evaluation = await evaluator.evaluate(
                 result.vector,
@@ -586,6 +697,18 @@ class TaskRunner:
             result.scores = evaluation.scores_dict
             result.recommended_strength = evaluation.recommended_strength
             result.evaluation_time_seconds = time.time() - start_time
+
+            # Emit evaluation completed event
+            self._emit(
+                "emit_evaluation_completed",
+                evaluation_id=eval_id,
+                scores=evaluation.scores_dict,
+                recommended_strength=evaluation.recommended_strength,
+                verdict="passed" if evaluation.overall_score > 0.5 else "needs_refinement",
+                citations=None,
+                recommendations=None,
+                raw_judge_output=None,
+            )
 
             completed += 1
             self._report_progress(
@@ -685,6 +808,17 @@ class TaskRunner:
 
         # Find recommended strength from best result
         recommended_strength = sorted_results[0].recommended_strength
+
+        # Emit aggregation completed event
+        self._emit(
+            "emit_aggregation_completed",
+            strategy=strategy.value if hasattr(strategy, 'value') else str(strategy),
+            num_vectors=len(valid_results),
+            top_k=top_k,
+            ensemble_components=ensemble_components,
+            final_score=final_score,
+            final_layer=final_layer,
+        )
 
         # Serialize contrast data for reproducibility
         contrast_data = self._serialize_sample_datasets(sample_datasets)

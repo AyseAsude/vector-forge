@@ -294,12 +294,17 @@ class TaskExecutor:
         # Wrap clients with event emission
         emitting_llm = EventEmittingLLMClient(llm_client, store, source="extractor")
 
-        # Create runner
+        # Create event emitter for TaskRunner
+        from vector_forge.storage import EventEmitter
+        event_emitter = EventEmitter(store, default_source="task_runner")
+
+        # Create runner with event emitter
         runner = TaskRunner(
             model_backend=model_backend,
             llm_client=emitting_llm,
             max_concurrent_extractions=config.max_concurrent_extractions,
             max_concurrent_evaluations=config.max_concurrent_evaluations,
+            event_emitter=event_emitter,
         )
 
         # Set up progress reporting
