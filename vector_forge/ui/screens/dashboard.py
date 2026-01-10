@@ -135,14 +135,14 @@ class TaskCard(Static):
         # Progress bar
         self.query_one(ProgressBar).set_value(ext.progress * 100)
 
-        # Meta: phase, agents, layer, score
-        samples = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
+        # Meta: phase, runs, layer, score
+        runs = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
         layer = f"L{ext.current_layer}" if ext.current_layer else "—"
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
 
         self.query_one(".meta", Static).update(
             f"[{COLORS.accent}]{ext.phase.value.upper()}[/] · "
-            f"{samples} agents · {layer} · {score}"
+            f"{runs} runs · {layer} · {score}"
         )
 
 
@@ -259,19 +259,19 @@ class DetailsPanel(Vertical):
         self.mount(Static(desc, classes="description"))
 
         # Stats
-        samples = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
+        runs = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
         layer = f"L{ext.current_layer}" if ext.current_layer else "—"
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
         self.mount(Static(
             f"[{COLORS.accent}]{ext.phase.value.upper()}[/]  │  "
-            f"Agents: {samples}  │  Layer: {layer}  │  Score: {score}",
+            f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}",
             classes="stats"
         ))
 
-        # Agents section
-        self.mount(Static("AGENTS", classes="section"))
-        agents_list = VerticalScroll(classes="list")
-        self.mount(agents_list)
+        # Parallel runs section
+        self.mount(Static("PARALLEL RUNS", classes="section"))
+        runs_list = VerticalScroll(classes="list")
+        self.mount(runs_list)
 
         if ext.agents:
             for agent in list(ext.agents.values())[:8]:
@@ -283,13 +283,13 @@ class DetailsPanel(Vertical):
                     AgentStatus.ERROR: ("●", COLORS.error),
                 }
                 a_icon, a_color = icon_map.get(agent.status, ("○", COLORS.text_muted))
-                agents_list.mount(AgentRow(
+                runs_list.mount(AgentRow(
                     agent.id,
                     f"[{a_color}]{a_icon}[/] {agent.name}  "
                     f"[{COLORS.text_muted}]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
                 ))
         else:
-            agents_list.mount(Static(f"[{COLORS.text_muted}]No agents yet[/]"))
+            runs_list.mount(Static(f"[{COLORS.text_muted}]No runs yet[/]"))
 
         # Recent activity section
         self.mount(Static("RECENT", classes="section"))

@@ -100,7 +100,7 @@ class ToolCallModal(ModalScreen):
         duration = f" · {tc.duration_ms}ms" if tc.duration_ms else ""
 
         with Vertical(id="modal"):
-            yield Static(f"[{color}]{ICONS.active}[/] [bold]{tc.name}[/]", id="modal-title")
+            yield Static(f"[{color}]▸[/] [bold]{tc.name}[/]", id="modal-title")
             yield Static(f"{tc.status}{duration}", id="modal-status")
 
             yield Static("ARGUMENTS", classes="section")
@@ -150,7 +150,7 @@ class ToolCallRow(Static):
         color = status_colors.get(tool_call.status, COLORS.text_dim)
         duration = f" ({tool_call.duration_ms}ms)" if tool_call.duration_ms else ""
 
-        content = f"  [{color}]{ICONS.active} {tool_call.name}[/]{duration} [{COLORS.text_dim}]▸[/]"
+        content = f"  [{color}]▸ {tool_call.name}[/]{duration}"
         super().__init__(content, **kwargs)
 
     def on_click(self) -> None:
@@ -457,7 +457,7 @@ class ConversationPanel(Vertical):
 
         # Header: icon + name on left, time on right
         title.update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
-        time_widget.update(agent.elapsed_str)
+        time_widget.update(f"[{COLORS.text_muted}]{agent.elapsed_str}[/]")
 
         # Stats: status + role + counts
         stats.update(
