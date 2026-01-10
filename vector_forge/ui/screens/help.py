@@ -68,16 +68,16 @@ class HelpModal(ModalScreen):
             with VerticalScroll(id="help-scroll"):
                 yield Static("Navigation", classes="section-title")
                 yield Static(f"[{COLORS.warning}]1[/]  [{COLORS.text_muted}]Dashboard view[/]", classes="key-row")
-                yield Static(f"[{COLORS.warning}]2[/]  [{COLORS.text_muted}]Agents view[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]2[/]  [{COLORS.text_muted}]Samples view[/]", classes="key-row")
                 yield Static(f"[{COLORS.warning}]3[/]  [{COLORS.text_muted}]Logs view[/]", classes="key-row")
                 yield Static(f"[{COLORS.warning}]Tab[/]  [{COLORS.text_muted}]Cycle screens[/]", classes="key-row")
 
                 yield Static("Actions", classes="section-title")
-                yield Static(f"[{COLORS.warning}]p[/]  [{COLORS.text_muted}]Pause/resume extraction[/]", classes="key-row")
+                yield Static(f"[{COLORS.warning}]n[/]  [{COLORS.text_muted}]Create new task[/]", classes="key-row")
                 yield Static(f"[{COLORS.warning}]/[/]  [{COLORS.text_muted}]Focus filter input[/]", classes="key-row")
                 yield Static(f"[{COLORS.warning}]Esc[/]  [{COLORS.text_muted}]Clear filter / Close modal[/]", classes="key-row")
 
-                yield Static("Navigation (Agents/Logs)", classes="section-title")
+                yield Static("Navigation (Samples/Logs)", classes="section-title")
                 yield Static(f"[{COLORS.warning}]j/Down[/]  [{COLORS.text_muted}]Select next item[/]", classes="key-row")
                 yield Static(f"[{COLORS.warning}]k/Up[/]  [{COLORS.text_muted}]Select previous item[/]", classes="key-row")
                 yield Static(f"[{COLORS.warning}]g/Home[/]  [{COLORS.text_muted}]Scroll to top[/]", classes="key-row")

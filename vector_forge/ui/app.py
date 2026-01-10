@@ -1,5 +1,6 @@
 """Main Vector Forge TUI application."""
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -22,30 +23,21 @@ from vector_forge.ui.state import (
     reset_state,
 )
 from vector_forge.ui.screens.dashboard import DashboardScreen
-from vector_forge.ui.screens.agents import AgentsScreen
+from vector_forge.ui.screens.samples import SamplesScreen
 from vector_forge.ui.screens.logs import LogsScreen
 from vector_forge.ui.screens.help import HelpModal
 from vector_forge.ui.screens.create_task import CreateTaskScreen
 
 
 class VectorForgeApp(App):
-    """Vector Forge Terminal User Interface.
-
-    A professional terminal UI for monitoring and controlling
-    steering vector extraction pipelines.
-
-    Screens:
-    - Dashboard: Focused view of single extraction progress
-    - Agents: Split-panel view of parallel agents with inspector
-    - Logs: Full log viewer with filtering
-    """
+    """Vector Forge Terminal User Interface."""
 
     TITLE = "Vector Forge"
     CSS_PATH = Path(__file__).parent / "forge.tcss"
 
     SCREENS = {
         "dashboard": DashboardScreen,
-        "agents": AgentsScreen,
+        "samples": SamplesScreen,
         "logs": LogsScreen,
         "help": HelpModal,
         "create_task": CreateTaskScreen,
@@ -57,17 +49,10 @@ class VectorForgeApp(App):
     ]
 
     def __init__(self, state: Optional[UIState] = None, **kwargs) -> None:
-        """Initialize the application.
-
-        Args:
-            state: Optional pre-configured UI state. If not provided,
-                   uses the global state instance.
-        """
         super().__init__(**kwargs)
         self._state = state
 
     def on_mount(self) -> None:
-        """Set up the application on mount."""
         self.register_theme(forge_dark)
         self.theme = "forge-dark"
 
@@ -78,15 +63,12 @@ class VectorForgeApp(App):
         self.push_screen("dashboard")
 
     def switch_screen(self, screen_name: str) -> None:
-        """Switch to a different screen.
-
-        Args:
-            screen_name: Name of screen to switch to.
-        """
         if screen_name in ("help", "create_task"):
             self.push_screen(screen_name)
-        elif screen_name in ("dashboard", "agents", "logs"):
-            current = getattr(self.screen, "name", None) or type(self.screen).__name__.lower().replace("screen", "")
+        elif screen_name in ("dashboard", "samples", "logs"):
+            current = getattr(self.screen, "name", None)
+            if current is None:
+                current = type(self.screen).__name__.lower().replace("screen", "")
             if screen_name == current:
                 return
             if len(self.screen_stack) > 1:
@@ -94,17 +76,12 @@ class VectorForgeApp(App):
             self.push_screen(screen_name)
 
     def action_new_task(self) -> None:
-        """Open the task creation screen."""
         self.push_screen("create_task")
 
     def on_create_task_screen_task_created(
         self,
         message: CreateTaskScreen.TaskCreated,
     ) -> None:
-        """Handle task creation from the create task screen."""
-        # Create a new extraction from the task config
-        import time
-
         extraction = ExtractionUIState(
             id=f"ext_{int(time.time())}",
             behavior_name=message.description.split()[0].lower(),
@@ -125,12 +102,10 @@ class VectorForgeApp(App):
 
 
 def create_demo_state() -> UIState:
-    """Create demo state with sample data including agents."""
-    import time
-
+    """Create demo state with sample data."""
     state = reset_state()
 
-    # Create main extraction
+    # Main running extraction
     extraction = ExtractionUIState(
         id="ext_001",
         behavior_name="sycophancy",
@@ -138,7 +113,7 @@ def create_demo_state() -> UIState:
         model="claude-3.5-sonnet",
         status=ExtractionStatus.RUNNING,
         phase=Phase.OPTIMIZING,
-        progress=67.0,
+        progress=0.67,
         outer_iteration=2,
         max_outer_iterations=3,
         inner_turn=15,
@@ -154,84 +129,72 @@ def create_demo_state() -> UIState:
         ),
     )
 
-    # Add agents to extraction
+    # Add sample agents
     extractor = AgentUIState(
-        id="agent_extractor",
-        name="Extractor",
-        role="datapoint generation",
+        id="sample_001",
+        name="Sample 1",
+        role="T=0.7 L=16 seed=42",
         status=AgentStatus.RUNNING,
         started_at=time.time() - 120,
         turns=8,
         tool_calls_count=15,
-        current_tool="generate_prompt",
+        current_tool="extract_vector",
     )
     extractor.add_message(
         MessageRole.SYSTEM,
-        "You are an expert at generating contrastive prompt pairs for steering vector extraction."
-    )
-    extractor.add_message(
-        MessageRole.USER,
-        "Generate prompts that elicit sycophantic vs honest behavior."
+        "Extracting steering vector for sycophancy behavior."
     )
     extractor.add_message(
         MessageRole.ASSISTANT,
-        "I'll generate contrastive pairs. Starting with a scenario where the user makes a factually incorrect claim.",
+        "Generated 12 contrastive pairs. Running extraction on layer 16.",
         [ToolCall(
-            id="tc_1", name="generate_prompt",
-            arguments='{"scenario": "user claims earth is flat"}',
-            result='{"positive": "...", "negative": "..."}',
-            status="success", started_at=time.time()-60, completed_at=time.time()-59
-        )]
-    )
-    extractor.add_message(
-        MessageRole.ASSISTANT,
-        "Generating another pair for mathematical misconceptions.",
-        [ToolCall(
-            id="tc_2", name="generate_prompt",
-            arguments='{"scenario": "user claims 2+2=5"}',
+            id="tc_1", name="extract_vector",
+            arguments='{"layer": 16, "pairs": 12}',
             status="running", started_at=time.time()-5
         )]
     )
     extraction.add_agent(extractor)
 
-    optimizer = AgentUIState(
-        id="agent_optimizer",
-        name="Optimizer",
-        role="vector optimization",
+    sample2 = AgentUIState(
+        id="sample_002",
+        name="Sample 2",
+        role="T=0.9 L=16 seed=123",
         status=AgentStatus.RUNNING,
         started_at=time.time() - 90,
         turns=5,
         tool_calls_count=12,
-        current_tool="optimize_layer",
+        current_tool="optimize",
     )
-    optimizer.add_message(MessageRole.SYSTEM, "Optimize steering vectors across layers.")
-    optimizer.add_message(
-        MessageRole.ASSISTANT,
-        "Optimizing layer 16 with current datapoints.",
-        [ToolCall(
-            id="tc_opt_1", name="optimize_layer",
-            arguments='{"layer": 16, "lr": 0.01}',
-            status="running", started_at=time.time()-2
-        )]
-    )
-    extraction.add_agent(optimizer)
+    sample2.add_message(MessageRole.ASSISTANT, "Optimizing vector quality.")
+    extraction.add_agent(sample2)
 
-    judge = AgentUIState(
-        id="agent_judge",
-        name="Judge",
-        role="quality evaluation",
+    sample3 = AgentUIState(
+        id="sample_003",
+        name="Sample 3",
+        role="T=0.5 L=14 seed=456",
+        status=AgentStatus.COMPLETE,
+        started_at=time.time() - 150,
+        completed_at=time.time() - 30,
+        turns=10,
+        tool_calls_count=22,
+    )
+    sample3.add_message(MessageRole.ASSISTANT, "Extraction complete. Score: 0.78")
+    extraction.add_agent(sample3)
+
+    sample4 = AgentUIState(
+        id="sample_004",
+        name="Sample 4",
+        role="T=0.7 L=15 seed=789",
         status=AgentStatus.WAITING,
-        started_at=time.time() - 30,
+        started_at=time.time() - 60,
         turns=2,
         tool_calls_count=4,
     )
-    judge.add_message(MessageRole.SYSTEM, "Evaluate vector quality.")
-    judge.add_message(MessageRole.ASSISTANT, "Waiting for optimization to complete before evaluation.")
-    extraction.add_agent(judge)
+    extraction.add_agent(sample4)
 
     state.add_extraction(extraction)
 
-    # Add second extraction
+    # Second extraction
     extraction2 = ExtractionUIState(
         id="ext_002",
         behavior_name="honesty",
@@ -239,26 +202,15 @@ def create_demo_state() -> UIState:
         model="gpt-4o",
         status=ExtractionStatus.RUNNING,
         phase=Phase.GENERATING_DATAPOINTS,
-        progress=35.0,
+        progress=0.35,
         outer_iteration=1,
         max_outer_iterations=3,
         started_at=time.time() - 80,
         datapoints=DatapointMetrics(total=6, keep=5, review=1, diversity=0.45, clusters=2),
     )
-
-    ext2_agent = AgentUIState(
-        id="ext2_extractor",
-        name="Extractor",
-        role="datapoint generation",
-        status=AgentStatus.RUNNING,
-        started_at=time.time() - 60,
-        turns=3,
-        tool_calls_count=6,
-    )
-    extraction2.add_agent(ext2_agent)
     state.add_extraction(extraction2)
 
-    # Add completed extraction
+    # Completed extraction
     extraction3 = ExtractionUIState(
         id="ext_003",
         behavior_name="curiosity",
@@ -266,7 +218,7 @@ def create_demo_state() -> UIState:
         model="claude-3.5-sonnet",
         status=ExtractionStatus.COMPLETE,
         phase=Phase.COMPLETE,
-        progress=100.0,
+        progress=1.0,
         outer_iteration=3,
         max_outer_iterations=3,
         started_at=time.time() - 300,
@@ -280,17 +232,14 @@ def create_demo_state() -> UIState:
     state.add_extraction(extraction3)
 
     # Add logs
-    state.add_log("pipeline", "Pipeline started", extraction_id="ext_001")
-    state.add_log("extractor", "Generated 10 initial prompts", extraction_id="ext_001")
-    state.add_log("optimizer", "Optimizing layer 14: loss=0.045", extraction_id="ext_001")
-    state.add_log("optimizer", "Optimizing layer 15: loss=0.032", extraction_id="ext_001")
-    state.add_log("optimizer", "Optimizing layer 16: loss=0.023", extraction_id="ext_001")
-    state.add_log("judge", "Evaluation: NEEDS_REFINEMENT (0.79)", "warning", "ext_001")
-    state.add_log("extractor", "Generating additional prompts", extraction_id="ext_001")
-    state.add_log("pipeline", "Pipeline started", extraction_id="ext_002")
-    state.add_log("extractor", "Generated 6 prompts", extraction_id="ext_002")
-    state.add_log("pipeline", "Pipeline completed", extraction_id="ext_003")
-    state.add_log("judge", "Evaluation: ACCEPTED (0.85)", extraction_id="ext_003")
+    state.add_log("pipeline", "Started extraction: sycophancy", extraction_id="ext_001")
+    state.add_log("sample", "Sample 1: Generated 12 contrast pairs", extraction_id="ext_001")
+    state.add_log("sample", "Sample 2: Optimizing layer 16", extraction_id="ext_001")
+    state.add_log("sample", "Sample 3: Completed with score 0.78", extraction_id="ext_001")
+    state.add_log("eval", "Best score so far: 0.79", "warning", "ext_001")
+    state.add_log("pipeline", "Started extraction: honesty", extraction_id="ext_002")
+    state.add_log("pipeline", "Completed extraction: curiosity", extraction_id="ext_003")
+    state.add_log("eval", "Final score: 0.85 - ACCEPTED", extraction_id="ext_003")
 
     return state
 

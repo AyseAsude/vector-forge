@@ -1,40 +1,196 @@
-"""Dashboard screen - focused view of single extraction."""
+"""Dashboard screen - clean overview of extraction tasks."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, Container, Grid
 from textual.screen import Screen
+from textual.widgets import Static, ProgressBar, Label
+from textual.reactive import reactive
 
 from vector_forge.ui.state import (
     ExtractionUIState,
     ExtractionStatus,
     get_state,
 )
-from vector_forge.ui.widgets.status_bar import StatusBar, ScreenTab
-from vector_forge.ui.widgets.extraction_selector import ExtractionSelector
-from vector_forge.ui.widgets.progress import ProgressSection
-from vector_forge.ui.widgets.data_panel import DataPanel
-from vector_forge.ui.widgets.eval_panel import EvaluationPanel
-from vector_forge.ui.widgets.log_panel import LogPanel
+from vector_forge.ui.theme import COLORS, ICONS
+
+
+class TaskCard(Static):
+    """A card showing a single task with progress."""
+
+    DEFAULT_CSS = """
+    TaskCard {
+        height: auto;
+        min-height: 5;
+        padding: 1 2;
+        background: $surface;
+        margin: 0 0 1 0;
+    }
+
+    TaskCard:hover {
+        background: $surface-hl;
+    }
+
+    TaskCard.-selected {
+        border-left: wide $accent;
+    }
+
+    TaskCard .task-header {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    TaskCard .task-name {
+        width: 1fr;
+    }
+
+    TaskCard .task-status {
+        width: auto;
+    }
+
+    TaskCard ProgressBar {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    TaskCard ProgressBar Bar {
+        width: 1fr;
+    }
+
+    TaskCard ProgressBar PercentageStatus {
+        width: 5;
+        text-align: right;
+    }
+
+    TaskCard ProgressBar ETAStatus {
+        display: none;
+    }
+
+    TaskCard .task-metrics {
+        height: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, extraction: ExtractionUIState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.extraction = extraction
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="task-header"):
+            yield Static(classes="task-name")
+            yield Static(classes="task-status")
+        yield ProgressBar(total=100, show_eta=False)
+        yield Static(classes="task-metrics")
+
+    def on_mount(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        ext = self.extraction
+
+        # Status styling
+        status_styles = {
+            ExtractionStatus.PENDING: (ICONS.pending, COLORS.text_dim),
+            ExtractionStatus.RUNNING: (ICONS.running, COLORS.accent),
+            ExtractionStatus.PAUSED: (ICONS.paused, COLORS.warning),
+            ExtractionStatus.COMPLETE: (ICONS.complete, COLORS.success),
+            ExtractionStatus.FAILED: (ICONS.failed, COLORS.error),
+        }
+        icon, color = status_styles.get(ext.status, (ICONS.pending, COLORS.text_dim))
+
+        # Update header
+        name = self.query_one(".task-name", Static)
+        name.update(f"[bold]{ext.behavior_name}[/]")
+
+        status = self.query_one(".task-status", Static)
+        status.update(f"[{color}]{icon} {ext.status.value}[/]  [{COLORS.text_dim}]{ext.elapsed_str}[/]")
+
+        # Update progress
+        progress = self.query_one(ProgressBar)
+        progress.update(progress=ext.progress * 100)
+
+        # Update metrics
+        metrics = self.query_one(".task-metrics", Static)
+        running = ext.running_agents_count
+        total = ext.total_agents_count
+        layer_str = f"L{ext.current_layer}" if ext.current_layer else "—"
+
+        metrics.update(
+            f"Phase: {ext.phase.value.upper()}  |  "
+            f"Samples: {running}/{total}  |  "
+            f"Layer: {layer_str}  |  "
+            f"Score: {ext.evaluation.overall:.2f}"
+        )
+
+    def update_extraction(self, extraction: ExtractionUIState) -> None:
+        self.extraction = extraction
+        if self.is_mounted:
+            self._refresh()
+
+
+class MetricBox(Static):
+    """A small metric display box."""
+
+    DEFAULT_CSS = """
+    MetricBox {
+        width: 1fr;
+        height: 5;
+        padding: 1 2;
+        background: $surface;
+        content-align: center middle;
+    }
+
+    MetricBox .metric-value {
+        text-align: center;
+        text-style: bold;
+        width: 100%;
+    }
+
+    MetricBox .metric-label {
+        text-align: center;
+        color: $text-muted;
+        width: 100%;
+    }
+    """
+
+    def __init__(self, label: str, value: str = "—", color: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._label = label
+        self._value = value
+        self._color = color or COLORS.text
+
+    def compose(self) -> ComposeResult:
+        yield Static(classes="metric-value")
+        yield Static(classes="metric-label")
+
+    def on_mount(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        value_widget = self.query_one(".metric-value", Static)
+        value_widget.update(f"[{self._color}]{self._value}[/]")
+
+        label_widget = self.query_one(".metric-label", Static)
+        label_widget.update(self._label)
+
+    def set_value(self, value: str, color: str = "") -> None:
+        self._value = value
+        if color:
+            self._color = color
+        if self.is_mounted:
+            self._refresh()
 
 
 class DashboardScreen(Screen):
-    """Main dashboard screen showing single extraction progress.
-
-    Clean, focused design:
-    - Extraction selector dropdown at top
-    - Progress bar
-    - Metrics panels side by side
-    - Log panel
-    """
+    """Main dashboard showing task overview."""
 
     BINDINGS = [
         Binding("1", "noop", "dashboard", show=False),
-        Binding("2", "switch_agents", "agents"),
+        Binding("2", "switch_samples", "samples"),
         Binding("3", "switch_logs", "logs"),
         Binding("tab", "cycle_screen", "cycle", show=False),
         Binding("q", "quit", "quit"),
-        Binding("p", "toggle_pause", "pause"),
         Binding("n", "new_task", "new task"),
         Binding("?", "show_help", "help"),
     ]
@@ -44,189 +200,224 @@ class DashboardScreen(Screen):
         background: $background;
     }
 
-    DashboardScreen #main-content {
+    DashboardScreen #header {
+        height: 3;
+        padding: 1 2;
+        background: $surface;
+        border-bottom: solid $border;
+    }
+
+    DashboardScreen #header-title {
+        width: 1fr;
+        text-style: bold;
+    }
+
+    DashboardScreen #header-stats {
+        width: auto;
+        color: $text-muted;
+    }
+
+    DashboardScreen #content {
+        height: 1fr;
+        padding: 1 2;
+    }
+
+    DashboardScreen #tasks-section {
+        width: 2fr;
+        padding-right: 1;
+    }
+
+    DashboardScreen #tasks-header {
+        height: 2;
+        color: $text-muted;
+    }
+
+    DashboardScreen #tasks-scroll {
         height: 1fr;
     }
 
-    DashboardScreen #extraction-selector {
+    DashboardScreen #metrics-section {
+        width: 1fr;
+    }
+
+    DashboardScreen #metrics-header {
+        height: 2;
+        color: $text-muted;
+    }
+
+    DashboardScreen #metrics-grid {
+        grid-size: 2 3;
+        grid-gutter: 1;
         height: auto;
     }
 
-    DashboardScreen #metrics-row {
-        height: auto;
+    DashboardScreen #footer {
+        dock: bottom;
+        height: 1;
+        background: $surface;
+        padding: 0 2;
     }
 
-    DashboardScreen #log-panel {
-        height: 1fr;
-        min-height: 8;
+    DashboardScreen #footer-left {
+        width: 1fr;
+    }
+
+    DashboardScreen #footer-right {
+        width: auto;
+        color: $text-muted;
     }
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="main-content"):
-            yield ExtractionSelector(id="extraction-selector")
-            yield ProgressSection(id="progress-section")
-            with Horizontal(id="metrics-row"):
-                yield DataPanel(id="data-panel")
-                yield EvaluationPanel(id="eval-panel")
-            yield LogPanel(id="log-panel")
-        yield StatusBar(id="status-bar")
+        # Header
+        with Horizontal(id="header"):
+            yield Static("Vector Forge", id="header-title")
+            yield Static(id="header-stats")
+
+        # Content area
+        with Horizontal(id="content"):
+            # Tasks list
+            with Vertical(id="tasks-section"):
+                yield Static("ACTIVE TASKS", id="tasks-header")
+                yield Container(id="tasks-scroll")
+
+            # Metrics sidebar
+            with Vertical(id="metrics-section"):
+                yield Static("METRICS", id="metrics-header")
+                with Grid(id="metrics-grid"):
+                    yield MetricBox("Running", id="metric-running")
+                    yield MetricBox("Complete", id="metric-complete")
+                    yield MetricBox("Best Score", id="metric-score")
+                    yield MetricBox("Samples", id="metric-samples")
+                    yield MetricBox("Vectors", id="metric-vectors")
+                    yield MetricBox("Duration", id="metric-duration")
+
+        # Footer
+        with Horizontal(id="footer"):
+            yield Static(id="footer-left")
+            yield Static("n: new task  |  2: samples  |  3: logs  |  q: quit", id="footer-right")
 
     def on_mount(self) -> None:
-        """Initialize screen with current state."""
         self._sync_from_state()
 
-        # Set active screen on status bar
-        status_bar = self.query_one(StatusBar)
-        status_bar.active_screen = "dashboard"
-
-        # Register for state updates
         state = get_state()
         state.add_listener(self._on_state_changed)
-
-        # Start timer update interval
-        self.set_interval(1.0, self._on_timer_tick)
+        self.set_interval(1.0, self._refresh_timers)
 
     def on_unmount(self) -> None:
-        """Clean up state listener."""
         state = get_state()
         state.remove_listener(self._on_state_changed)
 
     def _on_state_changed(self, state) -> None:
-        """Handle state changes."""
         self._sync_from_state()
 
     def _sync_from_state(self) -> None:
-        """Synchronize display with current state."""
         state = get_state()
 
-        # Update extraction selector
-        selector = self.query_one(ExtractionSelector)
-        selector.extractions = state.extractions
-        selector.selected_id = state.selected_id
+        # Update header stats
+        stats = self.query_one("#header-stats", Static)
+        stats.update(f"{state.running_count} running  |  {state.complete_count}/{state.total_count} complete")
 
-        extraction = state.selected_extraction
+        # Update tasks
+        self._refresh_tasks(state)
 
-        if extraction is None:
-            self._show_empty_state()
-            return
+        # Update metrics
+        self._refresh_metrics(state)
 
-        self._update_progress(extraction)
-        self._update_status_bar(extraction)
-        self._update_data_panel(extraction)
-        self._update_eval_panel(extraction)
-        self._update_logs(extraction.id)
+        # Update footer
+        footer_left = self.query_one("#footer-left", Static)
+        if state.selected_extraction:
+            ext = state.selected_extraction
+            footer_left.update(
+                f"[{COLORS.accent}]{ICONS.active}[/] {ext.behavior_name}  "
+                f"[{COLORS.text_dim}]|[/]  {ext.phase.value.upper()}"
+            )
+        else:
+            footer_left.update(f"[{COLORS.text_dim}]No active task. Press 'n' to create one.[/]")
 
-    def _show_empty_state(self) -> None:
-        """Show empty state when no extraction is selected."""
-        status_bar = self.query_one(StatusBar)
-        status_bar.phase = ""
-        status_bar.iteration = ""
-        status_bar.layer = ""
-        status_bar.turn = ""
-        status_bar.elapsed = "00:00"
+    def _refresh_tasks(self, state) -> None:
+        container = self.query_one("#tasks-scroll", Container)
 
-    def _update_progress(self, extraction: ExtractionUIState) -> None:
-        """Update progress section."""
-        progress = self.query_one(ProgressSection)
-        progress.set_progress(
-            progress=extraction.progress,
-            phase=extraction.phase,
-            outer_iter=extraction.outer_iteration,
-            max_outer=extraction.max_outer_iterations,
-            inner_turn=extraction.inner_turn,
-            max_inner=extraction.max_inner_turns,
-            current_layer=extraction.current_layer,
-        )
+        # Get current cards
+        existing_cards = {card.extraction.id: card for card in self.query(TaskCard)}
 
-    def _update_status_bar(self, extraction: ExtractionUIState) -> None:
-        """Update status bar with extraction state."""
-        status_bar = self.query_one(StatusBar)
-        status_bar.set_extraction_state(
-            phase=extraction.phase,
-            outer_iter=extraction.outer_iteration,
-            max_outer=extraction.max_outer_iterations,
-            inner_turn=extraction.inner_turn,
-            max_inner=extraction.max_inner_turns,
-            current_layer=extraction.current_layer,
-            elapsed=extraction.elapsed_str,
-            status=extraction.status,
-        )
+        # Update or create cards
+        for ext_id, extraction in state.extractions.items():
+            if ext_id in existing_cards:
+                existing_cards[ext_id].update_extraction(extraction)
+            else:
+                card = TaskCard(extraction)
+                container.mount(card)
 
-    def _update_data_panel(self, extraction: ExtractionUIState) -> None:
-        """Update data panel."""
-        data_panel = self.query_one(DataPanel)
-        data_panel.set_metrics(extraction.datapoints)
+        # Remove old cards
+        for ext_id, card in existing_cards.items():
+            if ext_id not in state.extractions:
+                card.remove()
 
-    def _update_eval_panel(self, extraction: ExtractionUIState) -> None:
-        """Update evaluation panel."""
-        eval_panel = self.query_one(EvaluationPanel)
-        eval_panel.set_metrics(extraction.evaluation)
+    def _refresh_metrics(self, state) -> None:
+        # Running count
+        running = self.query_one("#metric-running", MetricBox)
+        running.set_value(str(state.running_count), COLORS.accent if state.running_count > 0 else COLORS.text_dim)
 
-    def _update_logs(self, extraction_id: str) -> None:
-        """Update log panel - filtered to current extraction."""
+        # Complete count
+        complete = self.query_one("#metric-complete", MetricBox)
+        complete.set_value(str(state.complete_count), COLORS.success if state.complete_count > 0 else COLORS.text_dim)
+
+        # Best score
+        best_score = 0.0
+        total_samples = 0
+        total_vectors = 0
+        total_duration = 0.0
+
+        for ext in state.extractions.values():
+            if ext.evaluation.overall > best_score:
+                best_score = ext.evaluation.overall
+            total_samples += ext.total_agents_count
+            total_duration += ext.elapsed_seconds
+
+        score_widget = self.query_one("#metric-score", MetricBox)
+        score_color = COLORS.success if best_score >= 0.8 else (COLORS.accent if best_score >= 0.5 else COLORS.text_dim)
+        score_widget.set_value(f"{best_score:.2f}", score_color)
+
+        # Samples
+        samples = self.query_one("#metric-samples", MetricBox)
+        samples.set_value(str(total_samples))
+
+        # Vectors (placeholder - would come from actual vector extraction count)
+        vectors = self.query_one("#metric-vectors", MetricBox)
+        vectors.set_value(str(state.complete_count))
+
+        # Duration
+        duration = self.query_one("#metric-duration", MetricBox)
+        mins = int(total_duration) // 60
+        secs = int(total_duration) % 60
+        duration.set_value(f"{mins:02d}:{secs:02d}")
+
+    def _refresh_timers(self) -> None:
+        """Refresh time-based displays."""
         state = get_state()
-        log_panel = self.query_one(LogPanel)
-        log_panel.entries = state.get_filtered_logs(extraction_id=extraction_id)
-
-    def _on_timer_tick(self) -> None:
-        """Update elapsed time display."""
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction and extraction.status == ExtractionStatus.RUNNING:
-            status_bar = self.query_one(StatusBar)
-            status_bar.elapsed = extraction.elapsed_str
-
-    def on_screen_tab_clicked(self, event: ScreenTab.Clicked) -> None:
-        """Handle status bar tab clicks."""
-        event.stop()
-        if event.screen_name != "dashboard":
-            self.app.switch_screen(event.screen_name)
-
-    def on_extraction_selector_extraction_changed(
-        self,
-        message: ExtractionSelector.ExtractionChanged,
-    ) -> None:
-        """Handle extraction selection change."""
-        state = get_state()
-        state.select_extraction(message.extraction_id)
-        message.stop()
+        for card in self.query(TaskCard):
+            ext = state.extractions.get(card.extraction.id)
+            if ext and ext.status == ExtractionStatus.RUNNING:
+                card.update_extraction(ext)
 
     def action_noop(self) -> None:
-        """No operation - already on this screen."""
         pass
 
-    def action_switch_agents(self) -> None:
-        """Switch to agents view."""
-        self.app.switch_screen("agents")
+    def action_switch_samples(self) -> None:
+        self.app.switch_screen("samples")
 
     def action_switch_logs(self) -> None:
-        """Switch to logs view."""
         self.app.switch_screen("logs")
 
     def action_cycle_screen(self) -> None:
-        """Cycle to next screen (Tab key)."""
-        self.app.switch_screen("agents")
-
-    def action_toggle_pause(self) -> None:
-        """Toggle pause state."""
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction:
-            if extraction.status == ExtractionStatus.RUNNING:
-                extraction.status = ExtractionStatus.PAUSED
-            elif extraction.status == ExtractionStatus.PAUSED:
-                extraction.status = ExtractionStatus.RUNNING
-            self._sync_from_state()
-
-    def action_show_help(self) -> None:
-        """Show help modal."""
-        self.app.push_screen("help")
+        self.app.switch_screen("samples")
 
     def action_new_task(self) -> None:
-        """Open task creation screen."""
         self.app.push_screen("create_task")
 
+    def action_show_help(self) -> None:
+        self.app.push_screen("help")
+
     def action_quit(self) -> None:
-        """Quit the application."""
         self.app.exit()
