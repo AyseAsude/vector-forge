@@ -388,7 +388,17 @@ class ExtractionRunner:
                     dtype=torch.float32,
                 )
 
-            return HuggingFaceBackend(model=model, tokenizer=tokenizer)
+            # Enable gradient checkpointing for memory efficiency
+            # This reduces activation memory by ~50% at cost of ~30% slower backward
+            if hasattr(model, 'gradient_checkpointing_enable'):
+                model.gradient_checkpointing_enable()
+                logger.info("Enabled gradient checkpointing for memory efficiency")
+
+            return HuggingFaceBackend(
+                model=model,
+                tokenizer=tokenizer,
+                gradient_checkpointing=True,
+            )
 
         backend = await loop.run_in_executor(None, load_model)
         logger.info(f"Model loaded: {model_id}")

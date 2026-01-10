@@ -163,11 +163,20 @@ class TaskRunner:
     Uses the optimization-based approach from steering-vectors library
     for high-quality steering vector extraction.
 
+    Features:
+    - Smart concurrency: Adjusts parallelism based on GPU memory
+    - Memory cleanup: Clears CUDA cache between extractions
+    - Batched optimization: Uses efficient batched forward passes
+
     Example:
         >>> runner = TaskRunner(backend, llm, max_concurrent=8)
         >>> result = await runner.run(task, sample_datasets)
         >>> print(f"Best score: {result.final_score}")
     """
+
+    # Memory estimation constants (for 8B parameter models in float16)
+    MEMORY_PER_EXTRACTION_GB = 3.0  # ~3GB per concurrent extraction with gradient checkpointing
+    MEMORY_BUFFER_RATIO = 0.85  # Use 85% of available memory
 
     def __init__(
         self,
@@ -193,10 +202,11 @@ class TaskRunner:
         self._progress_callback: Optional[Callable[[RunnerProgress], None]] = None
         self._emitter = event_emitter
 
-        # Create steering-vectors backend
+        # Create steering-vectors backend with gradient checkpointing
         self._sv_backend = HuggingFaceBackend(
             model=model_backend.model,
             tokenizer=model_backend.tokenizer,
+            gradient_checkpointing=True,
         )
 
         # Cache model info
@@ -207,6 +217,54 @@ class TaskRunner:
             f"TaskRunner initialized: {self._num_layers} layers, "
             f"hidden_dim={self._hidden_dim}"
         )
+
+    def _get_safe_concurrency(self) -> int:
+        """Calculate safe concurrency based on available GPU memory.
+
+        Returns:
+            Number of safe concurrent extractions.
+        """
+        if not torch.cuda.is_available():
+            # CPU: no memory constraints, use all
+            return self._max_extractions
+
+        try:
+            # Get current GPU memory state
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            allocated = torch.cuda.memory_allocated(0)
+            reserved = torch.cuda.memory_reserved(0)
+            free = total_memory - reserved
+
+            # Convert to GB
+            free_gb = free / (1024 ** 3)
+            total_gb = total_memory / (1024 ** 3)
+            allocated_gb = allocated / (1024 ** 3)
+
+            # Calculate safe concurrency
+            available_for_extractions = free_gb * self.MEMORY_BUFFER_RATIO
+            safe_concurrency = max(1, int(available_for_extractions / self.MEMORY_PER_EXTRACTION_GB))
+
+            # Clamp to configured max
+            safe_concurrency = min(safe_concurrency, self._max_extractions)
+
+            logger.info(
+                f"GPU memory: {total_gb:.1f}GB total, {allocated_gb:.1f}GB allocated, "
+                f"{free_gb:.1f}GB free -> safe concurrency: {safe_concurrency}"
+            )
+
+            return safe_concurrency
+
+        except Exception as e:
+            logger.warning(f"Could not determine safe concurrency: {e}, using 1")
+            return 1
+
+    def _clear_gpu_memory(self) -> None:
+        """Clear GPU memory between extractions."""
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
     def on_progress(self, callback: Callable[[RunnerProgress], None]) -> None:
         """Register a progress callback."""
@@ -316,8 +374,19 @@ class TaskRunner:
         task: ExtractionTask,
         sample_datasets: Dict[int, SampleDataset],
     ) -> List[SampleResult]:
-        """Run all extractions in parallel."""
-        semaphore = asyncio.Semaphore(self._max_extractions)
+        """Run all extractions with smart concurrency control.
+
+        Uses dynamic concurrency based on available GPU memory to prevent OOM.
+        Falls back to sequential execution if GPU memory is limited.
+        """
+        # Determine safe concurrency based on GPU memory
+        safe_concurrency = self._get_safe_concurrency()
+        logger.info(
+            f"Running {len(task.samples)} extractions with concurrency: {safe_concurrency} "
+            f"(configured max: {self._max_extractions})"
+        )
+
+        semaphore = asyncio.Semaphore(safe_concurrency)
         results: List[SampleResult] = []
         completed = 0
         started_at = time.time()
@@ -330,6 +399,10 @@ class TaskRunner:
             sample_idx: int,
         ) -> SampleResult:
             nonlocal completed
+
+            # Clear GPU memory before acquiring semaphore
+            self._clear_gpu_memory()
+
             async with semaphore:
                 start_time = time.time()
 
@@ -490,7 +563,7 @@ class TaskRunner:
         # Determine target layer
         layer = self._get_target_layer(sample)
 
-        # Build optimization config
+        # Build optimization config with batching settings
         opt_config = config.optimization
         sv_config = SVOptimizationConfig(
             lr=sample.config.get_lr(opt_config.lr),
@@ -500,6 +573,8 @@ class TaskRunner:
             max_norm=opt_config.max_norm,
             normalize_by_length=opt_config.normalize_by_length,
             use_one_minus=opt_config.use_one_minus,
+            use_batched=opt_config.use_batched,
+            batch_size=opt_config.batch_size,
         )
 
         # Emit optimization started event

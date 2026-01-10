@@ -126,6 +126,19 @@ class OptimizationConfig(BaseModel):
         description="Consecutive steps below eps before stopping",
     )
 
+    # Batched optimization (performance)
+    use_batched: bool = Field(
+        default=True,
+        description="Use batched forward passes for 10-50x faster optimization",
+    )
+
+    batch_size: int = Field(
+        default=16,
+        ge=1,
+        le=128,
+        description="Batch size for batched optimization (larger = faster but more memory)",
+    )
+
     @classmethod
     def fast(cls) -> "OptimizationConfig":
         """Fast configuration for testing."""
@@ -134,6 +147,8 @@ class OptimizationConfig(BaseModel):
             max_iters=30,
             max_norm=3.0,
             normalize_by_length=True,
+            use_batched=True,
+            batch_size=16,
         )
 
     @classmethod
@@ -151,6 +166,8 @@ class OptimizationConfig(BaseModel):
             starting_norm=0.5,
             convergence_eps=1e-6,
             convergence_patience=5,
+            use_batched=True,
+            batch_size=8,  # Smaller batch for more iterations
         )
 
     def to_steering_config(self) -> dict:
@@ -163,6 +180,8 @@ class OptimizationConfig(BaseModel):
             "max_norm": self.max_norm,
             "normalize_by_length": self.normalize_by_length,
             "use_one_minus": self.use_one_minus,
+            "use_batched": self.use_batched,
+            "batch_size": self.batch_size,
         }
 
 

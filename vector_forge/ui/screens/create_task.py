@@ -871,7 +871,7 @@ DOMAINS: {', '.join(result.domains[:6])}
             optimization=optimization_config,
             contrast=contrast_config,
             datapoints_per_sample=int(self.query_one("#inp-datapoints", Input).value or "50"),
-            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "8"),
+            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "2"),
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
