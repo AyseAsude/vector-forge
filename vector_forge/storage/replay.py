@@ -495,121 +495,121 @@ class SessionReplayer:
             return ("contrast", f"Behavior analyzed: {components} components, {dims} contrast dimensions", "info")
 
         elif event_type == "contrast.pipeline_completed":
-            total = payload.get('total_pairs_generated', 0)
-            valid = payload.get('total_valid_pairs', 0)
-            quality = payload.get('avg_quality', 0)
-            duration = payload.get('duration_seconds', 0)
+            total = payload.get('total_pairs_generated') or 0
+            valid = payload.get('total_valid_pairs') or 0
+            quality = payload.get('avg_quality') or 0.0
+            duration = payload.get('duration_seconds') or 0.0
             return ("contrast", f"Contrast complete: {valid}/{total} valid pairs | quality: {quality:.2f} | {duration:.1f}s", "info")
 
         elif event_type == "contrast.pair_generated":
-            sample = payload.get('sample_idx', 0)
-            pair_id = payload.get('pair_id', '')[:8]
+            sample = payload.get('sample_idx') or 0
+            pair_id = (payload.get('pair_id') or '')[:8]
             return ("contrast", f"Sample {sample}: generated pair {pair_id}", "info")
 
         elif event_type == "contrast.pair_validated":
-            pair_id = payload.get('pair_id', '')[:8]
+            pair_id = (payload.get('pair_id') or '')[:8]
             is_valid = payload.get('is_valid', False)
             if is_valid:
-                quality = payload.get('contrast_quality', 0)
-                dst = payload.get('dst_score', 0)
-                src = payload.get('src_score', 0)
+                quality = payload.get('contrast_quality') or 0.0
+                dst = payload.get('dst_score') or 0.0
+                src = payload.get('src_score') or 0.0
                 return ("contrast", f"Pair {pair_id} valid: quality={quality:.2f} (dst={dst:.2f}, src={src:.2f})", "info")
             else:
-                reason = payload.get('rejection_reason', 'unknown')
+                reason = payload.get('rejection_reason') or 'unknown'
                 return ("contrast", f"Pair {pair_id} rejected: {reason}", "warning")
 
         # Seed events
         elif event_type == "seed.generation_started":
-            num = payload.get('num_seeds_requested', 0)
-            behavior = payload.get('behavior_name', '')
+            num = payload.get('num_seeds_requested') or 0
+            behavior = payload.get('behavior_name') or ''
             return ("seed", f"Generating {num} seeds for '{behavior}'", "info")
 
         elif event_type == "seed.generated":
-            seed_id = payload.get('seed_id', '')[:8]
-            quality = payload.get('quality_score', 0)
+            seed_id = (payload.get('seed_id') or '')[:8]
+            quality = payload.get('quality_score') or 0.0
             is_core = "core" if payload.get('is_core') else "unique"
-            scenario = payload.get('scenario', '')[:50]
+            scenario = (payload.get('scenario') or '')[:50]
             return ("seed", f"Seed {seed_id} ({is_core}): quality={quality:.2f} | {scenario}...", "info")
 
         elif event_type == "seed.generation_completed":
-            total = payload.get('total_generated', 0)
-            filtered = payload.get('total_filtered', 0)
-            avg_quality = payload.get('avg_quality', 0)
+            total = payload.get('total_generated') or 0
+            filtered = payload.get('total_filtered') or 0
+            avg_quality = payload.get('avg_quality') or 0.0
             return ("seed", f"Seed generation complete: {total} generated, {filtered} filtered | avg quality: {avg_quality:.2f}", "info")
 
         elif event_type == "seed.assigned":
-            sample = payload.get('sample_idx', 0)
-            core = payload.get('num_core_seeds', 0)
-            unique = payload.get('num_unique_seeds', 0)
+            sample = payload.get('sample_idx') or 0
+            core = payload.get('num_core_seeds') or 0
+            unique = payload.get('num_unique_seeds') or 0
             return ("seed", f"Sample {sample}: assigned {core} core + {unique} unique seeds", "info")
 
         # Datapoint events
         elif event_type == "datapoint.added":
-            dp_id = payload.get('datapoint_id', '')[:12]
-            domain = payload.get('domain', 'unknown')
+            dp_id = (payload.get('datapoint_id') or '')[:12]
+            domain = payload.get('domain') or 'unknown'
             return ("datapoint", f"Added {dp_id} (domain: {domain})", "info")
 
         elif event_type == "datapoint.removed":
-            dp_id = payload.get('datapoint_id', '')[:12]
-            reason = payload.get('reason', 'no reason')
+            dp_id = (payload.get('datapoint_id') or '')[:12]
+            reason = payload.get('reason') or 'no reason'
             return ("datapoint", f"Removed {dp_id}: {reason}", "warning")
 
         elif event_type == "datapoint.quality":
-            dp_id = payload.get('datapoint_id', '')[:12]
-            quality = payload.get('quality_score', 0)
-            rec = payload.get('recommendation', 'KEEP')
+            dp_id = (payload.get('datapoint_id') or '')[:12]
+            quality = payload.get('quality_score') or 0.0
+            rec = payload.get('recommendation') or 'KEEP'
             return ("datapoint", f"Quality {dp_id}: {quality:.2f} → {rec}", "info")
 
         # Optimization events
         elif event_type == "optimization.started":
-            sample = payload.get('sample_idx', 0)
-            layer = payload.get('layer', 0)
-            num_dp = payload.get('num_datapoints', 0)
+            sample = payload.get('sample_idx') or 0
+            layer = payload.get('layer') or 0
+            num_dp = payload.get('num_datapoints') or 0
             return ("optimizer", f"Sample {sample}: starting layer {layer} optimization ({num_dp} datapoints)", "info")
 
         elif event_type == "optimization.progress":
-            sample = payload.get('sample_idx', 0)
-            iteration = payload.get('iteration', 0)
-            loss = payload.get('loss', 0)
+            sample = payload.get('sample_idx') or 0
+            iteration = payload.get('iteration') or 0
+            loss = payload.get('loss') or 0.0
             return ("optimizer", f"Sample {sample}: iter {iteration} | loss: {loss:.6f}", "info")
 
         elif event_type == "optimization.completed":
-            sample = payload.get('sample_idx', 0)
-            layer = payload.get('layer', 0)
+            sample = payload.get('sample_idx') or 0
+            layer = payload.get('layer') or 0
             success = payload.get('success', True)
             if success:
-                loss = payload.get('final_loss', 0)
-                iters = payload.get('iterations', 0)
-                duration = payload.get('duration_seconds', 0)
+                loss = payload.get('final_loss') or 0.0
+                iters = payload.get('iterations') or 0
+                duration = payload.get('duration_seconds') or 0.0
                 return ("optimizer", f"Sample {sample} layer {layer}: loss={loss:.6f} | {iters} iters | {duration:.1f}s", "info")
             else:
-                error = payload.get('error', 'unknown')
+                error = payload.get('error') or 'unknown'
                 return ("optimizer", f"Sample {sample} layer {layer} FAILED: {error}", "error")
 
         elif event_type == "optimization.aggregation_completed":
-            strategy = payload.get('strategy', 'unknown')
-            num = payload.get('num_vectors', 0)
-            top_k = payload.get('top_k', 0)
-            score = payload.get('final_score', 0)
-            layer = payload.get('final_layer', 0)
+            strategy = payload.get('strategy') or 'unknown'
+            num = payload.get('num_vectors') or 0
+            top_k = payload.get('top_k') or 0
+            score = payload.get('final_score') or 0.0
+            layer = payload.get('final_layer') or 0
             return ("optimizer", f"Aggregated ({strategy}): {num} vectors, top-{top_k} | score: {score:.3f} | layer: {layer}", "info")
 
         # Vector events
         elif event_type == "vector.created":
-            layer = payload.get('layer', 0)
-            norm = payload.get('norm', 0)
-            vector_id = payload.get('vector_id', '')[:8]
+            layer = payload.get('layer') or 0
+            norm = payload.get('norm') or 0.0
+            vector_id = (payload.get('vector_id') or '')[:8]
             return ("vector", f"Created {vector_id} at layer {layer} | norm: {norm:.4f}", "info")
 
         elif event_type == "vector.comparison":
-            ids = payload.get('vector_ids', [])
+            ids = payload.get('vector_ids') or []
             return ("vector", f"Compared {len(ids)} vectors", "info")
 
         elif event_type == "vector.selected":
-            layer = payload.get('layer', 0)
-            strength = payload.get('strength', 1.0)
+            layer = payload.get('layer') or 0
+            strength = payload.get('strength') or 1.0
             score = payload.get('score')
-            reason = payload.get('reason', '')
+            reason = payload.get('reason') or ''
             msg = f"Selected layer {layer} @ strength {strength:.2f}"
             if score is not None:
                 msg += f" | score: {score:.3f}"
@@ -619,36 +619,36 @@ class SessionReplayer:
 
         # Evaluation events
         elif event_type == "evaluation.started":
-            eval_id = payload.get('evaluation_id', '')[:8]
-            eval_type = payload.get('eval_type', 'quick')
-            layer = payload.get('layer', 0)
-            strengths = payload.get('strength_levels', [])
+            eval_id = (payload.get('evaluation_id') or '')[:8]
+            eval_type = payload.get('eval_type') or 'quick'
+            layer = payload.get('layer') or 0
+            strengths = payload.get('strength_levels') or []
             return ("evaluation", f"Started {eval_type} eval {eval_id}: layer {layer}, {len(strengths)} strengths", "info")
 
         elif event_type == "evaluation.output":
-            eval_id = payload.get('evaluation_id', '')[:8]
-            strength = payload.get('strength', 1.0)
+            eval_id = (payload.get('evaluation_id') or '')[:8]
+            strength = payload.get('strength') or 1.0
             is_baseline = payload.get('is_baseline', False)
             label = "baseline" if is_baseline else f"strength={strength:.2f}"
             return ("evaluation", f"Eval {eval_id} output ({label})", "info")
 
         elif event_type == "evaluation.completed":
-            eval_id = payload.get('evaluation_id', '')[:8]
-            scores = payload.get('scores', {})
-            overall = scores.get('overall', 0)
-            verdict = payload.get('verdict', 'unknown')
-            strength = payload.get('recommended_strength', 1.0)
+            eval_id = (payload.get('evaluation_id') or '')[:8]
+            scores = payload.get('scores') or {}
+            overall = scores.get('overall') or 0.0
+            verdict = payload.get('verdict') or 'unknown'
+            strength = payload.get('recommended_strength') or 1.0
             return ("evaluation", f"Eval {eval_id} complete: {overall:.3f} | {verdict} | rec. strength: {strength:.2f}", "info")
 
         # Checkpoint events
         elif event_type == "checkpoint.created":
-            cp_id = payload.get('checkpoint_id', '')[:8]
-            desc = payload.get('description', '')
+            cp_id = (payload.get('checkpoint_id') or '')[:8]
+            desc = payload.get('description') or ''
             return ("checkpoint", f"Created checkpoint {cp_id}: {desc}", "info")
 
         elif event_type == "checkpoint.rollback":
-            cp_id = payload.get('checkpoint_id', '')[:8]
-            prev_seq = payload.get('previous_sequence', 0)
+            cp_id = (payload.get('checkpoint_id') or '')[:8]
+            prev_seq = payload.get('previous_sequence') or 0
             return ("checkpoint", f"Rolled back to {cp_id} (seq {prev_seq})", "warning")
 
         # State events

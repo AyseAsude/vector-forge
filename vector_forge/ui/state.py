@@ -385,9 +385,9 @@ class UIState:
         )
         self.logs.append(entry)
 
-        # Keep only last 1000 entries
-        if len(self.logs) > 1000:
-            self.logs = self.logs[-1000:]
+        # Keep only last 10000 entries to prevent memory issues
+        if len(self.logs) > 10000:
+            self.logs = self.logs[-10000:]
 
         self._notify()
 

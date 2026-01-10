@@ -433,6 +433,10 @@ class DetailsPanel(Vertical):
             empties = list(activity_list.query(".empty"))
             if not empties:
                 activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="empty"))
+        else:
+            # Remove empty message when logs exist
+            for empty in activity_list.query(".empty"):
+                empty.remove()
 
 
 class ConfirmHideTaskScreen(ModalScreen[bool]):

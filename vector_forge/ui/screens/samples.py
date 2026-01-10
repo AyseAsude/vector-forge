@@ -8,11 +8,11 @@ Uses native Textual widgets for high performance:
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import Screen, ModalScreen
-from textual.widgets import Static, RichLog, ListView, ListItem, Label
+from textual.widgets import Static, ListView, ListItem, Label
 
 from vector_forge.ui.state import (
     AgentUIState,
@@ -324,12 +324,88 @@ class WorkersPanel(Vertical):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Conversation Panel - Uses native RichLog
+# Message Row - Individual message widget (like LogRow in logs screen)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class MessageRow(Static):
+    """Single message row in the conversation stream."""
+
+    DEFAULT_CSS = """
+    MessageRow {
+        height: auto;
+        margin-right: 2;
+        padding: 0 0 1 0;
+    }
+
+    MessageRow:hover {
+        background: $boost;
+    }
+    """
+
+    def __init__(self, msg: AgentMessage, **kwargs) -> None:
+        self.msg = msg
+        content = self._compute_content()
+        super().__init__(content, **kwargs)
+
+    def _compute_content(self) -> str:
+        """Compute the display content for this message."""
+        msg = self.msg
+
+        role_colors = {
+            "system": "$primary",
+            "user": "$accent",
+            "assistant": "$success",
+            "tool": "$warning",
+        }
+        color = role_colors.get(msg.role.value, "$foreground-muted")
+
+        # Build message content
+        lines = []
+
+        # Header line: time  ●  ROLE
+        lines.append(
+            f"[$foreground-disabled]{msg.time_str}[/]  "
+            f"[{color}]●[/]  "
+            f"[{color}]{msg.role.value.upper()}[/]"
+        )
+
+        # Content (truncated for display)
+        content = msg.content
+        if content:
+            # Collapse newlines and truncate
+            content_display = content.replace("\n", " ")
+            if len(content_display) > 200:
+                content_display = content_display[:197] + "..."
+            lines.append(f"    {content_display}")
+
+        # Tool calls
+        for tc in msg.tool_calls:
+            tc_colors = {
+                "pending": "$foreground-muted",
+                "running": "$warning",
+                "success": "$success",
+                "error": "$error",
+            }
+            tc_color = tc_colors.get(tc.status, "$foreground-muted")
+            duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
+            lines.append(f"    [{tc_color}]▸ {tc.name}[/]{duration}")
+
+        return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conversation Panel - Uses VerticalScroll with MessageRow widgets (like LogPanel)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class ConversationPanel(Vertical):
-    """Right panel showing worker conversation using native RichLog."""
+    """Right panel showing worker conversation.
+
+    Uses VerticalScroll with individual MessageRow widgets for consistency
+    with the logs screen design. Features smart auto-scroll: pauses when
+    user scrolls up, resumes when user scrolls back to bottom.
+    """
 
     DEFAULT_CSS = """
     ConversationPanel {
@@ -340,7 +416,6 @@ class ConversationPanel(Vertical):
     ConversationPanel .panel-header {
         height: auto;
         padding: 1 2;
-        background: $panel;
     }
 
     ConversationPanel .title-row {
@@ -363,12 +438,18 @@ class ConversationPanel(Vertical):
         color: $foreground-muted;
     }
 
-    ConversationPanel RichLog {
+    ConversationPanel .message-stream {
         height: 1fr;
-        padding: 1 2;
+        padding: 1 0 1 2;
         background: $background;
-        overflow-x: hidden;
-        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+
+    ConversationPanel .empty {
+        height: 1fr;
+        content-align: center middle;
+        color: $foreground-muted;
+        margin-right: 2;
     }
     """
 
@@ -385,21 +466,31 @@ class ConversationPanel(Vertical):
                 yield Static("[$foreground-muted]Select a worker[/]", classes="title", id="conv-title")
                 yield Static("", classes="time", id="conv-time")
             yield Static("[$foreground-disabled]Click a worker to view conversation[/]", classes="stats", id="conv-stats")
-        yield RichLog(id="conversation-log", highlight=True, markup=True, wrap=True)
+        yield VerticalScroll(classes="message-stream", id="message-stream")
+
+    def _is_at_bottom(self) -> bool:
+        """Check if the message stream is scrolled to the bottom."""
+        try:
+            stream = self.query_one("#message-stream", VerticalScroll)
+            # Consider "at bottom" if within 3 lines of max scroll
+            return stream.scroll_y >= (stream.max_scroll_y - 3)
+        except Exception:
+            return True
 
     def show_agent(self, agent: AgentUIState | None) -> None:
         """Display an agent's conversation."""
         title = self.query_one("#conv-title", Static)
         time_widget = self.query_one("#conv-time", Static)
         stats = self.query_one("#conv-stats", Static)
-        rich_log = self.query_one("#conversation-log", RichLog)
+        stream = self.query_one("#message-stream", VerticalScroll)
 
         if agent is None:
             if self.current_agent_id is not None:
                 title.update("[$foreground-muted]Select a worker[/]")
                 time_widget.update("")
                 stats.update("[$foreground-disabled]Click a worker to view conversation[/]")
-                rich_log.clear()
+                stream.remove_children()
+                stream.mount(Static("Select a worker to view messages", classes="empty"))
                 self._displayed_message_ids.clear()
                 self.current_agent_id = None
             return
@@ -426,50 +517,35 @@ class ConversationPanel(Vertical):
         agent_changed = agent.id != self.current_agent_id
         if agent_changed:
             # Clear and rebuild for new agent
-            rich_log.clear()
+            stream.remove_children()
             self._displayed_message_ids.clear()
             self.current_agent_id = agent.id
+
+        # Remove empty placeholder if present
+        for empty in stream.query(".empty"):
+            empty.remove()
+
+        # Check if at bottom BEFORE adding new messages (for smart auto-scroll)
+        was_at_bottom = self._is_at_bottom()
+
+        # Track if we added new messages
+        added_new = False
 
         # Append only new messages (incremental update)
         for msg in agent.messages:
             if msg.id not in self._displayed_message_ids:
-                self._write_message(rich_log, msg)
+                stream.mount(MessageRow(msg))
                 self._displayed_message_ids.add(msg.id)
+                added_new = True
 
-    def _write_message(self, log: RichLog, msg: AgentMessage) -> None:
-        """Write a single message to the RichLog."""
-        role_colors = {
-            "system": "blue",
-            "user": "cyan",
-            "assistant": "green",
-            "tool": "yellow",
-        }
-        role_color = role_colors.get(msg.role.value, "white")
+        # Handle empty state
+        if not agent.messages:
+            if not list(stream.query(".empty")):
+                stream.mount(Static("No messages yet", classes="empty"))
 
-        # Write header
-        log.write(f"[bold {role_color}]{msg.role.value.upper()}[/] [dim]{msg.time_str}[/]")
-
-        # Write content
-        content = msg.content
-        if len(content) > 500:
-            content = content[:497] + "..."
-        if content:
-            log.write(f"  {content}")
-
-        # Write tool calls
-        for tc in msg.tool_calls:
-            tc_colors = {
-                "pending": "dim",
-                "running": "yellow",
-                "success": "green",
-                "error": "red",
-            }
-            tc_color = tc_colors.get(tc.status, "white")
-            duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
-            log.write(f"  [{tc_color}]▸ {tc.name}[/]{duration}")
-
-        # Empty line for spacing
-        log.write("")
+        # Only auto-scroll if user was already at bottom (smart scroll like Claude Code)
+        if added_new and (was_at_bottom or agent_changed):
+            stream.scroll_end(animate=False)
 
     def update_time(self, agent: AgentUIState) -> None:
         """Update just the elapsed time display."""

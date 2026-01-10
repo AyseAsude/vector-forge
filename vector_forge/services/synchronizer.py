@@ -195,15 +195,107 @@ class UIStateSynchronizer:
             evaluation=evaluation,
         )
 
+        # Reconstruct agents from replayed optimizations (sample agents)
+        if replayed and replayed.optimizations:
+            for opt in replayed.optimizations:
+                sample_idx = opt.sample_idx or 0
+                layer = opt.layer or 0
+                iterations = opt.iterations or 0
+                final_loss = opt.final_loss or 0.0
+                duration = opt.duration_seconds or 0.0
+
+                agent_id = f"{extraction.id}_sample_{sample_idx}"
+                agent = AgentUIState(
+                    id=agent_id,
+                    name=f"Sample {sample_idx + 1}",
+                    role=f"L={layer} iters={iterations}",
+                    status=AgentStatus.COMPLETE if opt.success else AgentStatus.ERROR,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    turns=1,
+                    tool_calls_count=iterations,
+                )
+                # Add completion message
+                if opt.success:
+                    agent.add_message(
+                        MessageRole.ASSISTANT,
+                        f"Optimization complete: loss={final_loss:.4f}, "
+                        f"{iterations} iterations in {duration:.1f}s"
+                    )
+                else:
+                    agent.add_message(
+                        MessageRole.ASSISTANT,
+                        f"Optimization failed: {opt.error or 'Unknown error'}"
+                    )
+                extraction.add_agent(agent)
+
+        # Reconstruct source-based agents from LLM events in logs
+        # These are agents like "extractor", "judge", "contrast_extractor", etc.
+        if replayed and replayed.logs:
+            source_agents: dict[str, AgentUIState] = {}
+
+            for log in replayed.logs:
+                # Only process LLM events to reconstruct agents
+                if log.event_type in ("llm.request", "llm.response"):
+                    # Source is on the log entry itself, not in payload
+                    source = log.source or ""
+                    if not source or source.startswith("sample_"):
+                        continue  # Skip sample agents, already handled above
+
+                    # Create or get agent for this source
+                    if source not in source_agents:
+                        agent_id = f"{extraction.id}_{source}"
+                        # Format display name
+                        display_name = source.replace("_", " ").title()
+                        agent = AgentUIState(
+                            id=agent_id,
+                            name=display_name,
+                            role=source,
+                            status=AgentStatus.COMPLETE,
+                            started_at=started_at,
+                            completed_at=completed_at,
+                            turns=0,
+                            tool_calls_count=0,
+                        )
+                        source_agents[source] = agent
+
+                    agent = source_agents[source]
+
+                    # Add message based on event type
+                    if log.event_type == "llm.request":
+                        agent.turns += 1
+                        # Extract prompt summary
+                        messages = log.payload.get("messages", []) if log.payload else []
+                        if messages:
+                            last_msg = messages[-1] if messages else {}
+                            content = last_msg.get("content", "")
+                            if isinstance(content, str) and len(content) > 100:
+                                content = content[:97] + "..."
+                            agent.add_message(MessageRole.USER, content or "LLM request")
+
+                    elif log.event_type == "llm.response":
+                        agent.tool_calls_count += 1
+                        # Extract response summary
+                        content = log.payload.get("content", "") if log.payload else ""
+                        if isinstance(content, str) and len(content) > 100:
+                            content = content[:97] + "..."
+                        agent.add_message(MessageRole.ASSISTANT, content or "LLM response")
+
+            # Add all source-based agents to extraction
+            for agent in source_agents.values():
+                extraction.add_agent(agent)
+
         # Add logs from replayed events to global UI state
         if replayed and replayed.logs:
-            for log in replayed.logs[-50:]:  # Last 50 logs
+            for log in replayed.logs:  # All logs
                 self._ui_state.logs.append(LogEntry(
                     timestamp=log.timestamp.timestamp(),
                     source=log.source,
                     message=log.message,
                     level=log.level,
                     extraction_id=session_info.session_id,
+                    event_type=log.event_type if log.event_type else None,
+                    payload=log.payload if log.payload else None,
                 ))
 
         return extraction
