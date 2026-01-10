@@ -351,7 +351,6 @@ class TargetModelSelectorScreen(ModalScreen):
         height: 1fr;
         min-height: 4;
         margin-bottom: 1;
-        scrollbar-gutter: stable;
     }
 
     TargetModelSelectorScreen .empty-list {

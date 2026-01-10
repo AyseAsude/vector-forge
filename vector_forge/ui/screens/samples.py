@@ -352,7 +352,6 @@ class WorkersList(Vertical):
 
     WorkersList .list {
         height: 1fr;
-        scrollbar-gutter: stable;
     }
 
     WorkersList .empty {
@@ -443,7 +442,6 @@ class ConversationPanel(Vertical):
         height: 1fr;
         padding: 1 0 1 2;
         background: $background;
-        scrollbar-gutter: stable;
     }
 
     ConversationPanel .empty {

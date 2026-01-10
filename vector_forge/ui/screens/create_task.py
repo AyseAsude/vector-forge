@@ -259,7 +259,6 @@ class CreateTaskScreen(Screen):
     CreateTaskScreen #content {
         height: 1fr;
         padding: 1 0 1 2;
-        scrollbar-gutter: stable;
     }
 
     CreateTaskScreen .main-section {

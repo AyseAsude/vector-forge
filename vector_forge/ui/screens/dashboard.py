@@ -383,7 +383,6 @@ class DashboardScreen(Screen):
 
     DashboardScreen #tasks {
         height: 1fr;
-        scrollbar-gutter: stable;
     }
 
     DashboardScreen .empty {

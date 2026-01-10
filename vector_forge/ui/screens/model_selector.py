@@ -64,7 +64,6 @@ class ModelSelectorScreen(ModalScreen):
         height: 1fr;
         min-height: 4;
         margin-bottom: 1;
-        scrollbar-gutter: stable;
     }
 
     ModelSelectorScreen .empty-list {

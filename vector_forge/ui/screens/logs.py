@@ -407,7 +407,6 @@ class LogPanel(Vertical):
         height: 1fr;
         padding: 1 0 1 2;
         background: $background;
-        scrollbar-gutter: stable;
     }
 
     LogPanel .empty {
