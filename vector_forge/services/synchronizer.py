@@ -204,6 +204,8 @@ class UIStateSynchronizer:
                     message=log.message,
                     level=log.level,
                     extraction_id=session_info.session_id,
+                    event_type=log.event_type,
+                    payload=log.payload,
                 ))
 
         return extraction
@@ -287,12 +289,14 @@ class UIStateSynchronizer:
         self._ui_state.add_extraction(extraction)
         self._session_to_extraction[session_id] = session_id
 
-        # Log the start
+        # Log the start with full event payload for detail view
         self._ui_state.add_log(
             source="session",
             message=f"Started extraction: {extraction.behavior_name}",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
     def _handle_session_completed(self, session_id: str, event: EventEnvelope) -> None:
@@ -320,7 +324,7 @@ class UIStateSynchronizer:
 
         self._ui_state._notify()
 
-        # Log completion
+        # Log completion with full event payload
         status_text = "completed successfully" if success else "failed"
         score_text = f" (score: {payload.get('final_score', 0):.2f})" if success else ""
         self._ui_state.add_log(
@@ -328,6 +332,8 @@ class UIStateSynchronizer:
             message=f"Extraction {status_text}{score_text}",
             level="info" if success else "error",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
     def _handle_llm_request(self, session_id: str, event: EventEnvelope) -> None:
@@ -364,13 +370,15 @@ class UIStateSynchronizer:
                     content=display_content,
                 )
 
-        # Log the request
+        # Log the request with full payload (includes messages, model, tools)
         self._ui_state.add_log(
             source=source,
             message=f"LLM request: {payload.get('model', 'unknown')}",
             level="info",
             extraction_id=session_id,
             agent_id=agent.id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()
@@ -409,6 +417,19 @@ class UIStateSynchronizer:
                 tool_calls=tool_calls,
             )
             agent.tool_calls_count += len(tool_calls)
+
+        # Log the response with full payload (includes content, tool_calls)
+        latency = payload.get("latency_ms", 0)
+        tool_info = f", {len(tool_calls)} tool calls" if tool_calls else ""
+        self._ui_state.add_log(
+            source=source,
+            message=f"LLM response: {latency}ms{tool_info}",
+            level="info",
+            extraction_id=session_id,
+            agent_id=agent.id,
+            event_type=event.event_type,
+            payload=event.payload,
+        )
 
         self._ui_state._notify()
 
@@ -465,12 +486,14 @@ class UIStateSynchronizer:
         payload = event.payload
         tool_name = payload.get("tool_name", "unknown")
 
-        # Log the tool call
+        # Log the tool call with full payload (includes arguments)
         self._ui_state.add_log(
             source="tool",
             message=f"Calling: {tool_name}",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         # Update phase based on tool
@@ -491,6 +514,7 @@ class UIStateSynchronizer:
 
         payload = event.payload
         success = payload.get("success", True)
+        latency = payload.get("latency_ms", 0)
 
         if not success:
             error = payload.get("error", "Unknown error")
@@ -499,6 +523,18 @@ class UIStateSynchronizer:
                 message=f"Tool failed: {error}",
                 level="error",
                 extraction_id=session_id,
+                event_type=event.event_type,
+                payload=event.payload,
+            )
+        else:
+            # Log successful tool results too (includes output)
+            self._ui_state.add_log(
+                source="tool",
+                message=f"Tool completed: {latency}ms",
+                level="info",
+                extraction_id=session_id,
+                event_type=event.event_type,
+                payload=event.payload,
             )
 
     def _handle_datapoint_added(self, session_id: str, event: EventEnvelope) -> None:
@@ -511,6 +547,7 @@ class UIStateSynchronizer:
         if not extraction:
             return
 
+        payload = event.payload
         extraction.datapoints.total += 1
         extraction.datapoints.keep += 1
         extraction.phase = Phase.GENERATING_DATAPOINTS
@@ -519,6 +556,18 @@ class UIStateSynchronizer:
         if extraction.max_outer_iterations > 0:
             dp_progress = min(extraction.datapoints.total / 50, 1.0) * 0.3
             extraction.progress = dp_progress
+
+        # Log with full payload (includes prompt, positive/negative completions)
+        dp_id = payload.get("datapoint_id", "")[:12]
+        domain = payload.get("domain", "general")
+        self._ui_state.add_log(
+            source="datapoint",
+            message=f"Added datapoint {dp_id} ({domain})",
+            level="info",
+            extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
+        )
 
         self._ui_state._notify()
 
@@ -532,8 +581,22 @@ class UIStateSynchronizer:
         if not extraction:
             return
 
+        payload = event.payload
         extraction.datapoints.remove += 1
         extraction.datapoints.keep = max(0, extraction.datapoints.keep - 1)
+
+        # Log with reason
+        dp_id = payload.get("datapoint_id", "")[:12]
+        reason = payload.get("reason", "quality check")
+        self._ui_state.add_log(
+            source="datapoint",
+            message=f"Removed datapoint {dp_id}: {reason}",
+            level="warning",
+            extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
+        )
+
         self._ui_state._notify()
 
     def _handle_vector_created(self, session_id: str, event: EventEnvelope) -> None:
@@ -553,11 +616,14 @@ class UIStateSynchronizer:
         extraction.phase = Phase.OPTIMIZING
         extraction.progress = max(extraction.progress, 0.5)
 
+        norm = payload.get("norm", 0.0)
         self._ui_state.add_log(
             source="vector",
-            message=f"Created vector at layer {layer}",
+            message=f"Created vector at layer {layer} (norm: {norm:.4f})",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()
@@ -577,11 +643,15 @@ class UIStateSynchronizer:
         extraction.evaluation.best_layer = payload.get("layer")
         extraction.evaluation.best_strength = payload.get("strength", 1.0)
 
+        score = payload.get("score")
+        score_text = f" | score: {score:.3f}" if score is not None else ""
         self._ui_state.add_log(
             source="vector",
-            message=f"Selected: layer {payload.get('layer')} @ strength {payload.get('strength', 1.0):.1f}",
+            message=f"Selected: layer {payload.get('layer')} @ strength {payload.get('strength', 1.0):.2f}{score_text}",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()
@@ -596,14 +666,19 @@ class UIStateSynchronizer:
         if not extraction:
             return
 
+        payload = event.payload
         extraction.phase = Phase.EVALUATING
         extraction.progress = max(extraction.progress, 0.6)
 
+        eval_type = payload.get("eval_type", "quick")
+        layer = payload.get("layer", 0)
         self._ui_state.add_log(
             source="evaluation",
-            message="Evaluation started",
+            message=f"Evaluation started: {eval_type} (layer {layer})",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()
@@ -631,11 +706,14 @@ class UIStateSynchronizer:
         extraction.phase = Phase.JUDGE_REVIEW
         extraction.progress = max(extraction.progress, 0.9)
 
+        verdict = payload.get("verdict", "unknown")
         self._ui_state.add_log(
             source="evaluation",
-            message=f"Evaluation complete: {extraction.evaluation.overall:.2f}",
+            message=f"Evaluation complete: {extraction.evaluation.overall:.3f} | {verdict}",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()
@@ -714,9 +792,11 @@ class UIStateSynchronizer:
 
         self._ui_state.add_log(
             source=f"sample_{sample_idx}",
-            message=f"Sample {sample_idx}: Started optimization (layer {layer})",
+            message=f"Sample {sample_idx}: Started optimization (layer {layer}, {num_datapoints} datapoints)",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
     def _handle_optimization_progress(self, session_id: str, event: EventEnvelope) -> None:
@@ -779,11 +859,14 @@ class UIStateSynchronizer:
         self._ui_state._notify()
 
         status_text = "completed" if success else "failed"
+        duration_text = f", {duration:.1f}s" if duration else ""
         self._ui_state.add_log(
             source=f"sample_{sample_idx}",
-            message=f"Sample {sample_idx}: {status_text} (loss={final_loss:.4f})",
+            message=f"Sample {sample_idx}: {status_text} (loss={final_loss:.4f}, {iterations} iters{duration_text})",
             level="info" if success else "error",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
     def _handle_contrast_pipeline_started(self, session_id: str, event: EventEnvelope) -> None:
@@ -807,6 +890,8 @@ class UIStateSynchronizer:
             message=f"Starting contrast generation for {num_samples} samples",
             level="info",
             extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()
@@ -823,12 +908,23 @@ class UIStateSynchronizer:
 
         payload = event.payload
         sample_idx = payload.get("sample_idx", 0)
+        pair_id = payload.get("pair_id", "")[:8]
 
         # Create or update sample agent to show contrast pair generation
         agent = self._get_or_create_sample_agent(extraction, sample_idx)
         agent.status = AgentStatus.RUNNING
         agent.tool_calls_count += 1
         agent.current_tool = "generating pairs"
+
+        # Log every pair with full content (prompt, dst_response, src_response)
+        self._ui_state.add_log(
+            source="contrast",
+            message=f"Sample {sample_idx}: generated pair {pair_id}",
+            level="info",
+            extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
+        )
 
         # Only notify every 5 pairs to reduce UI churn
         if agent.tool_calls_count % 5 == 0:
@@ -847,11 +943,35 @@ class UIStateSynchronizer:
         payload = event.payload
         is_valid = payload.get("is_valid", False)
         contrast_quality = payload.get("contrast_quality", 0.0)
+        pair_id = payload.get("pair_id", "")[:8]
 
         # Update datapoints metrics
         if is_valid:
             extraction.datapoints.total += 1
             extraction.datapoints.keep += 1
+
+        # Log validation result with scores
+        if is_valid:
+            dst_score = payload.get("dst_score", 0.0)
+            src_score = payload.get("src_score", 0.0)
+            self._ui_state.add_log(
+                source="contrast",
+                message=f"Pair {pair_id} valid: quality={contrast_quality:.2f} (dst={dst_score:.2f}, src={src_score:.2f})",
+                level="info",
+                extraction_id=session_id,
+                event_type=event.event_type,
+                payload=event.payload,
+            )
+        else:
+            reason = payload.get("rejection_reason", "unknown")
+            self._ui_state.add_log(
+                source="contrast",
+                message=f"Pair {pair_id} rejected: {reason}",
+                level="warning",
+                extraction_id=session_id,
+                event_type=event.event_type,
+                payload=event.payload,
+            )
 
         # Notify sparingly
         if extraction.datapoints.total % 5 == 0:
@@ -870,6 +990,8 @@ class UIStateSynchronizer:
         payload = event.payload
         sample_idx = payload.get("sample_idx", 0)
         num_seeds = len(payload.get("seed_ids", []))
+        num_core = payload.get("num_core_seeds", 0)
+        num_unique = payload.get("num_unique_seeds", 0)
 
         # Create sample agent in waiting state
         agent = self._get_or_create_sample_agent(extraction, sample_idx)
@@ -877,6 +999,15 @@ class UIStateSynchronizer:
         agent.add_message(
             MessageRole.SYSTEM,
             f"Assigned {num_seeds} seeds for contrast pair generation"
+        )
+
+        self._ui_state.add_log(
+            source="seed",
+            message=f"Sample {sample_idx}: assigned {num_core} core + {num_unique} unique seeds",
+            level="info",
+            extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
         )
 
         self._ui_state._notify()

@@ -93,13 +93,17 @@ class ReplayedOptimization:
 
 @dataclass
 class ReplayedLogEntry:
-    """Log entry reconstructed from events."""
+    """Log entry reconstructed from events.
+
+    Contains both summary message and original payload for rich detail views.
+    """
 
     timestamp: datetime
     source: str
     message: str
     level: str = "info"
     event_type: str = ""
+    payload: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -448,6 +452,7 @@ class SessionReplayer:
                 message=message,
                 level=level,
                 event_type=event_type,
+                payload=payload,  # Include full payload for detail views
             ))
 
     def _build_log_entry(

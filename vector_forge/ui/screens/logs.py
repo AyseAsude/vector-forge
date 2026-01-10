@@ -9,15 +9,25 @@ from textual.widgets import Static, Input
 
 from vector_forge.ui.state import LogEntry, get_state
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
+from vector_forge.ui.widgets.log_detail import get_renderer_registry
 from vector_forge.ui.messages import LogEmitted, TimeTick
 
 
 class LogDetailModal(ModalScreen):
-    """Modal showing full log entry details."""
+    """Modal showing full log entry details with event-type-specific rendering.
+
+    Uses Strategy pattern via LogDetailRendererRegistry to provide rich,
+    context-aware detail views for different event types (LLM requests,
+    contrast pairs, evaluations, etc.).
+    """
 
     BINDINGS = [
         Binding("escape", "dismiss", "close"),
         Binding("q", "dismiss", "close"),
+        Binding("j", "scroll_down", "scroll down", show=False),
+        Binding("k", "scroll_up", "scroll up", show=False),
+        Binding("g", "scroll_top", "top", show=False),
+        Binding("G", "scroll_bottom", "bottom", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -25,68 +35,97 @@ class LogDetailModal(ModalScreen):
         align: center middle;
     }
 
-    LogDetailModal #modal {
-        width: 80%;
-        max-width: 100;
-        height: auto;
-        max-height: 80%;
+    LogDetailModal #modal-container {
+        width: 90%;
+        max-width: 120;
+        height: 85%;
         background: $surface;
+        border: solid $primary;
+    }
+
+    LogDetailModal #modal-header {
+        height: auto;
         padding: 1 2;
+        background: $surface;
+        border-bottom: solid $surface-lighten-1;
     }
 
     LogDetailModal .title {
         height: 1;
         text-style: bold;
-        margin-bottom: 1;
     }
 
     LogDetailModal .meta {
         height: auto;
         color: $foreground-muted;
-        margin-bottom: 1;
     }
 
-    LogDetailModal .section {
+    LogDetailModal .event-type {
+        height: 1;
+        color: $accent;
+        margin-top: 1;
+    }
+
+    LogDetailModal #modal-content {
+        height: 1fr;
+        padding: 0 2 1 2;
+        background: $background;
+    }
+
+    LogDetailModal .section-header {
         height: 1;
         color: $accent;
         text-style: bold;
         margin-top: 1;
+        margin-bottom: 0;
     }
 
-    LogDetailModal .content {
+    LogDetailModal .section-content {
         height: auto;
-        max-height: 20;
         padding: 1;
-        background: $background;
+        margin-bottom: 1;
+        background: $surface;
     }
 
-    LogDetailModal .footer {
+    LogDetailModal #modal-footer {
+        height: 2;
+        padding: 0 2;
+        background: $surface;
+        border-top: solid $surface-lighten-1;
+    }
+
+    LogDetailModal .footer-text {
         height: 1;
         color: $foreground-muted;
         text-align: center;
-        margin-top: 1;
+        margin-top: 0;
     }
     """
 
     def __init__(self, entry: LogEntry, **kwargs) -> None:
         super().__init__(**kwargs)
         self.entry = entry
+        self._registry = get_renderer_registry()
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="modal"):
-            yield Static(classes="title", id="modal-title")
-            yield Static(classes="meta", id="modal-meta-time")
-            yield Static(classes="meta", id="modal-meta-extraction")
-            yield Static(classes="meta", id="modal-meta-agent")
+        with Vertical(id="modal-container"):
+            # Header with metadata
+            with Vertical(id="modal-header"):
+                yield Static(classes="title", id="modal-title")
+                yield Static(classes="meta", id="modal-meta")
+                yield Static(classes="event-type", id="modal-event-type")
 
-            yield Static("MESSAGE", classes="section")
-            yield Static(classes="content", id="modal-content")
+            # Scrollable content area
+            yield VerticalScroll(id="modal-content")
 
-            yield Static("Press ESC to close", classes="footer")
+            # Footer
+            with Vertical(id="modal-footer"):
+                yield Static("ESC/q: close  |  j/k: scroll  |  g/G: top/bottom", classes="footer-text")
 
     def on_mount(self) -> None:
         entry = self.entry
 
+        # Level-based title color
         level_colors = {
             "info": "$primary",
             "warning": "$warning",
@@ -94,24 +133,46 @@ class LogDetailModal(ModalScreen):
         }
         color = level_colors.get(entry.level, "$foreground-muted")
 
-        self.query_one("#modal-title", Static).update(f"[{color}]{entry.level.upper()}[/] Log Entry")
-        self.query_one("#modal-meta-time", Static).update(
-            f"Time: {entry.time_str}  ·  Source: {entry.source}  ·  Level: {entry.level}"
+        # Title
+        self.query_one("#modal-title", Static).update(
+            f"[{color}]{entry.level.upper()}[/] Log Entry"
         )
 
-        extraction_meta = self.query_one("#modal-meta-extraction", Static)
+        # Meta line
+        meta_parts = [f"Time: {entry.time_str}", f"Source: {entry.source}"]
         if entry.extraction_id:
-            extraction_meta.update(f"Extraction: {entry.extraction_id}")
-        else:
-            extraction_meta.display = False
-
-        agent_meta = self.query_one("#modal-meta-agent", Static)
+            meta_parts.append(f"Task: {entry.extraction_id}")
         if entry.agent_id:
-            agent_meta.update(f"Agent: {entry.agent_id}")
-        else:
-            agent_meta.display = False
+            meta_parts.append(f"Agent: {entry.agent_id}")
+        self.query_one("#modal-meta", Static).update("  ·  ".join(meta_parts))
 
-        self.query_one("#modal-content", Static).update(entry.message)
+        # Event type (if available)
+        event_type_widget = self.query_one("#modal-event-type", Static)
+        if entry.event_type:
+            event_type_widget.update(f"Event: {entry.event_type}")
+        else:
+            event_type_widget.display = False
+
+        # Render sections using the appropriate renderer
+        content_area = self.query_one("#modal-content", VerticalScroll)
+        sections = self._registry.render(entry)
+
+        for title, content in sections:
+            if title:
+                content_area.mount(Static(title, classes="section-header"))
+            content_area.mount(Static(content, classes="section-content", markup=True))
+
+    def action_scroll_down(self) -> None:
+        self.query_one("#modal-content", VerticalScroll).scroll_down()
+
+    def action_scroll_up(self) -> None:
+        self.query_one("#modal-content", VerticalScroll).scroll_up()
+
+    def action_scroll_top(self) -> None:
+        self.query_one("#modal-content", VerticalScroll).scroll_home(animate=False)
+
+    def action_scroll_bottom(self) -> None:
+        self.query_one("#modal-content", VerticalScroll).scroll_end(animate=False)
 
 
 class LevelFilterRow(Static):
@@ -353,17 +414,21 @@ class LogRow(Static):
         }
         color = level_colors.get(entry.level, "$foreground-muted")
 
-        # Truncate message if too long
-        message = entry.message
-        max_msg_len = 60
+        # Truncate message for list view (increased from 60 to 100)
+        # Full content is available in the detail modal
+        message = entry.message.replace("\n", " ")  # Collapse newlines
+        max_msg_len = 100
         if len(message) > max_msg_len:
             message = message[:max_msg_len - 3] + "..."
+
+        # Add indicator if entry has rich detail data
+        detail_indicator = "[$accent]»[/] " if entry.has_detail else ""
 
         return (
             f"[$foreground-disabled]{entry.time_str}[/]  "
             f"[{color}]●[/]  "
             f"[$foreground-muted]{entry.source:<10}[/]  "
-            f"{message}"
+            f"{detail_indicator}{message}"
         )
 
     def on_click(self) -> None:

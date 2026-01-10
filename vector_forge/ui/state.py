@@ -173,7 +173,12 @@ class EvaluationMetrics:
 
 @dataclass
 class LogEntry:
-    """A single entry in the event log."""
+    """A single entry in the event log.
+
+    Stores both a human-readable summary message and the original event
+    payload for detailed inspection. The payload enables rich detail views
+    when clicking on a log entry.
+    """
 
     timestamp: float
     source: str
@@ -181,12 +186,20 @@ class LogEntry:
     level: str = "info"  # info, warning, error
     extraction_id: Optional[str] = None
     agent_id: Optional[str] = None
+    # Rich event data for detailed views
+    event_type: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
 
     @property
     def time_str(self) -> str:
         """Format timestamp as HH:MM:SS."""
         dt = datetime.fromtimestamp(self.timestamp)
         return dt.strftime("%H:%M:%S")
+
+    @property
+    def has_detail(self) -> bool:
+        """Check if this log entry has rich detail data."""
+        return self.payload is not None and self.event_type is not None
 
 
 @dataclass
@@ -383,8 +396,20 @@ class UIState:
         level: str = "info",
         extraction_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add a log entry."""
+        """Add a log entry.
+
+        Args:
+            source: Component that generated the log (e.g., "llm", "optimizer").
+            message: Human-readable summary message.
+            level: Log level ("info", "warning", "error").
+            extraction_id: Associated extraction/task ID.
+            agent_id: Associated agent ID.
+            event_type: Original event type for rich detail views.
+            payload: Original event payload for rich detail views.
+        """
         entry = LogEntry(
             timestamp=time.time(),
             source=source,
@@ -392,6 +417,8 @@ class UIState:
             level=level,
             extraction_id=extraction_id,
             agent_id=agent_id,
+            event_type=event_type,
+            payload=payload,
         )
         self.logs.append(entry)
 
