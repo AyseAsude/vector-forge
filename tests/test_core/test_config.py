@@ -3,6 +3,7 @@
 import pytest
 from hypothesis import given, strategies as st
 
+from vector_forge.constants import DEFAULT_MODEL
 from vector_forge.core.config import (
     LLMConfig,
     EvaluationBudget,
@@ -20,7 +21,7 @@ class TestLLMConfig:
     def test_default_values(self):
         """Test that default values are set correctly."""
         config = LLMConfig()
-        assert config.model == "gpt-4o"
+        assert config.model == DEFAULT_MODEL
         assert config.temperature == 0.7
         assert config.max_tokens == 4096
         assert config.api_base is None

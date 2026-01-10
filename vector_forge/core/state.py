@@ -313,11 +313,17 @@ class ExtractionState:
 
         from vector_forge.storage import DatapointAddedEvent
 
+        # Extract completions from TrainingDatapoint (steering-vectors library)
+        # dst_completions = what we want (positive/target behavior)
+        # src_completions = what we don't want (negative/source behavior)
+        dst_completions = getattr(datapoint, 'dst_completions', [])
+        src_completions = getattr(datapoint, 'src_completions', [])
+
         event = DatapointAddedEvent(
             datapoint_id=dp_id,
             prompt=getattr(datapoint, 'prompt', ''),
-            positive_completion=getattr(datapoint, 'positive_str', getattr(datapoint, 'positive', '')),
-            negative_completion=getattr(datapoint, 'negative_str', getattr(datapoint, 'negative', None)),
+            positive_completion=dst_completions[0] if dst_completions else '',
+            negative_completion=src_completions[0] if src_completions else None,
         )
 
         self._store.append_event(event, source="state")

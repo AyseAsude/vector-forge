@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from vector_forge.contrast.protocols import (
     Seed,
@@ -248,7 +248,7 @@ class PoolManager:
             for sample_idx in sorted(sample_ids)
         }
 
-    def get_statistics(self) -> Dict[str, any]:
+    def get_statistics(self) -> Dict[str, Any]:
         """Get pool statistics.
 
         Returns:

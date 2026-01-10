@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -61,7 +61,7 @@ class StorageConfig(BaseModel):
         capture_vectors = os.getenv("VECTOR_FORGE_CAPTURE_VECTORS", "true").lower() == "true"
         capture_eval = os.getenv("VECTOR_FORGE_CAPTURE_EVAL", "true").lower() == "true"
 
-        kwargs = {
+        kwargs: Dict[str, Any] = {
             "capture_raw_responses": capture_raw,
             "capture_all_vectors": capture_vectors,
             "capture_evaluation_outputs": capture_eval,
