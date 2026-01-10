@@ -436,7 +436,11 @@ class LogRow(Static):
 
 
 class LogPanel(Vertical):
-    """Right panel showing log stream."""
+    """Right panel showing log stream.
+
+    Uses incremental updates for performance - only appends new entries
+    when possible, avoiding full rebuilds.
+    """
 
     DEFAULT_CSS = """
     LogPanel {
@@ -468,6 +472,7 @@ class LogPanel(Vertical):
         height: 1fr;
         padding: 1 0 1 2;
         background: $background;
+        scrollbar-gutter: stable;
     }
 
     LogPanel .empty {
@@ -480,39 +485,74 @@ class LogPanel(Vertical):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._current_log_count: int = 0
+        self._displayed_timestamps: set[float] = set()
+        self._last_filter_hash: int = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
             with Horizontal(classes="title-row"):
                 yield Static("LOG STREAM", classes="title")
-                yield Static(classes="count")
+                yield Static(classes="count", id="log-count")
         yield VerticalScroll(classes="log-stream", id="log-stream")
 
     def set_logs(self, logs: list[LogEntry], total: int, force: bool = False) -> None:
-        # Update count
-        count = self.query_one(".count", Static)
+        """Update the log stream efficiently.
+
+        Uses incremental updates when possible - only appends new entries
+        if the filter hasn't changed. Falls back to full rebuild on filter change.
+        """
+        count = self.query_one("#log-count", Static)
         count.update(f"{len(logs)} / {total}")
 
-        # Only rebuild if log count changed
-        if len(logs) == self._current_log_count and not force:
-            return
-
-        self._current_log_count = len(logs)
-
-        # Update log stream
         stream = self.query_one("#log-stream", VerticalScroll)
-        stream.remove_children()
 
-        if not logs:
-            stream.mount(Static("No log entries", classes="empty"))
+        # Compute a hash of the current filter state to detect changes
+        filter_hash = hash((total, len(logs)))
+
+        # Check if we need a full rebuild
+        filter_changed = filter_hash != self._last_filter_hash
+        if force or filter_changed:
+            # Full rebuild needed - use batch_update for less flicker
+            with self.app.batch_update():
+                stream.remove_children()
+                self._displayed_timestamps.clear()
+
+                if not logs:
+                    stream.mount(Static("No log entries", classes="empty"))
+                else:
+                    # Limit to last 500 for performance
+                    for entry in logs[-500:]:
+                        stream.mount(LogRow(entry))
+                        self._displayed_timestamps.add(entry.timestamp)
+
+            self._last_filter_hash = filter_hash
+            stream.scroll_end(animate=False)
             return
 
-        # Limit to last 500 for performance
-        for entry in logs[-500:]:
-            stream.mount(LogRow(entry))
+        # Incremental update - only add new entries
+        # Remove empty placeholder if present
+        empties = list(stream.query(".empty"))
+        if empties and logs:
+            for e in empties:
+                e.remove()
 
-        stream.scroll_end(animate=False)
+        # Find and add new entries
+        new_entries = [
+            entry for entry in logs[-500:]
+            if entry.timestamp not in self._displayed_timestamps
+        ]
+
+        if new_entries:
+            for entry in new_entries:
+                stream.mount(LogRow(entry))
+                self._displayed_timestamps.add(entry.timestamp)
+            stream.scroll_end(animate=False)
+
+        # Handle case where logs were cleared
+        if not logs and not empties:
+            stream.remove_children()
+            stream.mount(Static("No log entries", classes="empty"))
+            self._displayed_timestamps.clear()
 
 
 class LogsScreen(Screen):
