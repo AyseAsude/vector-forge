@@ -61,10 +61,10 @@ class AddModelScreen(ModalScreen):
         color: $foreground-disabled;
     }
 
-    /* Form content - scrollable */
+    /* Form content - scrollable, takes remaining space */
     AddModelScreen #form-content {
-        height: auto;
-        max-height: 30;
+        height: 1fr;
+        min-height: 4;
     }
 
     /* Form rows */

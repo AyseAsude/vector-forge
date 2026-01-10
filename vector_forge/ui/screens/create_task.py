@@ -15,10 +15,17 @@ from vector_forge.tasks.config import (
     ContrastConfig,
     OptimizationConfig,
 )
-from vector_forge.storage.models import ModelConfig, ModelConfigManager
+from vector_forge.storage.models import (
+    ModelConfig,
+    ModelConfigManager,
+    HFModelConfig,
+    HFModelConfigManager,
+)
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.widgets.model_card import ModelCard
+from vector_forge.ui.widgets.target_model_card import TargetModelCard
 from vector_forge.ui.screens.model_selector import ModelSelectorScreen
+from vector_forge.ui.screens.target_model_selector import TargetModelSelectorScreen
 
 
 class ProfileCard(Static):
@@ -397,12 +404,16 @@ class CreateTaskScreen(Screen):
         self._aggregation = "top_k_average"
         self._contrast_quality = "standard"
 
-        # Model configurations
+        # API model configurations (for agents)
         self._model_manager = ModelConfigManager()
         default_config = self._model_manager.get_default()
         self._extractor_config: ModelConfig | None = default_config
         self._judge_config: ModelConfig | None = default_config
         self._expander_config: ModelConfig | None = default_config
+
+        # Target model configuration (HuggingFace model for steering)
+        self._hf_model_manager = HFModelConfigManager()
+        self._target_config: HFModelConfig | None = self._hf_model_manager.get_default()
 
     def compose(self) -> ComposeResult:
         # Header
@@ -419,9 +430,15 @@ class CreateTaskScreen(Screen):
                 yield ProfileCard("standard", "Standard", "16 samples", selected=True, id="profile-standard")
                 yield ProfileCard("comprehensive", "Full", "32 samples", id="profile-comprehensive")
 
-            # Models section (moved to top for visibility)
+            # Models section
             yield Static("MODELS", classes="main-section")
             with Horizontal(id="models-row"):
+                yield TargetModelCard(
+                    field_name="target",
+                    label="TARGET",
+                    config=self._target_config,
+                    id="model-target",
+                )
                 yield ModelCard(
                     field_name="extractor",
                     label="EXTRACTOR",
@@ -547,7 +564,7 @@ class CreateTaskScreen(Screen):
             self._apply_contrast_preset(event.value)
 
     def on_model_card_clicked(self, event: ModelCard.Clicked) -> None:
-        """Handle model card click - open selector."""
+        """Handle API model card click - open selector."""
         config_map = {
             "extractor": self._extractor_config,
             "judge": self._judge_config,
@@ -558,6 +575,23 @@ class CreateTaskScreen(Screen):
             ModelSelectorScreen(event.field_name, current_config),
             callback=self._on_model_selected,
         )
+
+    def on_target_model_card_clicked(self, event: TargetModelCard.Clicked) -> None:
+        """Handle target model card click - open HF model selector."""
+        self.app.push_screen(
+            TargetModelSelectorScreen(self._target_config),
+            callback=self._on_target_model_selected,
+        )
+
+    def _on_target_model_selected(
+        self, result: TargetModelSelectorScreen.ModelSelected | None
+    ) -> None:
+        """Handle target model selection from modal."""
+        if result is None:
+            return
+
+        self._target_config = result.config
+        self.query_one("#model-target", TargetModelCard).set_config(result.config)
 
     def _on_model_selected(self, result: ModelSelectorScreen.ModelSelected | None) -> None:
         """Handle model selection from modal."""
@@ -777,6 +811,11 @@ DOMAINS: {', '.join(result.domains[:6])}
             min_semantic_distance=float(self.query_one("#inp-min-dist", Input).value or "0.3"),
         )
 
+        # Get target model (required)
+        target_model = (
+            self._target_config.model_id if self._target_config else None
+        )
+
         return TaskConfig(
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
@@ -790,6 +829,7 @@ DOMAINS: {', '.join(result.domains[:6])}
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
             extractor_model=extractor_model,
             judge_model=judge_model,
+            target_model=target_model,
         )
 
     def action_cancel(self) -> None:
@@ -799,6 +839,10 @@ DOMAINS: {', '.join(result.domains[:6])}
         text = self.query_one("#behavior-input", TextArea).text.strip()
         if not text:
             self._status("Enter a behavior description", "error")
+            return
+
+        if self._target_config is None:
+            self._status("Select a target model first", "error")
             return
 
         try:

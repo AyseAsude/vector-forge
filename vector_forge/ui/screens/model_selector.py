@@ -59,11 +59,10 @@ class ModelSelectorScreen(ModalScreen):
         margin-bottom: 1;
     }
 
-    /* Models list - scrollable */
+    /* Models list - scrollable, takes remaining space */
     ModelSelectorScreen #models-scroll {
-        height: auto;
+        height: 1fr;
         min-height: 4;
-        max-height: 16;
         margin-bottom: 1;
         scrollbar-gutter: stable;
     }

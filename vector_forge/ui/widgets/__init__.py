@@ -8,6 +8,7 @@ from vector_forge.ui.widgets.eval_panel import EvaluationPanel
 from vector_forge.ui.widgets.log_panel import LogPanel
 from vector_forge.ui.widgets.agents_list import AgentsList
 from vector_forge.ui.widgets.agent_inspector import AgentInspector
+from vector_forge.ui.widgets.target_model_card import TargetModelCard, TargetModelCardCompact
 
 __all__ = [
     "StatusBar",
@@ -19,4 +20,6 @@ __all__ = [
     "LogPanel",
     "AgentsList",
     "AgentInspector",
+    "TargetModelCard",
+    "TargetModelCardCompact",
 ]

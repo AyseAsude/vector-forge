@@ -1,6 +1,6 @@
-"""Model selection card widget.
+"""Target model card widget for HuggingFace model selection.
 
-Displays a selected model configuration with click-to-change functionality.
+Follows the same design pattern as model_card.py for consistency.
 """
 
 from textual.app import ComposeResult
@@ -8,30 +8,20 @@ from textual.containers import Horizontal
 from textual.widgets import Static
 from textual.message import Message
 
-from vector_forge.storage.models import ModelConfig, Provider
+from vector_forge.storage.models import HFModelConfig
 from vector_forge.ui.theme import ICONS
+from vector_forge.ui.widgets.model_card import DeleteButton
 
 
-# Provider display info: (name, theme_color_variable)
-PROVIDER_STYLES = {
-    Provider.OPENAI: ("OpenAI", "$success"),
-    Provider.ANTHROPIC: ("Anthropic", "$accent"),
-    Provider.OPENROUTER: ("OpenRouter", "$secondary"),
-    Provider.AZURE: ("Azure", "$primary"),
-    Provider.OLLAMA: ("Ollama", "$secondary"),
-    Provider.CUSTOM: ("Custom", "$foreground-muted"),
-}
+class TargetModelCard(Static):
+    """Clickable card showing a selected HuggingFace model.
 
-
-class ModelCard(Static):
-    """Clickable card showing a selected model configuration.
-
-    Used in CreateTaskScreen to display and select extractor/judge models.
-    Click to open model selection modal.
+    Used in CreateTaskScreen to display and select the target model.
+    Matches ModelCard design pattern exactly.
     """
 
     DEFAULT_CSS = """
-    ModelCard {
+    TargetModelCard {
         height: auto;
         width: 1fr;
         padding: 1 2;
@@ -39,42 +29,42 @@ class ModelCard(Static):
         margin-right: 1;
     }
 
-    ModelCard:last-child {
+    TargetModelCard:last-child {
         margin-right: 0;
     }
 
-    ModelCard:hover {
+    TargetModelCard:hover {
         background: $boost;
     }
 
-    ModelCard:focus {
+    TargetModelCard:focus {
         background: $boost;
     }
 
-    ModelCard .header-row {
+    TargetModelCard .header-row {
         height: 1;
         margin-bottom: 1;
     }
 
-    ModelCard .label {
+    TargetModelCard .label {
         width: 1fr;
         color: $accent;
         text-style: bold;
     }
 
-    ModelCard .model-row {
+    TargetModelCard .model-row {
         height: 1;
     }
 
-    ModelCard .model-name {
+    TargetModelCard .model-name {
         width: 1fr;
     }
 
-    ModelCard .provider-badge {
+    TargetModelCard .provider-badge {
         width: auto;
     }
 
-    ModelCard .model-id {
+    TargetModelCard .model-id {
         height: 1;
         color: $foreground-muted;
         margin-top: 1;
@@ -94,7 +84,7 @@ class ModelCard(Static):
         self,
         field_name: str,
         label: str,
-        config: ModelConfig | None = None,
+        config: HFModelConfig | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -120,15 +110,14 @@ class ModelCard(Static):
         if event.key in ("enter", "space"):
             self.post_message(self.Clicked(self.field_name))
 
-    def set_config(self, config: ModelConfig | None) -> None:
+    def set_config(self, config: HFModelConfig | None) -> None:
         """Update the displayed model configuration."""
         self._config = config
         if self.is_mounted:
             self._update_display()
 
     @property
-    def config(self) -> ModelConfig | None:
-        """Get the current model configuration."""
+    def config(self) -> HFModelConfig | None:
         return self._config
 
     def _update_display(self) -> None:
@@ -142,114 +131,85 @@ class ModelCard(Static):
             return
 
         config = self._config
-        provider_name, provider_color = PROVIDER_STYLES.get(
-            config.provider, ("Unknown", "$foreground-muted")
-        )
 
         # Model name with status icon
         self.query_one(".model-name", Static).update(
             f"[$success]{ICONS.complete}[/] [bold]{config.name}[/]"
         )
 
-        # Provider badge
-        self.query_one(".provider-badge", Static).update(
-            f"[{provider_color}]{provider_name}[/]"
-        )
+        # Provider badge - show HF Hub or Local
+        if config.is_local_path:
+            self.query_one(".provider-badge", Static).update("[$secondary]Local[/]")
+        else:
+            self.query_one(".provider-badge", Static).update("[$accent]HuggingFace[/]")
 
         # Model ID
         self.query_one(".model-id", Static).update(
-            f"[$foreground-disabled]{config.model}[/]"
+            f"[$foreground-disabled]{config.model_id}[/]"
         )
 
 
-class DeleteButton(Static):
-    """Clickable delete button for model cards."""
+class TargetModelCardCompact(Static):
+    """Compact target model card for selection lists.
 
-    DEFAULT_CSS = """
-    DeleteButton {
-        width: auto;
-        height: 1;
-    }
-
-    DeleteButton:hover {
-        background: $error 30%;
-    }
-    """
-
-    class Clicked(Message):
-        """Emitted when delete button is clicked."""
-        pass
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__("[$error]\\[x][/]", **kwargs)
-
-    def on_click(self, event) -> None:
-        event.stop()
-        self.post_message(self.Clicked())
-
-
-class ModelCardCompact(Static):
-    """Compact model card for selection lists.
-
-    Used in the model selection modal to display selectable options.
-    Custom models show [x] delete button on bottom right.
+    Matches ModelCardCompact design pattern exactly.
     """
 
     DEFAULT_CSS = """
-    ModelCardCompact {
+    TargetModelCardCompact {
         height: auto;
         padding: 1 2;
         background: $surface;
     }
 
-    ModelCardCompact:hover {
+    TargetModelCardCompact:hover {
         background: $boost;
     }
 
-    ModelCardCompact:focus {
+    TargetModelCardCompact:focus {
         background: $boost;
     }
 
-    ModelCardCompact.-selected {
+    TargetModelCardCompact.-selected {
         background: $primary 20%;
     }
 
-    ModelCardCompact.-selected:hover {
+    TargetModelCardCompact.-selected:hover {
         background: $primary 30%;
     }
 
-    ModelCardCompact.-selected:focus {
+    TargetModelCardCompact.-selected:focus {
         background: $primary 30%;
     }
 
-    ModelCardCompact .header-row {
+    TargetModelCardCompact .header-row {
         height: 1;
     }
 
-    ModelCardCompact .icon {
+    TargetModelCardCompact .icon {
         width: 2;
     }
 
-    ModelCardCompact .name {
+    TargetModelCardCompact .name {
         width: 1fr;
     }
 
-    ModelCardCompact .provider {
+    TargetModelCardCompact .provider {
         width: auto;
     }
 
-    ModelCardCompact .detail-row {
+    TargetModelCardCompact .detail-row {
         height: 1;
         width: 100%;
     }
 
-    ModelCardCompact .model-id {
+    TargetModelCardCompact .model-id {
         width: 1fr;
         padding-left: 2;
         color: $foreground-muted;
     }
 
-    ModelCardCompact DeleteButton {
+    TargetModelCardCompact DeleteButton {
         dock: right;
     }
     """
@@ -259,24 +219,23 @@ class ModelCardCompact(Static):
     class Selected(Message):
         """Emitted when this card is selected."""
 
-        def __init__(self, config: ModelConfig) -> None:
+        def __init__(self, config: HFModelConfig) -> None:
             super().__init__()
             self.config = config
 
     class DeleteRequested(Message):
         """Emitted when delete is requested for this card."""
 
-        def __init__(self, config: ModelConfig) -> None:
+        def __init__(self, config: HFModelConfig) -> None:
             super().__init__()
             self.config = config
 
     def __init__(
         self,
-        config: ModelConfig,
+        config: HFModelConfig,
         is_selected: bool = False,
         **kwargs,
     ) -> None:
-        # Merge -selected class into classes parameter if selected
         if is_selected:
             existing_classes = kwargs.get("classes", "")
             kwargs["classes"] = f"{existing_classes} -selected".strip()
@@ -291,9 +250,7 @@ class ModelCardCompact(Static):
             yield Static(classes="provider")
         with Horizontal(classes="detail-row"):
             yield Static(classes="model-id")
-            # Only show delete for non-builtin models
-            if not self._config.is_builtin:
-                yield DeleteButton()
+            yield DeleteButton()
 
     def on_mount(self) -> None:
         self._update_display()
@@ -304,33 +261,26 @@ class ModelCardCompact(Static):
         self.post_message(self.DeleteRequested(self._config))
 
     def on_click(self, event) -> None:
-        # Left-click selects (delete button handles its own clicks)
         self.post_message(self.Selected(self._config))
 
     def on_key(self, event) -> None:
         if event.key in ("enter", "space"):
             self.post_message(self.Selected(self._config))
-        elif event.key == "delete" and not self._config.is_builtin:
+        elif event.key == "delete":
             self.post_message(self.DeleteRequested(self._config))
 
     def set_selected(self, selected: bool) -> None:
-        """Set selection state."""
         self._is_selected = selected
         self.set_class(selected, "-selected")
         if self.is_mounted:
             self._update_display()
 
     @property
-    def config(self) -> ModelConfig:
-        """Get the model configuration."""
+    def config(self) -> HFModelConfig:
         return self._config
 
     def _update_display(self) -> None:
-        """Update the display."""
         config = self._config
-        provider_name, provider_color = PROVIDER_STYLES.get(
-            config.provider, ("Unknown", "$foreground-muted")
-        )
 
         # Selection icon
         if self._is_selected:
@@ -342,12 +292,13 @@ class ModelCardCompact(Static):
         # Name
         self.query_one(".name", Static).update(f"[bold]{config.name}[/]")
 
-        # Provider
-        self.query_one(".provider", Static).update(
-            f"[{provider_color}]{provider_name}[/]"
-        )
+        # Provider badge
+        if config.is_local_path:
+            self.query_one(".provider", Static).update("[$secondary]Local[/]")
+        else:
+            self.query_one(".provider", Static).update("[$accent]HuggingFace[/]")
 
         # Model ID
         self.query_one(".model-id", Static).update(
-            f"[$foreground-disabled]{config.model}[/]"
+            f"[$foreground-disabled]{config.model_id}[/]"
         )

@@ -583,7 +583,13 @@ class TaskConfig(BaseModel):
         description="Directory for saving results",
     )
 
-    # LLM settings
+    # Target model (HuggingFace model for steering vector extraction)
+    target_model: Optional[str] = Field(
+        default=None,
+        description="HuggingFace model ID or path for steering vector extraction",
+    )
+
+    # LLM settings (for agents)
     extractor_model: str = Field(
         default=DEFAULT_MODEL,
         description="Model for datapoint generation",

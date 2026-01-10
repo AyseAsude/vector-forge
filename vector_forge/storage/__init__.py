@@ -78,6 +78,9 @@ from vector_forge.storage.models import (
     ModelConfig,
     ModelConfigStore,
     ModelConfigManager,
+    HFModelConfig,
+    HFModelConfigStore,
+    HFModelConfigManager,
     COMMON_MODELS,
     API_KEY_ENV_VARS,
 )
@@ -126,11 +129,15 @@ __all__ = [
     "StateUpdateEvent",
     "IterationStartedEvent",
     "IterationCompletedEvent",
-    # Model configuration
+    # Model configuration (API models for agents)
     "Provider",
     "ModelConfig",
     "ModelConfigStore",
     "ModelConfigManager",
     "COMMON_MODELS",
     "API_KEY_ENV_VARS",
+    # HuggingFace model configuration (target models for steering)
+    "HFModelConfig",
+    "HFModelConfigStore",
+    "HFModelConfigManager",
 ]

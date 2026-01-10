@@ -189,6 +189,234 @@ class ModelConfigStore(BaseModel):
         return [c for c in self.configs if c.provider == provider]
 
 
+# ============================================================================
+# HuggingFace Target Model Configuration
+# ============================================================================
+
+
+class HFModelConfig(BaseModel):
+    """Configuration for a HuggingFace target model.
+
+    Stores information about locally-loaded models used for steering vector extraction.
+    Unlike API models, these require local GPU resources.
+
+    Example:
+        >>> config = HFModelConfig(
+        ...     name="Llama 3.1 8B",
+        ...     model_id="meta-llama/Llama-3.1-8B-Instruct",
+        ... )
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    name: str = Field(..., description="Display name for the model")
+    model_id: str = Field(..., description="HuggingFace Hub ID or local path")
+
+    # Model metadata (populated after loading)
+    num_layers: Optional[int] = Field(default=None, description="Number of transformer layers")
+    hidden_dim: Optional[int] = Field(default=None, description="Hidden dimension size")
+    vocab_size: Optional[int] = Field(default=None, description="Vocabulary size")
+    model_type: Optional[str] = Field(default=None, description="Model architecture type")
+    param_count: Optional[str] = Field(default=None, description="Approximate parameter count")
+
+    # Loading configuration
+    dtype: str = Field(default="bfloat16", description="Tensor dtype for loading")
+    device_map: str = Field(default="auto", description="Device mapping strategy")
+    trust_remote_code: bool = Field(default=False, description="Trust remote code from Hub")
+
+    # Metadata
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_used: Optional[datetime] = None
+    is_downloaded: bool = Field(default=False, description="Whether model is cached locally")
+    is_default: bool = False
+
+    @property
+    def is_local_path(self) -> bool:
+        """Check if model_id is a local path."""
+        return self.model_id.startswith(("./", "/", "~"))
+
+    @property
+    def short_id(self) -> str:
+        """Get short display ID."""
+        if "/" in self.model_id:
+            return self.model_id.split("/")[-1]
+        return self.model_id
+
+    @property
+    def display_size(self) -> str:
+        """Get displayable size string."""
+        if self.param_count:
+            return self.param_count
+        if self.hidden_dim and self.num_layers:
+            # Rough estimate
+            params = self.hidden_dim * self.hidden_dim * self.num_layers * 4
+            if params > 1e9:
+                return f"~{params / 1e9:.1f}B"
+            return f"~{params / 1e6:.0f}M"
+        return "Unknown"
+
+
+class HFModelConfigStore(BaseModel):
+    """Storage for HuggingFace model configurations."""
+
+    version: int = 1
+    configs: List[HFModelConfig] = Field(default_factory=list)
+    recent_models: List[str] = Field(
+        default_factory=list,
+        description="Recently used model IDs (for quick access)",
+    )
+
+    def get(self, config_id: str) -> Optional[HFModelConfig]:
+        """Get config by ID."""
+        for config in self.configs:
+            if config.id == config_id:
+                return config
+        return None
+
+    def get_by_model_id(self, model_id: str) -> Optional[HFModelConfig]:
+        """Get config by HuggingFace model ID."""
+        for config in self.configs:
+            if config.model_id == model_id:
+                return config
+        return None
+
+    def get_default(self) -> Optional[HFModelConfig]:
+        """Get the default model config."""
+        for config in self.configs:
+            if config.is_default:
+                return config
+        return self.configs[0] if self.configs else None
+
+    def add(self, config: HFModelConfig) -> None:
+        """Add a new config."""
+        self.configs = [c for c in self.configs if c.id != config.id]
+        self.configs.append(config)
+
+    def remove(self, config_id: str) -> bool:
+        """Remove a config by ID."""
+        original_len = len(self.configs)
+        self.configs = [c for c in self.configs if c.id != config_id]
+        return len(self.configs) < original_len
+
+    def add_recent(self, model_id: str, max_recent: int = 10) -> None:
+        """Add a model ID to recent list."""
+        if model_id in self.recent_models:
+            self.recent_models.remove(model_id)
+        self.recent_models.insert(0, model_id)
+        self.recent_models = self.recent_models[:max_recent]
+
+
+class HFModelConfigManager:
+    """Manages HuggingFace model configuration storage.
+
+    Stores configurations in ~/.vector-forge/hf_models.json
+
+    Example:
+        >>> manager = HFModelConfigManager()
+        >>> manager.add(HFModelConfig(name="My Llama", model_id="meta-llama/Llama-3.1-8B"))
+        >>> configs = manager.list_all()
+    """
+
+    def __init__(self, base_path: Optional[Path] = None) -> None:
+        if base_path is None:
+            base_path = Path.home() / ".vector-forge"
+
+        self.base_path = Path(base_path)
+        self.config_file = self.base_path / "hf_models.json"
+        self._store: Optional[HFModelConfigStore] = None
+
+    def _ensure_dir(self) -> None:
+        """Ensure config directory exists."""
+        self.base_path.mkdir(parents=True, exist_ok=True)
+
+    def _load(self) -> HFModelConfigStore:
+        """Load store from disk."""
+        if self._store is not None:
+            return self._store
+
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._store = HFModelConfigStore.model_validate(data)
+            except (json.JSONDecodeError, Exception):
+                self._store = HFModelConfigStore()
+        else:
+            self._store = HFModelConfigStore()
+
+        return self._store
+
+    def _save(self) -> None:
+        """Save store to disk."""
+        self._ensure_dir()
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            json.dump(
+                self._store.model_dump(mode="json"),
+                f,
+                indent=2,
+                default=str,
+            )
+
+    def reload(self) -> None:
+        """Clear cache and reload from disk."""
+        self._store = None
+
+    def list_all(self) -> List[HFModelConfig]:
+        """List all saved model configs."""
+        return self._load().configs.copy()
+
+    def list_recent(self) -> List[str]:
+        """Get list of recently used model IDs."""
+        return self._load().recent_models.copy()
+
+    def get(self, config_id: str) -> Optional[HFModelConfig]:
+        """Get a config by ID."""
+        return self._load().get(config_id)
+
+    def get_by_model_id(self, model_id: str) -> Optional[HFModelConfig]:
+        """Get a config by HuggingFace model ID."""
+        return self._load().get_by_model_id(model_id)
+
+    def get_default(self) -> Optional[HFModelConfig]:
+        """Get the default model config."""
+        return self._load().get_default()
+
+    def add(self, config: HFModelConfig) -> None:
+        """Add or update a model config."""
+        store = self._load()
+        store.add(config)
+        self._save()
+
+    def remove(self, config_id: str) -> bool:
+        """Remove a config."""
+        store = self._load()
+        removed = store.remove(config_id)
+        if removed:
+            self._save()
+        return removed
+
+    def update_last_used(self, config_id: str) -> None:
+        """Update the last_used timestamp and add to recent."""
+        store = self._load()
+        config = store.get(config_id)
+        if config:
+            config.last_used = datetime.now(timezone.utc)
+            store.add_recent(config.model_id)
+            self._save()
+
+    def add_recent(self, model_id: str) -> None:
+        """Add a model ID to recent list."""
+        store = self._load()
+        store.add_recent(model_id)
+        self._save()
+
+    def set_default(self, config_id: str) -> None:
+        """Set a config as the default."""
+        store = self._load()
+        for config in store.configs:
+            config.is_default = config.id == config_id
+        self._save()
+
+
 class ModelConfigManager:
     """Manages model configuration storage and retrieval.
 
