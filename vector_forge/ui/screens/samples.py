@@ -15,7 +15,7 @@ from vector_forge.ui.state import (
     ExtractionStatus,
     get_state,
 )
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
@@ -49,7 +49,7 @@ class ToolCallModal(ModalScreen):
 
     ToolCallModal #modal-status {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-bottom: 1;
     }
 
@@ -77,7 +77,7 @@ class ToolCallModal(ModalScreen):
 
     ToolCallModal #modal-footer {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         text-align: center;
         margin-top: 1;
     }
@@ -88,35 +88,50 @@ class ToolCallModal(ModalScreen):
         self.tool_call = tool_call
 
     def compose(self) -> ComposeResult:
+        with Vertical(id="modal"):
+            yield Static(id="modal-title")
+            yield Static(id="modal-status")
+
+            yield Static("ARGUMENTS", classes="section")
+            yield Static(id="modal-args")
+
+            # Result section added dynamically in on_mount if needed
+            yield Static(id="modal-result-section", classes="section")
+            yield Static(id="modal-result")
+
+            yield Static("Press ESC to close", id="modal-footer")
+
+    def on_mount(self) -> None:
         tc = self.tool_call
 
         status_colors = {
-            "pending": COLORS.text_muted,
-            "running": COLORS.accent,
-            "success": COLORS.success,
-            "error": COLORS.error,
+            "pending": "$foreground-muted",
+            "running": "$accent",
+            "success": "$success",
+            "error": "$error",
         }
-        color = status_colors.get(tc.status, COLORS.text_dim)
+        color = status_colors.get(tc.status, "$foreground-disabled")
         duration = f" · {tc.duration_ms}ms" if tc.duration_ms else ""
 
-        with Vertical(id="modal"):
-            yield Static(f"[{color}]▸[/] [bold]{tc.name}[/]", id="modal-title")
-            yield Static(f"{tc.status}{duration}", id="modal-status")
+        self.query_one("#modal-title", Static).update(f"[{color}]▸[/] [bold]{tc.name}[/]")
+        self.query_one("#modal-status", Static).update(f"{tc.status}{duration}")
 
-            yield Static("ARGUMENTS", classes="section")
-            args_text = tc.arguments if tc.arguments else "(none)"
-            if len(args_text) > 500:
-                args_text = args_text[:497] + "..."
-            yield Static(args_text, id="modal-args")
+        args_text = tc.arguments if tc.arguments else "(none)"
+        if len(args_text) > 500:
+            args_text = args_text[:497] + "..."
+        self.query_one("#modal-args", Static).update(args_text)
 
-            if tc.result:
-                yield Static("RESULT", classes="section")
-                result_text = tc.result
-                if len(result_text) > 1000:
-                    result_text = result_text[:997] + "..."
-                yield Static(result_text, id="modal-result")
-
-            yield Static("Press ESC to close", id="modal-footer")
+        result_section = self.query_one("#modal-result-section", Static)
+        result_widget = self.query_one("#modal-result", Static)
+        if tc.result:
+            result_section.update("RESULT")
+            result_text = tc.result
+            if len(result_text) > 1000:
+                result_text = result_text[:997] + "..."
+            result_widget.update(result_text)
+        else:
+            result_section.display = False
+            result_widget.display = False
 
 
 class ToolCallRow(Static):
@@ -129,7 +144,7 @@ class ToolCallRow(Static):
     }
 
     ToolCallRow:hover {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -140,18 +155,24 @@ class ToolCallRow(Static):
 
     def __init__(self, tool_call: ToolCall, **kwargs) -> None:
         self.tool_call = tool_call
+        super().__init__(**kwargs)
+
+    def on_mount(self) -> None:
+        self._update_display()
+
+    def _update_display(self) -> None:
+        tc = self.tool_call
 
         status_colors = {
-            "pending": COLORS.text_muted,
-            "running": COLORS.accent,
-            "success": COLORS.success,
-            "error": COLORS.error,
+            "pending": "$foreground-muted",
+            "running": "$accent",
+            "success": "$success",
+            "error": "$error",
         }
-        color = status_colors.get(tool_call.status, COLORS.text_dim)
-        duration = f" ({tool_call.duration_ms}ms)" if tool_call.duration_ms else ""
+        color = status_colors.get(tc.status, "$foreground-disabled")
+        duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
 
-        content = f"  [{color}]▸ {tool_call.name}[/]{duration}"
-        super().__init__(content, **kwargs)
+        self.update(f"  [{color}]▸ {tc.name}[/]{duration}")
 
     def on_click(self) -> None:
         self.post_message(self.Clicked(self.tool_call))
@@ -173,7 +194,7 @@ class MessageBlock(Vertical):
     MessageBlock .msg-content {
         height: auto;
         padding: 0 2;
-        color: $text;
+        color: $foreground;
     }
     """
 
@@ -182,29 +203,33 @@ class MessageBlock(Vertical):
         self.message = message
 
     def compose(self) -> ComposeResult:
+        yield Static(classes="msg-header")
+        yield Static(classes="msg-content")
+        # Tool call rows will be added in on_mount
+
+    def on_mount(self) -> None:
         msg = self.message
 
         role_colors = {
-            "system": COLORS.purple,
-            "user": COLORS.blue,
-            "assistant": COLORS.accent,
-            "tool": COLORS.aqua,
+            "system": "$secondary",
+            "user": "$primary",
+            "assistant": "$accent",
+            "tool": "$success",
         }
-        role_color = role_colors.get(msg.role.value, COLORS.text_dim)
+        role_color = role_colors.get(msg.role.value, "$foreground-disabled")
 
-        yield Static(
-            f"[{role_color} bold]{msg.role.value.upper()}[/] [{COLORS.text_dim}]{msg.time_str}[/]",
-            classes="msg-header"
+        self.query_one(".msg-header", Static).update(
+            f"[{role_color} bold]{msg.role.value.upper()}[/] [$foreground-disabled]{msg.time_str}[/]"
         )
 
         content = msg.content
         if len(content) > 500:
             content = content[:497] + "..."
         if content:
-            yield Static(content, classes="msg-content")
+            self.query_one(".msg-content", Static).update(content)
 
         for tc in msg.tool_calls:
-            yield ToolCallRow(tc)
+            self.mount(ToolCallRow(tc))
 
 
 class WorkerCard(Static):
@@ -215,7 +240,7 @@ class WorkerCard(Static):
         height: auto;
         padding: 1;
         margin-bottom: 1;
-        background: $surface-hl;
+        background: $boost;
     }
 
     WorkerCard:hover {
@@ -237,12 +262,12 @@ class WorkerCard(Static):
 
     WorkerCard .time {
         width: auto;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     WorkerCard .meta {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
     """
 
@@ -276,13 +301,13 @@ class WorkerCard(Static):
         agent = self.agent
 
         status_map = {
-            AgentStatus.IDLE: (ICONS.pending, COLORS.text_muted, "IDLE"),
-            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "RUNNING"),
-            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "WAITING"),
-            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "DONE"),
-            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "ERROR"),
+            AgentStatus.IDLE: (ICONS.pending, "$foreground-muted", "IDLE"),
+            AgentStatus.RUNNING: (ICONS.running, "$accent", "RUNNING"),
+            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted", "WAITING"),
+            AgentStatus.COMPLETE: (ICONS.complete, "$success", "DONE"),
+            AgentStatus.ERROR: (ICONS.failed, "$error", "ERROR"),
         }
-        icon, color, label = status_map.get(agent.status, (ICONS.pending, COLORS.text_muted, "?"))
+        icon, color, label = status_map.get(agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
         # Header: icon + name on left, time on right
         self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
@@ -313,7 +338,7 @@ class WorkersList(Vertical):
 
     WorkersList .count {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-bottom: 1;
     }
 
@@ -323,7 +348,7 @@ class WorkersList(Vertical):
 
     WorkersList .empty {
         padding: 2;
-        color: $text-muted;
+        color: $foreground-muted;
         text-align: center;
     }
     """
@@ -395,12 +420,12 @@ class ConversationPanel(Vertical):
 
     ConversationPanel .time {
         width: auto;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ConversationPanel .stats {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ConversationPanel .messages {
@@ -412,7 +437,7 @@ class ConversationPanel(Vertical):
     ConversationPanel .empty {
         height: 1fr;
         content-align: center middle;
-        color: $text-muted;
+        color: $foreground-muted;
     }
     """
 
@@ -437,9 +462,9 @@ class ConversationPanel(Vertical):
 
         if agent is None:
             if self._current_agent_id is not None or force_rebuild:
-                title.update(f"[{COLORS.text_muted}]Select a worker[/]")
+                title.update("[$foreground-muted]Select a worker[/]")
                 time_widget.update("")
-                stats.update(f"[{COLORS.text_dim}]Click a worker to view conversation[/]")
+                stats.update("[$foreground-disabled]Click a worker to view conversation[/]")
                 messages.remove_children()
                 messages.mount(Static("", classes="empty"))
                 self._current_agent_id = None
@@ -447,17 +472,17 @@ class ConversationPanel(Vertical):
             return
 
         status_map = {
-            AgentStatus.IDLE: (ICONS.pending, COLORS.text_muted, "IDLE"),
-            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "RUNNING"),
-            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "WAITING"),
-            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "DONE"),
-            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "ERROR"),
+            AgentStatus.IDLE: (ICONS.pending, "$foreground-muted", "IDLE"),
+            AgentStatus.RUNNING: (ICONS.running, "$accent", "RUNNING"),
+            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted", "WAITING"),
+            AgentStatus.COMPLETE: (ICONS.complete, "$success", "DONE"),
+            AgentStatus.ERROR: (ICONS.failed, "$error", "ERROR"),
         }
-        icon, color, label = status_map.get(agent.status, (ICONS.pending, COLORS.text_muted, "?"))
+        icon, color, label = status_map.get(agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
         # Header: icon + name on left, time on right
         title.update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
-        time_widget.update(f"[{COLORS.text_muted}]{agent.elapsed_str}[/]")
+        time_widget.update(f"[$foreground-muted]{agent.elapsed_str}[/]")
 
         # Stats: status + role + counts
         stats.update(

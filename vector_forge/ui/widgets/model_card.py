@@ -9,17 +9,17 @@ from textual.widgets import Static
 from textual.message import Message
 
 from vector_forge.storage.models import ModelConfig, Provider
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 
 
-# Provider display info - follows theme semantic colors
-PROVIDER_INFO = {
-    Provider.OPENAI: ("OpenAI", COLORS.success),      # green
-    Provider.ANTHROPIC: ("Anthropic", COLORS.accent), # gold
-    Provider.OPENROUTER: ("OpenRouter", COLORS.purple),
-    Provider.AZURE: ("Azure", COLORS.blue),
-    Provider.OLLAMA: ("Ollama", COLORS.aqua),
-    Provider.CUSTOM: ("Custom", COLORS.text_muted),
+# Provider display info: (name, theme_color_variable)
+PROVIDER_STYLES = {
+    Provider.OPENAI: ("OpenAI", "$success"),
+    Provider.ANTHROPIC: ("Anthropic", "$accent"),
+    Provider.OPENROUTER: ("OpenRouter", "$secondary"),
+    Provider.AZURE: ("Azure", "$primary"),
+    Provider.OLLAMA: ("Ollama", "$secondary"),
+    Provider.CUSTOM: ("Custom", "$foreground-muted"),
 }
 
 
@@ -44,11 +44,11 @@ class ModelCard(Static):
     }
 
     ModelCard:hover {
-        background: $surface-hl;
+        background: $boost;
     }
 
     ModelCard:focus {
-        background: $surface-hl;
+        background: $boost;
     }
 
     ModelCard .header-row {
@@ -64,7 +64,7 @@ class ModelCard(Static):
 
     ModelCard .click-hint {
         width: auto;
-        color: $text-dim;
+        color: $foreground-disabled;
     }
 
     ModelCard .model-row {
@@ -81,7 +81,7 @@ class ModelCard(Static):
 
     ModelCard .model-id {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-top: 1;
     }
     """
@@ -110,7 +110,7 @@ class ModelCard(Static):
     def compose(self) -> ComposeResult:
         with Horizontal(classes="header-row"):
             yield Static(self._label, classes="label")
-            yield Static(f"[{COLORS.text_dim}]click to change[/]", classes="click-hint")
+            yield Static("[$foreground-disabled]click to change[/]", classes="click-hint")
         with Horizontal(classes="model-row"):
             yield Static(classes="model-name")
             yield Static(classes="provider-badge")
@@ -141,22 +141,22 @@ class ModelCard(Static):
         """Update the display with current config."""
         if self._config is None:
             self.query_one(".model-name", Static).update(
-                f"[{COLORS.text_muted}]{ICONS.pending} No model selected[/]"
+                f"[$foreground-muted]{ICONS.pending} No model selected[/]"
             )
             self.query_one(".provider-badge", Static).update("")
             self.query_one(".model-id", Static).update(
-                f"[{COLORS.text_dim}]Click to select a model...[/]"
+                "[$foreground-disabled]Click to select a model...[/]"
             )
             return
 
         config = self._config
-        provider_name, provider_color = PROVIDER_INFO.get(
-            config.provider, ("Unknown", COLORS.text_muted)
+        provider_name, provider_color = PROVIDER_STYLES.get(
+            config.provider, ("Unknown", "$foreground-muted")
         )
 
         # Model name with status icon
         self.query_one(".model-name", Static).update(
-            f"[{COLORS.success}]{ICONS.complete}[/] [bold]{config.name}[/]"
+            f"[$success]{ICONS.complete}[/] [bold]{config.name}[/]"
         )
 
         # Provider badge
@@ -166,7 +166,7 @@ class ModelCard(Static):
 
         # Model ID
         self.query_one(".model-id", Static).update(
-            f"[{COLORS.text_dim}]{config.model}[/]"
+            f"[$foreground-disabled]{config.model}[/]"
         )
 
 
@@ -180,7 +180,7 @@ class DeleteButton(Static):
     }
 
     DeleteButton:hover {
-        background: #fb4934 30%;
+        background: $error 30%;
     }
     """
 
@@ -189,8 +189,7 @@ class DeleteButton(Static):
         pass
 
     def __init__(self, **kwargs) -> None:
-        # Use Rich markup with theme color and escaped brackets
-        super().__init__(f"[{COLORS.error}]\\[x][/]", **kwargs)
+        super().__init__("[$error]\\[x][/]", **kwargs)
 
     def on_click(self, event) -> None:
         event.stop()
@@ -212,11 +211,11 @@ class ModelCardCompact(Static):
     }
 
     ModelCardCompact:hover {
-        background: $surface-hl;
+        background: $boost;
     }
 
     ModelCardCompact:focus {
-        background: $surface-hl;
+        background: $boost;
     }
 
     ModelCardCompact.-selected {
@@ -247,7 +246,7 @@ class ModelCardCompact(Static):
     ModelCardCompact .model-id {
         width: 1fr;
         padding-left: 2;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ModelCardCompact DeleteButton {
@@ -326,15 +325,15 @@ class ModelCardCompact(Static):
     def _update_display(self) -> None:
         """Update the display."""
         config = self._config
-        provider_name, provider_color = PROVIDER_INFO.get(
-            config.provider, ("Unknown", COLORS.text_muted)
+        provider_name, provider_color = PROVIDER_STYLES.get(
+            config.provider, ("Unknown", "$foreground-muted")
         )
 
         # Selection icon
         if self._is_selected:
-            icon = f"[{COLORS.accent}]{ICONS.complete}[/]"
+            icon = f"[$accent]{ICONS.complete}[/]"
         else:
-            icon = f"[{COLORS.text_dim}]{ICONS.pending}[/]"
+            icon = f"[$foreground-disabled]{ICONS.pending}[/]"
         self.query_one(".icon", Static).update(icon)
 
         # Name
@@ -347,5 +346,5 @@ class ModelCardCompact(Static):
 
         # Model ID
         self.query_one(".model-id", Static).update(
-            f"[{COLORS.text_dim}]{config.model}[/]"
+            f"[$foreground-disabled]{config.model}[/]"
         )

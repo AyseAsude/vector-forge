@@ -6,7 +6,6 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS
 from vector_forge.ui.state import get_state
 
 
@@ -33,13 +32,13 @@ class TmuxBar(Widget):
         width: 1fr;
         height: 1;
         text-align: center;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     TmuxBar .bar-right {
         width: auto;
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         padding: 0 1;
     }
     """
@@ -91,9 +90,9 @@ class TmuxBar(Widget):
         parts = []
         for name, screen in screens:
             if screen == self._active:
-                parts.append(f"[{COLORS.bg} on {COLORS.accent}] {name} [/][{COLORS.accent}]{PL}[/]")
+                parts.append(f"[$background on $accent] {name} [/][$accent]{PL}[/]")
             else:
-                parts.append(f" [{COLORS.text_muted}]{name}[/] ")
+                parts.append(f" [$foreground-muted]{name}[/] ")
 
         tabs.update("".join(parts))
 
@@ -103,7 +102,7 @@ class TmuxBar(Widget):
         center = self.query_one("#bar-center", Static)
         if state.selected_extraction:
             ext = state.selected_extraction
-            center.update(f"[{COLORS.accent}]▸[/] {ext.behavior_name}")
+            center.update(f"[$accent]▸[/] {ext.behavior_name}")
         else:
             center.update("")
 

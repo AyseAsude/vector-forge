@@ -13,7 +13,7 @@ from vector_forge.ui.state import (
     AgentStatus,
     get_state,
 )
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
@@ -39,8 +39,8 @@ class ProgressBar(Static):
         width = max(10, self.size.width - 6)
         filled = int((self._value / 100.0) * width)
         empty = width - filled
-        bar = f"[{COLORS.accent}]{'█' * filled}[/][{COLORS.surface_hl}]{'░' * empty}[/]"
-        return f"{bar} [{COLORS.text_muted}]{self._value:3.0f}%[/]"
+        bar = f"[$accent]{'█' * filled}[/][$boost]{'░' * empty}[/]"
+        return f"{bar} [$foreground-muted]{self._value:3.0f}%[/]"
 
 
 class TaskCard(Static):
@@ -55,7 +55,7 @@ class TaskCard(Static):
     }
 
     TaskCard:hover {
-        background: $surface-hl;
+        background: $boost;
     }
 
     TaskCard.-selected {
@@ -73,7 +73,7 @@ class TaskCard(Static):
 
     TaskCard .time {
         width: auto;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     TaskCard .progress {
@@ -82,7 +82,7 @@ class TaskCard(Static):
 
     TaskCard .meta {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
     """
 
@@ -118,13 +118,13 @@ class TaskCard(Static):
 
         # Status icon and color
         status_map = {
-            ExtractionStatus.PENDING: (ICONS.pending, COLORS.text_muted),
-            ExtractionStatus.RUNNING: (ICONS.running, COLORS.accent),
-            ExtractionStatus.PAUSED: (ICONS.paused, COLORS.warning),
-            ExtractionStatus.COMPLETE: (ICONS.complete, COLORS.success),
-            ExtractionStatus.FAILED: (ICONS.failed, COLORS.error),
+            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-muted"),
+            ExtractionStatus.RUNNING: (ICONS.running, "$accent"),
+            ExtractionStatus.PAUSED: (ICONS.paused, "$warning"),
+            ExtractionStatus.COMPLETE: (ICONS.complete, "$success"),
+            ExtractionStatus.FAILED: (ICONS.failed, "$error"),
         }
-        icon, color = status_map.get(ext.status, (ICONS.pending, COLORS.text_muted))
+        icon, color = status_map.get(ext.status, (ICONS.pending, "$foreground-muted"))
 
         # Name with status icon
         self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{ext.behavior_name}[/]")
@@ -141,7 +141,7 @@ class TaskCard(Static):
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
 
         self.query_one(".meta", Static).update(
-            f"[{COLORS.accent}]{ext.phase.value.upper()}[/] · "
+            f"[$accent]{ext.phase.value.upper()}[/] · "
             f"{runs} runs · {layer} · {score}"
         )
 
@@ -156,7 +156,7 @@ class AgentRow(Static):
     }
 
     AgentRow:hover {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -187,7 +187,7 @@ class DetailsPanel(Vertical):
     DetailsPanel .empty {
         height: 1fr;
         content-align: center middle;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     DetailsPanel .title {
@@ -198,7 +198,7 @@ class DetailsPanel(Vertical):
 
     DetailsPanel .description {
         height: auto;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-bottom: 1;
     }
 
@@ -225,7 +225,7 @@ class DetailsPanel(Vertical):
 
     DetailsPanel .log-entry {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
     """
 
@@ -241,15 +241,15 @@ class DetailsPanel(Vertical):
 
         ext = extraction
 
-        # Title with status
+        # Status icon and color
         status_map = {
-            ExtractionStatus.PENDING: (ICONS.pending, COLORS.text_muted),
-            ExtractionStatus.RUNNING: (ICONS.running, COLORS.accent),
-            ExtractionStatus.PAUSED: (ICONS.paused, COLORS.warning),
-            ExtractionStatus.COMPLETE: (ICONS.complete, COLORS.success),
-            ExtractionStatus.FAILED: (ICONS.failed, COLORS.error),
+            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-muted"),
+            ExtractionStatus.RUNNING: (ICONS.running, "$accent"),
+            ExtractionStatus.PAUSED: (ICONS.paused, "$warning"),
+            ExtractionStatus.COMPLETE: (ICONS.complete, "$success"),
+            ExtractionStatus.FAILED: (ICONS.failed, "$error"),
         }
-        icon, color = status_map.get(ext.status, (ICONS.pending, COLORS.text_muted))
+        icon, color = status_map.get(ext.status, (ICONS.pending, "$foreground-muted"))
         self.mount(Static(f"[{color}]{icon}[/] {ext.behavior_name}", classes="title"))
 
         # Description
@@ -263,7 +263,7 @@ class DetailsPanel(Vertical):
         layer = f"L{ext.current_layer}" if ext.current_layer else "—"
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
         self.mount(Static(
-            f"[{COLORS.accent}]{ext.phase.value.upper()}[/]  │  "
+            f"[$accent]{ext.phase.value.UPPER()}[/]  │  "
             f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}",
             classes="stats"
         ))
@@ -276,20 +276,20 @@ class DetailsPanel(Vertical):
         if ext.agents:
             for agent in list(ext.agents.values())[:8]:
                 icon_map = {
-                    AgentStatus.IDLE: ("○", COLORS.text_muted),
-                    AgentStatus.RUNNING: ("●", COLORS.accent),
-                    AgentStatus.WAITING: ("◐", COLORS.text_muted),
-                    AgentStatus.COMPLETE: ("●", COLORS.success),
-                    AgentStatus.ERROR: ("●", COLORS.error),
+                    AgentStatus.IDLE: ("○", "$foreground-muted"),
+                    AgentStatus.RUNNING: ("●", "$accent"),
+                    AgentStatus.WAITING: ("◐", "$foreground-muted"),
+                    AgentStatus.COMPLETE: ("●", "$success"),
+                    AgentStatus.ERROR: ("●", "$error"),
                 }
-                a_icon, a_color = icon_map.get(agent.status, ("○", COLORS.text_muted))
+                a_icon, a_color = icon_map.get(agent.status, ("○", "$foreground-muted"))
                 runs_list.mount(AgentRow(
                     agent.id,
                     f"[{a_color}]{a_icon}[/] {agent.name}  "
-                    f"[{COLORS.text_muted}]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
+                    f"[$foreground-muted]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
                 ))
         else:
-            runs_list.mount(Static(f"[{COLORS.text_muted}]No runs yet[/]"))
+            runs_list.mount(Static("[$foreground-muted]No runs yet[/]"))
 
         # Recent activity section
         self.mount(Static("RECENT", classes="section"))
@@ -300,11 +300,11 @@ class DetailsPanel(Vertical):
         if logs:
             for log in reversed(logs):
                 activity_list.mount(Static(
-                    f"[{COLORS.text_muted}]{log.time_str}[/] {log.message}",
+                    f"[$foreground-muted]{log.time_str}[/] {log.message}",
                     classes="log-entry"
                 ))
         else:
-            activity_list.mount(Static(f"[{COLORS.text_muted}]No activity yet[/]", classes="log-entry"))
+            activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="log-entry"))
 
 
 class DashboardScreen(Screen):
@@ -380,7 +380,7 @@ class DashboardScreen(Screen):
     DashboardScreen .empty {
         height: 1fr;
         content-align: center middle;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     DashboardScreen #right {

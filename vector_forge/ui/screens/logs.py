@@ -8,7 +8,6 @@ from textual.screen import Screen, ModalScreen
 from textual.widgets import Static, Input
 
 from vector_forge.ui.state import LogEntry, get_state
-from vector_forge.ui.theme import COLORS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
@@ -42,7 +41,7 @@ class LogDetailModal(ModalScreen):
 
     LogDetailModal .meta {
         height: auto;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-bottom: 1;
     }
 
@@ -62,7 +61,7 @@ class LogDetailModal(ModalScreen):
 
     LogDetailModal .footer {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         text-align: center;
         margin-top: 1;
     }
@@ -73,31 +72,45 @@ class LogDetailModal(ModalScreen):
         self.entry = entry
 
     def compose(self) -> ComposeResult:
+        with Vertical(id="modal"):
+            yield Static(classes="title", id="modal-title")
+            yield Static(classes="meta", id="modal-meta-time")
+            yield Static(classes="meta", id="modal-meta-extraction")
+            yield Static(classes="meta", id="modal-meta-agent")
+
+            yield Static("MESSAGE", classes="section")
+            yield Static(classes="content", id="modal-content")
+
+            yield Static("Press ESC to close", classes="footer")
+
+    def on_mount(self) -> None:
         entry = self.entry
 
         level_colors = {
-            "info": COLORS.blue,
-            "warning": COLORS.warning,
-            "error": COLORS.error,
+            "info": "$primary",
+            "warning": "$warning",
+            "error": "$error",
         }
-        color = level_colors.get(entry.level, COLORS.text_muted)
+        color = level_colors.get(entry.level, "$foreground-muted")
 
-        with Vertical(id="modal"):
-            yield Static(f"[{color}]{entry.level.upper()}[/] Log Entry", classes="title")
-            yield Static(
-                f"Time: {entry.time_str}  ·  Source: {entry.source}  ·  Level: {entry.level}",
-                classes="meta"
-            )
+        self.query_one("#modal-title", Static).update(f"[{color}]{entry.level.upper()}[/] Log Entry")
+        self.query_one("#modal-meta-time", Static).update(
+            f"Time: {entry.time_str}  ·  Source: {entry.source}  ·  Level: {entry.level}"
+        )
 
-            if entry.extraction_id:
-                yield Static(f"Extraction: {entry.extraction_id}", classes="meta")
-            if entry.agent_id:
-                yield Static(f"Agent: {entry.agent_id}", classes="meta")
+        extraction_meta = self.query_one("#modal-meta-extraction", Static)
+        if entry.extraction_id:
+            extraction_meta.update(f"Extraction: {entry.extraction_id}")
+        else:
+            extraction_meta.display = False
 
-            yield Static("MESSAGE", classes="section")
-            yield Static(entry.message, classes="content")
+        agent_meta = self.query_one("#modal-meta-agent", Static)
+        if entry.agent_id:
+            agent_meta.update(f"Agent: {entry.agent_id}")
+        else:
+            agent_meta.display = False
 
-            yield Static("Press ESC to close", classes="footer")
+        self.query_one("#modal-content", Static).update(entry.message)
 
 
 class LevelFilterRow(Static):
@@ -110,7 +123,7 @@ class LevelFilterRow(Static):
     }
 
     LevelFilterRow:hover {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -148,22 +161,21 @@ class LevelFilterRow(Static):
         return self._level
 
     def _update_display(self) -> None:
-        # Colors matching our theme
         level_colors = {
-            "info": COLORS.blue,
-            "warning": COLORS.warning,
-            "error": COLORS.error,
+            "info": "$primary",
+            "warning": "$warning",
+            "error": "$error",
         }
-        color = level_colors.get(self._level, COLORS.text_muted)
+        color = level_colors.get(self._level, "$foreground-muted")
 
         if self._active:
             self.update(
                 f"[{color}]●[/] {self._level.upper():<8} "
-                f"[{COLORS.text_muted}]{self._count:>4}[/]"
+                f"[$foreground-muted]{self._count:>4}[/]"
             )
         else:
             self.update(
-                f"[{COLORS.text_dim}]○ {self._level.upper():<8} {self._count:>4}[/]"
+                f"[$foreground-disabled]○ {self._level.upper():<8} {self._count:>4}[/]"
             )
 
 
@@ -177,7 +189,7 @@ class SourceFilterRow(Static):
     }
 
     SourceFilterRow:hover {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -209,9 +221,9 @@ class SourceFilterRow(Static):
 
     def _update_display(self) -> None:
         if self._selected:
-            self.update(f"[{COLORS.accent}]●[/] {self._label}")
+            self.update(f"[$accent]●[/] {self._label}")
         else:
-            self.update(f"[{COLORS.text_dim}]○[/] [{COLORS.text_muted}]{self._label}[/]")
+            self.update(f"[$foreground-disabled]○[/] [$foreground-muted]{self._label}[/]")
 
 
 class FilterPanel(Vertical):
@@ -232,7 +244,7 @@ class FilterPanel(Vertical):
 
     FilterPanel .section {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-top: 1;
     }
 
@@ -317,7 +329,7 @@ class LogRow(Static):
     }
 
     LogRow:hover {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -328,14 +340,20 @@ class LogRow(Static):
 
     def __init__(self, entry: LogEntry, **kwargs) -> None:
         self.entry = entry
+        super().__init__(**kwargs)
 
-        # Colors matching our theme
+    def on_mount(self) -> None:
+        self._update_display()
+
+    def _update_display(self) -> None:
+        entry = self.entry
+
         level_colors = {
-            "info": COLORS.blue,
-            "warning": COLORS.warning,
-            "error": COLORS.error,
+            "info": "$primary",
+            "warning": "$warning",
+            "error": "$error",
         }
-        color = level_colors.get(entry.level, COLORS.text_muted)
+        color = level_colors.get(entry.level, "$foreground-muted")
 
         # Truncate message if too long
         message = entry.message
@@ -344,12 +362,12 @@ class LogRow(Static):
             message = message[:max_msg_len - 3] + "..."
 
         content = (
-            f"[{COLORS.text_dim}]{entry.time_str}[/]  "
+            f"[$foreground-disabled]{entry.time_str}[/]  "
             f"[{color}]●[/]  "
-            f"[{COLORS.text_muted}]{entry.source:<10}[/]  "
+            f"[$foreground-muted]{entry.source:<10}[/]  "
             f"{message}"
         )
-        super().__init__(content, **kwargs)
+        self.update(content)
 
     def on_click(self) -> None:
         self.post_message(self.Clicked(self.entry))
@@ -381,7 +399,7 @@ class LogPanel(Vertical):
 
     LogPanel .count {
         width: auto;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     LogPanel .log-stream {
@@ -393,7 +411,7 @@ class LogPanel(Vertical):
     LogPanel .empty {
         height: 1fr;
         content-align: center middle;
-        color: $text-muted;
+        color: $foreground-muted;
     }
     """
 

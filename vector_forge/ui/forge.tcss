@@ -1,4 +1,11 @@
-/* Vector Forge TUI - Clean Minimal Theme */
+/* Vector Forge TUI - Uses Textual's built-in theme system
+ *
+ * Available CSS variables (auto-generated from theme):
+ * - Base: $primary, $secondary, $accent, $foreground, $background,
+ *         $surface, $panel, $boost, $warning, $error, $success
+ * - Text: $foreground-muted, $foreground-disabled
+ * - Custom: $aqua, $purple, $blue (defined in theme variables)
+ */
 
 Screen {
     background: $background;
@@ -63,7 +70,7 @@ ExtractionOption.-selected {
 }
 
 #progress-label {
-    color: $text-muted;
+    color: $foreground-muted;
     height: 1;
 }
 

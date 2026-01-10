@@ -8,7 +8,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.state import AgentUIState, AgentMessage, MessageRole, ToolCall, AgentStatus
 
 
@@ -30,14 +30,14 @@ class ToolCallDisplay(Widget):
     ToolCallDisplay .tool-args {
         height: auto;
         max-height: 4;
-        color: $text-disabled;
+        color: $foreground-disabled;
         padding-left: 2;
     }
 
     ToolCallDisplay .tool-result {
         height: auto;
         max-height: 4;
-        color: $text-muted;
+        color: $foreground-muted;
         padding-left: 2;
     }
     """
@@ -59,21 +59,21 @@ class ToolCallDisplay(Widget):
 
         # Status icon and color
         status_map = {
-            "pending": (ICONS.waiting, COLORS.text_muted),
-            "running": (ICONS.thinking, COLORS.accent),
-            "success": (ICONS.success, COLORS.success),
-            "error": (ICONS.error, COLORS.error),
+            "pending": (ICONS.waiting, "$foreground-muted"),
+            "running": (ICONS.thinking, "$accent"),
+            "success": (ICONS.success, "$success"),
+            "error": (ICONS.error, "$error"),
         }
-        icon, color = status_map.get(tc.status, (ICONS.pending, COLORS.text_dim))
+        icon, color = status_map.get(tc.status, (ICONS.pending, "$foreground-disabled"))
 
         # Duration
         duration_str = ""
         if tc.duration_ms is not None:
-            duration_str = f" [{COLORS.text_dim}]{tc.duration_ms}ms[/]"
+            duration_str = f" [$foreground-disabled]{tc.duration_ms}ms[/]"
 
         # Header
         header = self.query_one("#tool-header", Static)
-        header.update(f"[{color}]{icon}[/] [{COLORS.blue}]{tc.name}[/]{duration_str}")
+        header.update(f"[{color}]{icon}[/] [$secondary]{tc.name}[/]{duration_str}")
 
         # Arguments (truncated)
         args_widget = self.query_one("#tool-args", Static)
@@ -154,17 +154,17 @@ class MessageDisplay(Widget):
 
         # Role colors and icons
         role_styles = {
-            MessageRole.SYSTEM: (COLORS.purple, "SYS"),
-            MessageRole.USER: (COLORS.blue, "USR"),
-            MessageRole.ASSISTANT: (COLORS.accent, "AST"),
-            MessageRole.TOOL: (COLORS.aqua, "TOL"),
+            MessageRole.SYSTEM: ("$primary", "SYS"),
+            MessageRole.USER: ("$secondary", "USR"),
+            MessageRole.ASSISTANT: ("$accent", "AST"),
+            MessageRole.TOOL: ("$foreground-muted", "TOL"),
         }
-        color, label = role_styles.get(msg.role, (COLORS.text_muted, "???"))
+        color, label = role_styles.get(msg.role, ("$foreground-muted", "???"))
 
         # Header: role label and timestamp
         header = self.query_one("#msg-header", Static)
         header.update(
-            f"[{color} bold]{label}[/] [{COLORS.text_dim}]{msg.time_str}[/]"
+            f"[{color} bold]{label}[/] [$foreground-disabled]{msg.time_str}[/]"
         )
 
         # Content
@@ -172,7 +172,7 @@ class MessageDisplay(Widget):
         content = msg.content
         if len(content) > 500:
             content = content[:497] + "..."
-        content_widget.update(f"[{COLORS.text}]{content}[/]")
+        content_widget.update(f"[$foreground]{content}[/]")
 
         # Tool calls
         tools_container = self.query_one("#msg-tools", Vertical)
@@ -205,17 +205,17 @@ class AgentInspector(Widget):
 
     AgentInspector #inspector-title {
         height: 1;
-        color: $text;
+        color: $foreground;
     }
 
     AgentInspector #inspector-subtitle {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     AgentInspector #inspector-stats {
         height: 1;
-        color: $text-disabled;
+        color: $foreground-disabled;
     }
 
     AgentInspector #inspector-scroll {
@@ -225,7 +225,7 @@ class AgentInspector(Widget):
 
     AgentInspector #inspector-empty {
         padding: 2;
-        color: $text-muted;
+        color: $foreground-muted;
         text-align: center;
     }
     """
@@ -258,8 +258,8 @@ class AgentInspector(Widget):
             child.remove()
 
         if self.agent is None:
-            title.update(f"[{COLORS.text_muted}]Select an agent[/]")
-            subtitle.update(f"[{COLORS.text_dim}]Click an agent to view its messages[/]")
+            title.update("[$foreground-muted]Select an agent[/]")
+            subtitle.update("[$foreground-disabled]Click an agent to view its messages[/]")
             stats.update("")
             scroll.mount(Static("", id="inspector-empty"))
             return
@@ -268,34 +268,34 @@ class AgentInspector(Widget):
 
         # Status styling
         status_map = {
-            AgentStatus.IDLE: (ICONS.pending, COLORS.text_dim, "idle"),
-            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "running"),
-            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "waiting"),
-            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "complete"),
-            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "error"),
+            AgentStatus.IDLE: (ICONS.pending, "$foreground-disabled", "idle"),
+            AgentStatus.RUNNING: (ICONS.running, "$accent", "running"),
+            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted", "waiting"),
+            AgentStatus.COMPLETE: (ICONS.complete, "$success", "complete"),
+            AgentStatus.ERROR: (ICONS.failed, "$error", "error"),
         }
         icon, color, status_text = status_map.get(
-            agent.status, (ICONS.pending, COLORS.text_dim, "unknown")
+            agent.status, (ICONS.pending, "$foreground-disabled", "unknown")
         )
 
         # Title: agent name and status
         title.update(
-            f"[{color}]{icon}[/] [{COLORS.text} bold]{agent.name}[/] "
-            f"[{COLORS.text_muted}]· {status_text}[/]"
+            f"[{color}]{icon}[/] [$foreground bold]{agent.name}[/] "
+            f"[$foreground-muted]· {status_text}[/]"
         )
 
         # Subtitle: role and current tool
         if agent.current_tool:
             subtitle.update(
-                f"[{COLORS.text_dim}]{agent.role}[/] "
-                f"[{COLORS.accent}]{ICONS.active} {agent.current_tool}[/]"
+                f"[$foreground-disabled]{agent.role}[/] "
+                f"[$accent]{ICONS.active} {agent.current_tool}[/]"
             )
         else:
-            subtitle.update(f"[{COLORS.text_dim}]{agent.role}[/]")
+            subtitle.update(f"[$foreground-disabled]{agent.role}[/]")
 
         # Stats
         stats.update(
-            f"[{COLORS.text_dim}]{len(agent.messages)} messages · "
+            f"[$foreground-disabled]{len(agent.messages)} messages · "
             f"{agent.turns} turns · {agent.tool_calls_count} tools · {agent.elapsed_str}[/]"
         )
 
@@ -303,7 +303,7 @@ class AgentInspector(Widget):
         if not agent.messages:
             scroll.mount(
                 Static(
-                    f"[{COLORS.text_muted}]No messages yet[/]",
+                    "[$foreground-muted]No messages yet[/]",
                     id="inspector-empty",
                 )
             )

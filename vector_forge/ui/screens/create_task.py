@@ -9,7 +9,6 @@ from textual.message import Message
 
 from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
 from vector_forge.storage.models import ModelConfig, ModelConfigManager
-from vector_forge.ui.theme import COLORS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.widgets.model_card import ModelCard
 from vector_forge.ui.screens.model_selector import ModelSelectorScreen
@@ -28,7 +27,7 @@ class ProfileCard(Static):
     }
 
     ProfileCard:hover {
-        background: $surface-hl;
+        background: $boost;
     }
 
     ProfileCard.-selected {
@@ -66,8 +65,8 @@ class ProfileCard(Static):
 
     def _update(self) -> None:
         icon = "●" if self._selected else "○"
-        color = COLORS.accent if self._selected else COLORS.text_dim
-        self.update(f"[{color}]{icon}[/] [bold]{self._name}[/] [{COLORS.text_muted}]{self._desc}[/]")
+        color = "$accent" if self._selected else "$foreground-disabled"
+        self.update(f"[{color}]{icon}[/] [bold]{self._name}[/] [$foreground-muted]{self._desc}[/]")
 
 
 class OptionPill(Static):
@@ -83,7 +82,7 @@ class OptionPill(Static):
     }
 
     OptionPill:hover {
-        background: $surface-hl;
+        background: $boost;
     }
 
     OptionPill.-selected {
@@ -126,9 +125,9 @@ class OptionPill(Static):
 
     def _update(self) -> None:
         if self._selected:
-            self.update(f"[{COLORS.accent}]●[/] {self._label}")
+            self.update(f"[$accent]●[/] {self._label}")
         else:
-            self.update(f"[{COLORS.text_dim}]○[/] [{COLORS.text_muted}]{self._label}[/]")
+            self.update(f"[$foreground-disabled]○[/] [$foreground-muted]{self._label}[/]")
 
 
 class ParamRow(Horizontal):
@@ -142,7 +141,7 @@ class ParamRow(Horizontal):
 
     ParamRow .label {
         width: 14;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ParamRow Input {
@@ -152,7 +151,7 @@ class ParamRow(Horizontal):
     }
 
     ParamRow Input:focus {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -234,7 +233,7 @@ class CreateTaskScreen(Screen):
 
     CreateTaskScreen .main-section {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-bottom: 1;
         margin-top: 1;
     }
@@ -303,7 +302,7 @@ class CreateTaskScreen(Screen):
 
     CreateTaskScreen .option-label {
         width: 14;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     CreateTaskScreen .option-pills {
@@ -327,8 +326,8 @@ class CreateTaskScreen(Screen):
         width: auto;
         min-width: 10;
         height: 1;
-        background: $surface-hl;
-        color: $text;
+        background: $boost;
+        color: $foreground;
         border: none;
         padding: 0 2;
         margin-right: 1;
@@ -378,7 +377,7 @@ class CreateTaskScreen(Screen):
         # Header
         with Horizontal(id="header"):
             yield Static("CREATE TASK", id="header-title")
-            yield Static(f"[{COLORS.text_dim}]ESC to cancel[/]", id="cancel-link")
+            yield Static("[$foreground-disabled]ESC to cancel[/]", id="cancel-link")
 
         # Content
         with VerticalScroll(id="content"):
@@ -592,8 +591,8 @@ DOMAINS: {', '.join(result.domains[:6])}
             self._expanding = False
 
     def _status(self, msg: str, level: str = "info") -> None:
-        colors = {"error": COLORS.error, "success": COLORS.success, "warning": COLORS.warning}
-        color = colors.get(level, COLORS.text_muted)
+        colors = {"error": "$error", "success": "$success", "warning": "$warning"}
+        color = colors.get(level, "$foreground-muted")
         self.query_one("#status", Static).update(f"[{color}]{msg}[/]")
 
     def _parse_list(self, value: str, cast=float) -> list:

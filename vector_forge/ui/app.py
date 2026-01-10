@@ -8,7 +8,7 @@ from typing import Optional
 from textual.app import App
 from textual.binding import Binding
 
-from vector_forge.ui.theme import forge_dark
+from vector_forge.ui.theme import DEFAULT_THEME
 from vector_forge.ui.state import (
     UIState,
     ExtractionUIState,
@@ -74,8 +74,8 @@ class VectorForgeApp(App):
         self._task_executor = None
 
     def on_mount(self) -> None:
-        self.register_theme(forge_dark)
-        self.theme = "forge-dark"
+        # Use Textual's built-in gruvbox theme
+        self.theme = DEFAULT_THEME
 
         if self._state is not None:
             import vector_forge.ui.state as state_module

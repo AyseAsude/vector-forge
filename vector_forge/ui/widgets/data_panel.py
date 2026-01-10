@@ -6,7 +6,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.state import DatapointMetrics
 
 
@@ -21,12 +21,12 @@ class MetricRow(Widget):
 
     MetricRow .metric-label {
         width: 12;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     MetricRow .metric-value {
         width: 1fr;
-        color: $text;
+        color: $foreground;
     }
     """
 
@@ -103,14 +103,15 @@ class QualityBreakdown(Widget):
     def _update_display(self) -> None:
         if not self.is_mounted:
             return
+
         keep_widget = self.query_one("#keep-item", Static)
-        keep_widget.update(f"[{COLORS.success}]{ICONS.keep} {self.keep} keep[/]")
+        keep_widget.update(f"[$success]{ICONS.keep} {self.keep} keep[/]")
 
         review_widget = self.query_one("#review-item", Static)
-        review_widget.update(f"[{COLORS.warning}]{ICONS.review} {self.review} review[/]")
+        review_widget.update(f"[$warning]{ICONS.review} {self.review} review[/]")
 
         remove_widget = self.query_one("#remove-item", Static)
-        remove_widget.update(f"[{COLORS.text_dim}]{ICONS.remove} {self.remove}[/]")
+        remove_widget.update(f"[$foreground-disabled]{ICONS.remove} {self.remove}[/]")
 
 
 class DataPanel(Widget):

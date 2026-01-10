@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.state import ExtractionUIState, ExtractionStatus, Phase
 
 
@@ -81,30 +81,30 @@ class ExtractionOption(Widget):
 
         # Status icon and color
         status_icons = {
-            ExtractionStatus.PENDING: (ICONS.pending, COLORS.text_dim),
-            ExtractionStatus.RUNNING: (ICONS.running, COLORS.accent),
-            ExtractionStatus.PAUSED: (ICONS.paused, COLORS.warning),
-            ExtractionStatus.COMPLETE: (ICONS.complete, COLORS.success),
-            ExtractionStatus.FAILED: (ICONS.failed, COLORS.error),
+            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-disabled"),
+            ExtractionStatus.RUNNING: (ICONS.running, "$accent"),
+            ExtractionStatus.PAUSED: (ICONS.paused, "$warning"),
+            ExtractionStatus.COMPLETE: (ICONS.complete, "$success"),
+            ExtractionStatus.FAILED: (ICONS.failed, "$error"),
         }
-        icon, color = status_icons.get(ext.status, (ICONS.pending, COLORS.text_dim))
+        icon, color = status_icons.get(ext.status, (ICONS.pending, "$foreground-disabled"))
 
         # Progress bar (compact)
         bar_width = 6
         progress = ext.progress / 100.0
         filled = int(progress * bar_width)
         empty = bar_width - filled
-        bar_color = COLORS.success if ext.status == ExtractionStatus.COMPLETE else COLORS.accent
+        bar_color = "$success" if ext.status == ExtractionStatus.COMPLETE else "$accent"
         progress_bar = (
             f"[{bar_color}]{BLOCK_FULL * filled}[/]"
-            f"[{COLORS.surface_hl}]{BLOCK_EMPTY * empty}[/]"
+            f"[$boost]{BLOCK_EMPTY * empty}[/]"
         )
 
         # Line 1: icon, name, progress, percentage
         line1 = self.query_one("#opt-line1", Static)
         line1.update(
-            f"[{color}]{icon}[/] [{COLORS.text}]{ext.behavior_name}[/]  "
-            f"{progress_bar} [{COLORS.text_muted}]{int(ext.progress)}%[/]"
+            f"[{color}]{icon}[/] [$foreground]{ext.behavior_name}[/]  "
+            f"{progress_bar} [$foreground-muted]{int(ext.progress)}%[/]"
         )
 
         # Line 2: description (truncated)
@@ -112,7 +112,7 @@ class ExtractionOption(Widget):
         if len(desc) > 50:
             desc = desc[:47] + "..."
         line2 = self.query_one("#opt-line2", Static)
-        line2.update(f"  [{COLORS.text_dim}]{desc}[/]")
+        line2.update(f"  [$foreground-disabled]{desc}[/]")
 
 
 class ExtractionSelector(Widget):
@@ -157,7 +157,7 @@ class ExtractionSelector(Widget):
     ExtractionSelector #dropdown-empty {
         height: 2;
         padding: 0 2;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ExtractionSelector #chevron {
@@ -218,21 +218,21 @@ class ExtractionSelector(Widget):
         line3 = self.query_one("#header-line3", Static)
 
         if ext is None:
-            line1.update(f"[{COLORS.text_muted}]No extraction selected[/]")
-            line2.update(f"[{COLORS.text_dim}]Start an extraction to begin[/]")
+            line1.update("[$foreground-muted]No extraction selected[/]")
+            line2.update("[$foreground-disabled]Start an extraction to begin[/]")
             line3.update("")
             return
 
         # Status icon and color
         status_map = {
-            ExtractionStatus.PENDING: (ICONS.pending, COLORS.text_dim, "pending"),
-            ExtractionStatus.RUNNING: (ICONS.running, COLORS.accent, "running"),
-            ExtractionStatus.PAUSED: (ICONS.paused, COLORS.warning, "paused"),
-            ExtractionStatus.COMPLETE: (ICONS.complete, COLORS.success, "complete"),
-            ExtractionStatus.FAILED: (ICONS.failed, COLORS.error, "failed"),
+            ExtractionStatus.PENDING: (ICONS.pending, "$foreground-disabled", "pending"),
+            ExtractionStatus.RUNNING: (ICONS.running, "$accent", "running"),
+            ExtractionStatus.PAUSED: (ICONS.paused, "$warning", "paused"),
+            ExtractionStatus.COMPLETE: (ICONS.complete, "$success", "complete"),
+            ExtractionStatus.FAILED: (ICONS.failed, "$error", "failed"),
         }
         icon, color, status_text = status_map.get(
-            ext.status, (ICONS.pending, COLORS.text_dim, "unknown")
+            ext.status, (ICONS.pending, "$foreground-disabled", "unknown")
         )
 
         # Chevron for dropdown
@@ -240,25 +240,25 @@ class ExtractionSelector(Widget):
 
         # Line 1: Name and status
         line1.update(
-            f"[{color}]{icon}[/] [{COLORS.text} bold]{ext.behavior_name}[/] "
-            f"[{COLORS.text_muted}]· {status_text}[/] "
-            f"[{COLORS.text_muted}]{chevron}[/]"
+            f"[{color}]{icon}[/] [$foreground bold]{ext.behavior_name}[/] "
+            f"[$foreground-muted]· {status_text}[/] "
+            f"[$foreground-muted]{chevron}[/]"
         )
 
         # Line 2: Description
         desc = ext.behavior_description
         if len(desc) > 60:
             desc = desc[:57] + "..."
-        line2.update(f"  [{COLORS.text_dim}]{desc}[/]")
+        line2.update(f"  [$foreground-disabled]{desc}[/]")
 
         # Line 3: Progress info
         phase_text = ext.phase.value
         progress_text = f"{int(ext.progress)}%"
         iter_text = f"iter {ext.outer_iteration}/{ext.max_outer_iterations}"
         line3.update(
-            f"  [{COLORS.text_muted}]{phase_text}[/] "
-            f"[{COLORS.accent}]{progress_text}[/] "
-            f"[{COLORS.text_dim}]· {iter_text} · {ext.elapsed_str}[/]"
+            f"  [$foreground-muted]{phase_text}[/] "
+            f"[$accent]{progress_text}[/] "
+            f"[$foreground-disabled]· {iter_text} · {ext.elapsed_str}[/]"
         )
 
     def _refresh_dropdown(self) -> None:

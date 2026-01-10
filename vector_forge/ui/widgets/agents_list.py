@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.state import AgentUIState, AgentStatus
 
 
@@ -79,38 +79,38 @@ class AgentItem(Widget):
 
         # Status icon and color
         status_map = {
-            AgentStatus.IDLE: (ICONS.pending, COLORS.text_dim),
-            AgentStatus.RUNNING: (ICONS.running, COLORS.accent),
-            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted),
-            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success),
-            AgentStatus.ERROR: (ICONS.failed, COLORS.error),
+            AgentStatus.IDLE: (ICONS.pending, "$foreground-disabled"),
+            AgentStatus.RUNNING: (ICONS.running, "$accent"),
+            AgentStatus.WAITING: (ICONS.waiting, "$foreground-muted"),
+            AgentStatus.COMPLETE: (ICONS.complete, "$success"),
+            AgentStatus.ERROR: (ICONS.failed, "$error"),
         }
-        icon, color = status_map.get(agent.status, (ICONS.pending, COLORS.text_dim))
+        icon, color = status_map.get(agent.status, (ICONS.pending, "$foreground-disabled"))
 
         # Line 1: Status icon and name
         line1 = self.query_one("#agent-line1", Static)
         line1.update(
-            f"[{color}]{icon}[/] [{COLORS.text} bold]{agent.name}[/] "
-            f"[{COLORS.text_dim}]({agent.role})[/]"
+            f"[{color}]{icon}[/] [$foreground bold]{agent.name}[/] "
+            f"[$foreground-disabled]({agent.role})[/]"
         )
 
         # Line 2: Current activity or tool
         line2 = self.query_one("#agent-line2", Static)
         if agent.status == AgentStatus.RUNNING and agent.current_tool:
-            line2.update(f"  [{COLORS.accent}]{ICONS.active}[/] [{COLORS.text_muted}]{agent.current_tool}[/]")
+            line2.update(f"  [$accent]{ICONS.active}[/] [$foreground-muted]{agent.current_tool}[/]")
         elif agent.last_message:
             # Show truncated last message
             content = agent.last_message.content
             if len(content) > 40:
                 content = content[:37] + "..."
-            line2.update(f"  [{COLORS.text_dim}]{content}[/]")
+            line2.update(f"  [$foreground-disabled]{content}[/]")
         else:
-            line2.update(f"  [{COLORS.text_dim}]No activity[/]")
+            line2.update("  [$foreground-disabled]No activity[/]")
 
         # Line 3: Stats
         line3 = self.query_one("#agent-line3", Static)
         line3.update(
-            f"  [{COLORS.text_dim}]{agent.turns} turns · "
+            f"  [$foreground-disabled]{agent.turns} turns · "
             f"{agent.tool_calls_count} tools · {agent.elapsed_str}[/]"
         )
 
@@ -134,12 +134,12 @@ class AgentsList(Widget):
 
     AgentsList #agents-title {
         height: 1;
-        color: $text;
+        color: $foreground;
     }
 
     AgentsList #agents-subtitle {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     AgentsList #agents-scroll {
@@ -148,7 +148,7 @@ class AgentsList(Widget):
 
     AgentsList #agents-empty {
         padding: 1;
-        color: $text-muted;
+        color: $foreground-muted;
     }
     """
 

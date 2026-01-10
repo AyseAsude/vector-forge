@@ -12,8 +12,17 @@ from vector_forge.storage.models import (
     ModelConfigManager,
     Provider,
 )
-from vector_forge.ui.theme import COLORS
-from vector_forge.ui.widgets.model_card import PROVIDER_INFO
+
+
+# Provider display names (no colors needed here - just for generating names)
+PROVIDER_NAMES = {
+    Provider.OPENAI: "OpenAI",
+    Provider.ANTHROPIC: "Anthropic",
+    Provider.OPENROUTER: "OpenRouter",
+    Provider.AZURE: "Azure",
+    Provider.OLLAMA: "Ollama",
+    Provider.CUSTOM: "Custom",
+}
 
 
 class AddModelScreen(ModalScreen):
@@ -49,7 +58,7 @@ class AddModelScreen(ModalScreen):
 
     AddModelScreen #close-hint {
         width: auto;
-        color: $text-dim;
+        color: $foreground-disabled;
     }
 
     /* Form content - scrollable */
@@ -66,38 +75,38 @@ class AddModelScreen(ModalScreen):
 
     AddModelScreen .form-label {
         width: 12;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     /* Input styling - matches ParamRow pattern */
     AddModelScreen Input {
         width: 1fr;
         height: 1;
-        background: $surface-hl;
+        background: $boost;
         border: none;
         padding: 0 1;
     }
 
     AddModelScreen Input:focus {
-        background: $bg;
+        background: $background;
     }
 
     /* Select widget - clean style without borders */
     AddModelScreen Select {
         width: 1fr;
         height: 1;
-        background: $surface-hl;
+        background: $boost;
         border: none;
     }
 
     AddModelScreen Select > SelectCurrent {
-        background: $surface-hl;
+        background: $boost;
         border: none;
         padding: 0 1;
     }
 
     AddModelScreen Select:focus > SelectCurrent {
-        background: $bg;
+        background: $background;
         border: none;
     }
 
@@ -115,8 +124,8 @@ class AddModelScreen(ModalScreen):
         width: auto;
         min-width: 10;
         height: 3;
-        background: $surface-hl;
-        color: $text;
+        background: $boost;
+        color: $foreground;
         border: none;
         margin-right: 1;
     }
@@ -126,7 +135,7 @@ class AddModelScreen(ModalScreen):
     }
 
     AddModelScreen #btn-cancel:focus {
-        background: $surface-hl;
+        background: $boost;
     }
 
     AddModelScreen #btn-save {
@@ -166,7 +175,7 @@ class AddModelScreen(ModalScreen):
             # Header
             with Horizontal(id="header"):
                 yield Static("ADD NEW MODEL", id="title")
-                yield Static(f"[{COLORS.text_dim}]ESC[/]", id="close-hint")
+                yield Static("", id="close-hint")
 
             # Form content - scrollable for small screens
             with VerticalScroll(id="form-content"):
@@ -206,6 +215,9 @@ class AddModelScreen(ModalScreen):
                 yield Button("Cancel", id="btn-cancel")
                 yield Button("Save Model", id="btn-save")
 
+    def on_mount(self) -> None:
+        self.query_one("#close-hint", Static).update("[$foreground-disabled]ESC[/]")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
             self.dismiss(None)
@@ -234,7 +246,7 @@ class AddModelScreen(ModalScreen):
         # Generate name if not provided
         name = name_input.value.strip()
         if not name:
-            provider_name, _ = PROVIDER_INFO.get(self._selected_provider, ("", ""))
+            provider_name = PROVIDER_NAMES.get(self._selected_provider, "")
             model_short = model.split("/")[-1]
             name = f"{provider_name} {model_short}"
 

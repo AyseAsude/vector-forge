@@ -11,7 +11,6 @@ from vector_forge.storage.models import (
     ModelConfig,
     ModelConfigManager,
 )
-from vector_forge.ui.theme import COLORS
 from vector_forge.ui.widgets.model_card import ModelCardCompact
 from vector_forge.ui.screens.add_model import AddModelScreen
 
@@ -49,7 +48,7 @@ class ModelSelectorScreen(ModalScreen):
 
     ModelSelectorScreen #close-hint {
         width: auto;
-        color: $text-dim;
+        color: $foreground-disabled;
     }
 
     /* Section titles */
@@ -72,7 +71,7 @@ class ModelSelectorScreen(ModalScreen):
     ModelSelectorScreen .empty-list {
         height: 2;
         content-align: center middle;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     /* Buttons - taller for better visibility */
@@ -102,8 +101,8 @@ class ModelSelectorScreen(ModalScreen):
         width: auto;
         min-width: 10;
         height: 3;
-        background: $surface-hl;
-        color: $text;
+        background: $boost;
+        color: $foreground;
         border: none;
         margin-left: 1;
     }
@@ -113,7 +112,7 @@ class ModelSelectorScreen(ModalScreen):
     }
 
     ModelSelectorScreen #btn-cancel:focus {
-        background: $surface-hl;
+        background: $boost;
     }
     """
 
@@ -142,7 +141,7 @@ class ModelSelectorScreen(ModalScreen):
             with Horizontal(id="header"):
                 field_display = self.field_name.upper()
                 yield Static(f"SELECT {field_display} MODEL", id="title")
-                yield Static(f"[{COLORS.text_dim}]ESC[/]", id="close-hint")
+                yield Static("", id="close-hint")
 
             # Saved models section
             yield Static("SAVED MODELS", classes="section-title")
@@ -154,6 +153,7 @@ class ModelSelectorScreen(ModalScreen):
                 yield Button("Cancel", id="btn-cancel")
 
     def on_mount(self) -> None:
+        self.query_one("#close-hint", Static).update("[$foreground-disabled]ESC[/]")
         self._populate_models()
 
     def _populate_models(self) -> None:
@@ -166,7 +166,7 @@ class ModelSelectorScreen(ModalScreen):
         if not configs:
             models_scroll.mount(
                 Static(
-                    f"[{COLORS.text_muted}]No saved models[/]",
+                    "[$foreground-muted]No saved models[/]",
                     classes="empty-list"
                 )
             )

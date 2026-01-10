@@ -6,7 +6,6 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from vector_forge.ui.state import Phase
-from vector_forge.ui.theme import COLORS
 
 
 # Block characters for progress bar
@@ -46,7 +45,7 @@ class BlockProgressBar(Widget):
         width: 5;
         height: 1;
         text-align: right;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-left: 1;
     }
     """
@@ -91,10 +90,6 @@ class BlockProgressBar(Widget):
         full_blocks = int(filled_width)
         partial_idx = int((filled_width - full_blocks) * 8)
 
-        # Build the bar string
-        bar_fg = COLORS.accent if progress < 100 else COLORS.success
-        bar_bg = COLORS.surface_hl
-
         # Filled portion
         filled = BLOCK_FULL * full_blocks
 
@@ -105,8 +100,11 @@ class BlockProgressBar(Widget):
         empty_count = self.bar_width - full_blocks - (1 if partial else 0)
         empty = BLOCK_EMPTY * empty_count
 
+        # Choose color based on completion - use theme variables directly
+        bar_fg = "$success" if progress >= 100 else "$accent"
+
         # Compose with colors
-        bar_str = f"[{bar_fg}]{filled}{partial}[/][{bar_bg}]{empty}[/]"
+        bar_str = f"[{bar_fg}]{filled}{partial}[/][$boost]{empty}[/]"
 
         container = self.query_one("#bar-container", Static)
         container.update(bar_str)
@@ -150,7 +148,7 @@ class ProgressSection(Widget):
 
     ProgressSection #phase-info {
         width: auto;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ProgressSection BlockProgressBar {

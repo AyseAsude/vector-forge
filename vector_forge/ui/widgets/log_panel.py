@@ -8,7 +8,6 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static, Input
 
-from vector_forge.ui.theme import COLORS
 from vector_forge.ui.state import LogEntry
 
 
@@ -23,17 +22,17 @@ class LogEntryDisplay(Widget):
 
     LogEntryDisplay .log-time {
         width: 9;
-        color: $text-disabled;
+        color: $foreground-disabled;
     }
 
     LogEntryDisplay .log-source {
         width: 10;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     LogEntryDisplay .log-msg {
         width: 1fr;
-        color: $text;
+        color: $foreground;
     }
 
     LogEntryDisplay.-warning .log-msg {
@@ -84,13 +83,13 @@ class LogPanel(Widget):
 
     LogPanel #log-title {
         width: auto;
-        color: $text;
+        color: $foreground;
     }
 
     LogPanel #log-count {
         width: 1fr;
         text-align: right;
-        color: $text-disabled;
+        color: $foreground-disabled;
     }
 
     LogPanel #log-filter-row {
@@ -100,7 +99,7 @@ class LogPanel(Widget):
 
     LogPanel #filter-label {
         width: auto;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-right: 1;
     }
 
@@ -115,13 +114,13 @@ class LogPanel(Widget):
     LogPanel #source-filter {
         width: auto;
         margin-left: 2;
-        color: $text-disabled;
+        color: $foreground-disabled;
     }
 
     LogPanel #level-filter {
         width: auto;
         margin-left: 2;
-        color: $text-disabled;
+        color: $foreground-disabled;
     }
 
     LogPanel #log-scroll {
@@ -130,7 +129,7 @@ class LogPanel(Widget):
     }
 
     LogPanel .log-empty-msg {
-        color: $text-muted;
+        color: $foreground-muted;
         padding: 1;
     }
     """
@@ -189,15 +188,15 @@ class LogPanel(Widget):
         total = len(self.entries) if self.entries else 0
         shown = len(filtered)
         if total == shown:
-            count_widget.update(f"[{COLORS.text_dim}]{total} entries[/]")
+            count_widget.update(f"[$foreground-disabled]{total} entries[/]")
         else:
-            count_widget.update(f"[{COLORS.text_dim}]{shown}/{total} entries[/]")
+            count_widget.update(f"[$foreground-disabled]{shown}/{total} entries[/]")
 
         # Show entries or empty message
         if not filtered:
             scroll.mount(
                 Static(
-                    f"[{COLORS.text_muted}]No log entries[/]",
+                    "[$foreground-muted]No log entries[/]",
                     classes="log-empty-msg",
                 )
             )

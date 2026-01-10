@@ -6,7 +6,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.theme import ICONS
 from vector_forge.ui.state import EvaluationMetrics
 
 
@@ -27,7 +27,7 @@ class ScoreBar(Widget):
 
     ScoreBar .score-label {
         width: 11;
-        color: $text-muted;
+        color: $foreground-muted;
     }
 
     ScoreBar .score-bar-container {
@@ -36,7 +36,7 @@ class ScoreBar(Widget):
 
     ScoreBar .score-value {
         width: 5;
-        color: $text;
+        color: $foreground;
         margin-left: 1;
         text-align: right;
     }
@@ -82,19 +82,19 @@ class ScoreBar(Widget):
         filled = int(self.score * bar_width)
         empty = bar_width - filled
 
-        # Choose color based on score
+        # Choose color based on score - use theme variables directly
         if self.score >= 0.8:
-            bar_color = COLORS.success
+            bar_color = "$success"
         elif self.score >= 0.6:
-            bar_color = COLORS.accent
+            bar_color = "$accent"
         elif self.score >= 0.4:
-            bar_color = COLORS.warning
+            bar_color = "$warning"
         else:
-            bar_color = COLORS.error
+            bar_color = "$error"
 
         bar_str = (
             f"[{bar_color}]{BLOCK_FULL * filled}[/]"
-            f"[{COLORS.surface_hl}]{BLOCK_EMPTY * empty}[/]"
+            f"[$boost]{BLOCK_EMPTY * empty}[/]"
         )
         bar_container.update(bar_str)
 
@@ -130,15 +130,15 @@ class VerdictDisplay(Widget):
         verdict = self.verdict
 
         if verdict is None:
-            text_widget.update(f"[{COLORS.text_muted}]{ICONS.pending} Pending[/]")
+            text_widget.update(f"[$foreground-muted]{ICONS.pending} Pending[/]")
         elif verdict.lower() == "accepted":
-            text_widget.update(f"[{COLORS.success}]{ICONS.complete} Accepted[/]")
+            text_widget.update(f"[$success]{ICONS.complete} Accepted[/]")
         elif verdict.lower() == "needs_refinement":
-            text_widget.update(f"[{COLORS.warning}]{ICONS.review} Needs Refinement[/]")
+            text_widget.update(f"[$warning]{ICONS.review} Needs Refinement[/]")
         elif verdict.lower() == "rejected":
-            text_widget.update(f"[{COLORS.error}]{ICONS.failed} Rejected[/]")
+            text_widget.update(f"[$error]{ICONS.failed} Rejected[/]")
         else:
-            text_widget.update(f"[{COLORS.text_muted}]{ICONS.pending} {verdict}[/]")
+            text_widget.update(f"[$foreground-muted]{ICONS.pending} {verdict}[/]")
 
 
 class EvaluationPanel(Widget):
@@ -166,12 +166,12 @@ class EvaluationPanel(Widget):
 
     EvaluationPanel #overall-divider {
         height: 1;
-        color: $text-disabled;
+        color: $foreground-disabled;
     }
 
     EvaluationPanel #best-result {
         height: 1;
-        color: $text-muted;
+        color: $foreground-muted;
         margin-top: 1;
     }
 

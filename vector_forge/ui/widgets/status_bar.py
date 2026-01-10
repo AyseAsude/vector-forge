@@ -6,7 +6,6 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vector_forge.ui.theme import COLORS
 from vector_forge.ui.state import ExtractionStatus, Phase
 
 
@@ -46,15 +45,15 @@ class ScreenTab(Widget):
         if self.is_active:
             # Active: accent background
             return (
-                f"[{COLORS.accent} on {COLORS.bg}]{PL_RIGHT}[/]"
-                f"[{COLORS.bg} on {COLORS.accent}] {self.number}:{self.label} [/]"
-                f"[{COLORS.accent} on {COLORS.surface}]{PL_RIGHT}[/]"
+                f"[$accent on $background]{PL_RIGHT}[/]"
+                f"[$background on $accent] {self.number}:{self.label} [/]"
+                f"[$accent on $surface]{PL_RIGHT}[/]"
             )
         else:
             # Inactive: surface background
             return (
-                f"[{COLORS.surface_hl} on {COLORS.surface}]{PL_RIGHT_THIN}[/]"
-                f"[{COLORS.text_dim} on {COLORS.surface}] {self.number}:{self.label} [/]"
+                f"[$boost on $surface]{PL_RIGHT_THIN}[/]"
+                f"[$foreground-disabled on $surface] {self.number}:{self.label} [/]"
             )
 
     def on_click(self) -> None:
@@ -166,29 +165,29 @@ class StatusBar(Widget):
         # Phase segment - accent color
         if self.phase:
             segments.append(
-                f"[{COLORS.accent} on {COLORS.surface}]{PL_LEFT}[/]"
-                f"[{COLORS.bg} on {COLORS.accent}] {self.phase} [/]"
+                f"[$accent on $surface]{PL_LEFT}[/]"
+                f"[$background on $accent] {self.phase} [/]"
             )
 
-        # Iteration segment - aqua color
+        # Iteration segment - secondary color
         if self.iteration:
             if segments:
-                segments.append(f"[{COLORS.aqua} on {COLORS.accent}]{PL_LEFT}[/]")
+                segments.append(f"[$secondary on $accent]{PL_LEFT}[/]")
             else:
-                segments.append(f"[{COLORS.aqua} on {COLORS.surface}]{PL_LEFT}[/]")
-            segments.append(f"[{COLORS.bg} on {COLORS.aqua}] {self.iteration} [/]")
+                segments.append(f"[$secondary on $surface]{PL_LEFT}[/]")
+            segments.append(f"[$background on $secondary] {self.iteration} [/]")
 
-        # Layer segment - blue color
+        # Layer segment - primary color
         if self.layer:
-            prev_bg = COLORS.aqua if self.iteration else (COLORS.accent if self.phase else COLORS.surface)
-            segments.append(f"[{COLORS.blue} on {prev_bg}]{PL_LEFT}[/]")
-            segments.append(f"[{COLORS.bg} on {COLORS.blue}] {self.layer} [/]")
+            prev_bg = "$secondary" if self.iteration else ("$accent" if self.phase else "$surface")
+            segments.append(f"[$primary on {prev_bg}]{PL_LEFT}[/]")
+            segments.append(f"[$background on $primary] {self.layer} [/]")
 
         # Elapsed time segment - muted surface
         if self.elapsed:
-            prev_bg = COLORS.blue if self.layer else (COLORS.aqua if self.iteration else (COLORS.accent if self.phase else COLORS.surface))
-            segments.append(f"[{COLORS.surface_hl} on {prev_bg}]{PL_LEFT}[/]")
-            segments.append(f"[{COLORS.text} on {COLORS.surface_hl}] {self.elapsed} [/]")
+            prev_bg = "$primary" if self.layer else ("$secondary" if self.iteration else ("$accent" if self.phase else "$surface"))
+            segments.append(f"[$boost on {prev_bg}]{PL_LEFT}[/]")
+            segments.append(f"[$foreground on $boost] {self.elapsed} [/]")
 
         status_widget.update("".join(segments))
 
