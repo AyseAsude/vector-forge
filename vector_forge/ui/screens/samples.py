@@ -1,11 +1,18 @@
-"""Samples screen - split view of parallel extraction workers."""
+"""Samples screen - split view of parallel extraction workers.
+
+Uses native Textual widgets for high performance:
+- RichLog for conversation display (efficient appending, native scrolling)
+- ListView for worker selection (native keyboard navigation)
+- Reactive updates instead of remove/remount patterns
+"""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.reactive import reactive
 from textual.screen import Screen, ModalScreen
-from textual.widgets import Static
+from textual.widgets import Static, RichLog, ListView, ListItem, Label
 
 from vector_forge.ui.state import (
     AgentUIState,
@@ -17,13 +24,11 @@ from vector_forge.ui.state import (
 )
 from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
-from vector_forge.ui.messages import (
-    AgentSpawned,
-    AgentStatusChanged,
-    AgentMessageReceived,
-    AgentSelected,
-    TimeTick,
-)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool Call Modal - Shows tool call details
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 class ToolCallModal(ModalScreen):
@@ -48,13 +53,13 @@ class ToolCallModal(ModalScreen):
         padding: 1 2;
     }
 
-    ToolCallModal #modal-title {
+    ToolCallModal .title {
         height: 1;
         text-style: bold;
         margin-bottom: 1;
     }
 
-    ToolCallModal #modal-status {
+    ToolCallModal .status {
         height: 1;
         color: $foreground-muted;
         margin-bottom: 1;
@@ -67,7 +72,7 @@ class ToolCallModal(ModalScreen):
         margin-top: 1;
     }
 
-    ToolCallModal #modal-args {
+    ToolCallModal .content {
         height: auto;
         max-height: 10;
         padding: 1;
@@ -75,14 +80,7 @@ class ToolCallModal(ModalScreen):
         margin-bottom: 1;
     }
 
-    ToolCallModal #modal-result {
-        height: auto;
-        max-height: 15;
-        padding: 1;
-        background: $background;
-    }
-
-    ToolCallModal #modal-footer {
+    ToolCallModal .footer {
         height: 1;
         color: $foreground-muted;
         text-align: center;
@@ -95,22 +93,7 @@ class ToolCallModal(ModalScreen):
         self.tool_call = tool_call
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="modal"):
-            yield Static(id="modal-title")
-            yield Static(id="modal-status")
-
-            yield Static("ARGUMENTS", classes="section")
-            yield Static(id="modal-args")
-
-            # Result section added dynamically in on_mount if needed
-            yield Static(id="modal-result-section", classes="section")
-            yield Static(id="modal-result")
-
-            yield Static("Press ESC to close", id="modal-footer")
-
-    def on_mount(self) -> None:
         tc = self.tool_call
-
         status_colors = {
             "pending": "$foreground-muted",
             "running": "$accent",
@@ -120,173 +103,89 @@ class ToolCallModal(ModalScreen):
         color = status_colors.get(tc.status, "$foreground-disabled")
         duration = f" · {tc.duration_ms}ms" if tc.duration_ms else ""
 
-        self.query_one("#modal-title", Static).update(f"[{color}]▸[/] [bold]{tc.name}[/]")
-        self.query_one("#modal-status", Static).update(f"{tc.status}{duration}")
-
         args_text = tc.arguments if tc.arguments else "(none)"
         if len(args_text) > 500:
             args_text = args_text[:497] + "..."
-        self.query_one("#modal-args", Static).update(args_text)
 
-        result_section = self.query_one("#modal-result-section", Static)
-        result_widget = self.query_one("#modal-result", Static)
-        if tc.result:
-            result_section.update("RESULT")
-            result_text = tc.result
-            if len(result_text) > 1000:
-                result_text = result_text[:997] + "..."
-            result_widget.update(result_text)
-        else:
-            result_section.display = False
-            result_widget.display = False
+        with Vertical(id="modal"):
+            yield Static(f"[{color}]▸[/] [bold]{tc.name}[/]", classes="title")
+            yield Static(f"{tc.status}{duration}", classes="status")
+            yield Static("ARGUMENTS", classes="section")
+            yield Static(args_text, classes="content")
 
+            if tc.result:
+                result_text = tc.result
+                if len(result_text) > 1000:
+                    result_text = result_text[:997] + "..."
+                yield Static("RESULT", classes="section")
+                yield Static(result_text, classes="content")
 
-class ToolCallRow(Static):
-    """Clickable tool call row."""
-
-    DEFAULT_CSS = """
-    ToolCallRow {
-        height: 1;
-        padding: 0 2;
-    }
-
-    ToolCallRow:hover {
-        background: $boost;
-    }
-    """
-
-    class Clicked(Message):
-        def __init__(self, tool_call: ToolCall) -> None:
-            super().__init__()
-            self.tool_call = tool_call
-
-    def __init__(self, tool_call: ToolCall, **kwargs) -> None:
-        self.tool_call = tool_call
-        # Compute initial content to pass to super().__init__()
-        initial_content = self._compute_content()
-        super().__init__(initial_content, **kwargs)
-
-    def _compute_content(self) -> str:
-        """Compute the display content for this tool call."""
-        tc = self.tool_call
-
-        status_colors = {
-            "pending": "$foreground-muted",
-            "running": "$accent",
-            "success": "$success",
-            "error": "$error",
-        }
-        color = status_colors.get(tc.status, "$foreground-disabled")
-        duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
-
-        return f"  [{color}]▸ {tc.name}[/]{duration}"
-
-    def on_click(self) -> None:
-        self.post_message(self.Clicked(self.tool_call))
+            yield Static("Press ESC to close", classes="footer")
 
 
-class MessageBlock(Vertical):
-    """A single message in the conversation."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker List Item - Native ListView item
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class WorkerListItem(ListItem):
+    """A worker item in the ListView."""
 
     DEFAULT_CSS = """
-    MessageBlock {
-        height: auto;
-        margin-bottom: 1;
-        margin-right: 2;
-    }
-
-    MessageBlock .msg-header {
-        height: 1;
-    }
-
-    MessageBlock .msg-content {
-        height: auto;
-        padding: 0 2;
-        color: $foreground;
-    }
-    """
-
-    def __init__(self, message: AgentMessage, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.message = message
-
-    def compose(self) -> ComposeResult:
-        msg = self.message
-
-        role_colors = {
-            "system": "$secondary",
-            "user": "$primary",
-            "assistant": "$accent",
-            "tool": "$success",
-        }
-        role_color = role_colors.get(msg.role.value, "$foreground-disabled")
-
-        yield Static(
-            f"[{role_color} bold]{msg.role.value.upper()}[/] [$foreground-disabled]{msg.time_str}[/]",
-            classes="msg-header"
-        )
-
-        content = msg.content
-        if len(content) > 500:
-            content = content[:497] + "..."
-        yield Static(content if content else "", classes="msg-content")
-
-        for tc in msg.tool_calls:
-            yield ToolCallRow(tc)
-
-
-class WorkerCard(Static):
-    """Worker card in the list."""
-
-    DEFAULT_CSS = """
-    WorkerCard {
+    WorkerListItem {
         height: auto;
         padding: 1;
-        margin-bottom: 1;
-        margin-right: 2;
         background: $boost;
     }
 
-    WorkerCard:hover {
+    WorkerListItem:hover {
         background: $primary 15%;
     }
 
-    WorkerCard.-selected {
+    WorkerListItem.-highlight {
         background: $primary 20%;
     }
 
-    WorkerCard.-selected:hover {
-        background: $primary 25%;
-    }
-
-    WorkerCard .header {
+    WorkerListItem .row {
         height: 1;
-        margin-bottom: 1;
     }
 
-    WorkerCard .name {
+    WorkerListItem .name {
         width: 1fr;
     }
 
-    WorkerCard .time {
+    WorkerListItem .time {
         width: auto;
         color: $foreground-muted;
     }
 
-    WorkerCard .meta {
+    WorkerListItem .meta {
         height: 1;
         color: $foreground-muted;
     }
     """
 
-    class Selected(Message):
-        def __init__(self, agent_id: str) -> None:
-            super().__init__()
-            self.agent_id = agent_id
-
     def __init__(self, agent: AgentUIState, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.agent = agent
+        self.agent_id = agent.id
+        self._agent = agent
+
+    def compose(self) -> ComposeResult:
+        icon, color, label = self._get_display_values()
+        agent = self._agent
+
+        with Horizontal(classes="row"):
+            yield Static(
+                f"[{color}]{icon}[/] [bold]{agent.name}[/]",
+                classes="name",
+                id="worker-name",
+            )
+            yield Static(agent.elapsed_str, classes="time", id="worker-time")
+        yield Static(
+            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools",
+            classes="meta",
+            id="worker-meta",
+        )
 
     def _get_display_values(self) -> tuple:
         """Get display values for the agent."""
@@ -297,89 +196,83 @@ class WorkerCard(Static):
             AgentStatus.COMPLETE: (ICONS.complete, "$success", "DONE"),
             AgentStatus.ERROR: (ICONS.failed, "$error", "ERROR"),
         }
-        return status_map.get(self.agent.status, (ICONS.pending, "$foreground-muted", "?"))
+        return status_map.get(self._agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
-    def compose(self) -> ComposeResult:
-        agent = self.agent
-        icon, color, label = self._get_display_values()
-
-        with Horizontal(classes="header"):
-            yield Static(f"[{color}]{icon}[/] [bold]{agent.name}[/]", classes="name")
-            yield Static(agent.elapsed_str, classes="time")
-        yield Static(
-            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools",
-            classes="meta"
-        )
-
-    def on_click(self) -> None:
-        self.post_message(self.Selected(self.agent.id))
-
-    def update(self, agent: AgentUIState) -> None:
-        self.agent = agent
+    def update_agent(self, agent: AgentUIState) -> None:
+        """Update the agent data and refresh display."""
+        self._agent = agent
         if self.is_mounted:
-            self._update_display()
+            icon, color, label = self._get_display_values()
+            try:
+                self.query_one("#worker-name", Static).update(
+                    f"[{color}]{icon}[/] [bold]{agent.name}[/]"
+                )
+                self.query_one("#worker-time", Static).update(agent.elapsed_str)
+                self.query_one("#worker-meta", Static).update(
+                    f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools"
+                )
+            except Exception:
+                pass
 
-    def _update_display(self) -> None:
-        agent = self.agent
-        icon, color, label = self._get_display_values()
 
-        self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
-        self.query_one(".time", Static).update(agent.elapsed_str)
-        self.query_one(".meta", Static).update(
-            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools"
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# Workers Panel - Uses native ListView
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-class WorkersList(Vertical):
-    """Left panel with list of workers."""
+class WorkersPanel(Vertical):
+    """Left panel with list of workers using native ListView."""
 
     DEFAULT_CSS = """
-    WorkersList {
+    WorkersPanel {
         width: 1fr;
         max-width: 40;
         padding: 1 0 1 2;
         background: $surface;
     }
 
-    WorkersList .header {
+    WorkersPanel .header {
         height: 1;
         text-style: bold;
         margin-bottom: 1;
         padding-right: 2;
     }
 
-    WorkersList .count {
+    WorkersPanel .count {
         height: 1;
         color: $foreground-muted;
         margin-bottom: 1;
         padding-right: 2;
     }
 
-    WorkersList .list {
+    WorkersPanel ListView {
         height: 1fr;
+        scrollbar-gutter: stable;
+        padding-right: 1;
     }
 
-    WorkersList .empty {
+    WorkersPanel .empty {
         padding: 2;
         color: $foreground-muted;
         text-align: center;
-        margin-right: 2;
     }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._worker_cards: dict[str, WorkerCard] = {}
+        self._items: dict[str, WorkerListItem] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("PARALLEL RUNS", classes="header")
-        yield Static(classes="count")
-        yield VerticalScroll(classes="list")
+        yield Static("No workers", classes="count", id="worker-count")
+        yield ListView(id="workers-list")
 
-    def set_workers(self, agents: dict, selected_id: str | None = None) -> None:
-        count_widget = self.query_one(".count", Static)
-        scroll = self.query_one(".list", VerticalScroll)
+    def update_workers(self, agents: dict[str, AgentUIState], selected_id: str | None = None) -> None:
+        """Update the workers list efficiently."""
+        count_widget = self.query_one("#worker-count", Static)
+        list_view = self.query_one("#workers-list", ListView)
 
+        # Update count
         running = sum(1 for a in agents.values() if a.status == AgentStatus.RUNNING)
         total = len(agents)
         if total == 0:
@@ -390,36 +283,46 @@ class WorkersList(Vertical):
             count_widget.update(f"{total} workers")
 
         current_ids = set(agents.keys())
-        existing_ids = set(self._worker_cards.keys())
+        existing_ids = set(self._items.keys())
 
         # Remove workers that no longer exist
         for agent_id in existing_ids - current_ids:
-            if agent_id in self._worker_cards:
-                self._worker_cards[agent_id].remove()
-                del self._worker_cards[agent_id]
+            if agent_id in self._items:
+                self._items[agent_id].remove()
+                del self._items[agent_id]
 
         # Update existing or add new workers
         for agent_id, agent in agents.items():
-            if agent_id in self._worker_cards:
-                self._worker_cards[agent_id].update(agent)
-                self._worker_cards[agent_id].set_class(agent_id == selected_id, "-selected")
+            if agent_id in self._items:
+                # Update existing
+                self._items[agent_id].update_agent(agent)
             else:
-                card = WorkerCard(agent)
-                card.set_class(agent_id == selected_id, "-selected")
-                scroll.mount(card)
-                self._worker_cards[agent_id] = card
+                # Add new
+                item = WorkerListItem(agent, id=f"worker-{agent_id}")
+                list_view.append(item)
+                self._items[agent_id] = item
 
-        # Handle empty state
-        empties = list(scroll.query(".empty"))
-        if agents:
-            for e in empties:
-                e.remove()
-        elif not empties:
-            scroll.mount(Static("No workers running", classes="empty"))
+        # Update selection highlighting
+        for agent_id, item in self._items.items():
+            item.set_class(agent_id == selected_id, "-highlight")
+
+    def get_selected_agent_id(self) -> str | None:
+        """Get the currently highlighted worker's agent ID."""
+        list_view = self.query_one("#workers-list", ListView)
+        if list_view.highlighted_child is not None:
+            item = list_view.highlighted_child
+            if isinstance(item, WorkerListItem):
+                return item.agent_id
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conversation Panel - Uses native RichLog
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 class ConversationPanel(Vertical):
-    """Right panel showing worker conversation."""
+    """Right panel showing worker conversation using native RichLog."""
 
     DEFAULT_CSS = """
     ConversationPanel {
@@ -453,50 +356,47 @@ class ConversationPanel(Vertical):
         color: $foreground-muted;
     }
 
-    ConversationPanel .messages {
+    ConversationPanel RichLog {
         height: 1fr;
-        padding: 1 0 1 2;
+        padding: 1 2;
         background: $background;
-    }
-
-    ConversationPanel .empty {
-        height: 1fr;
-        content-align: center middle;
-        color: $foreground-muted;
-        margin-right: 2;
+        scrollbar-gutter: stable;
     }
     """
 
+    # Track current agent
+    current_agent_id: reactive[str | None] = reactive(None)
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._current_agent_id: str | None = None
-        self._message_count: int = 0
+        self._displayed_message_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
             with Horizontal(classes="title-row"):
-                yield Static(classes="title")
-                yield Static(classes="time")
-            yield Static(classes="stats")
-        yield VerticalScroll(classes="messages")
+                yield Static("[$foreground-muted]Select a worker[/]", classes="title", id="conv-title")
+                yield Static("", classes="time", id="conv-time")
+            yield Static("[$foreground-disabled]Click a worker to view conversation[/]", classes="stats", id="conv-stats")
+        yield RichLog(id="conversation-log", highlight=True, markup=True, wrap=True)
 
-    def show(self, agent: AgentUIState | None, force_rebuild: bool = False) -> None:
-        title = self.query_one(".title", Static)
-        time_widget = self.query_one(".time", Static)
-        stats = self.query_one(".stats", Static)
-        messages = self.query_one(".messages", VerticalScroll)
+    def show_agent(self, agent: AgentUIState | None) -> None:
+        """Display an agent's conversation."""
+        title = self.query_one("#conv-title", Static)
+        time_widget = self.query_one("#conv-time", Static)
+        stats = self.query_one("#conv-stats", Static)
+        rich_log = self.query_one("#conversation-log", RichLog)
 
         if agent is None:
-            if self._current_agent_id is not None or force_rebuild:
+            if self.current_agent_id is not None:
                 title.update("[$foreground-muted]Select a worker[/]")
                 time_widget.update("")
                 stats.update("[$foreground-disabled]Click a worker to view conversation[/]")
-                messages.remove_children()
-                messages.mount(Static("", classes="empty"))
-                self._current_agent_id = None
-                self._message_count = 0
+                rich_log.clear()
+                self._displayed_message_ids.clear()
+                self.current_agent_id = None
             return
 
+        # Get status display
         status_map = {
             AgentStatus.IDLE: (ICONS.pending, "$foreground-muted", "IDLE"),
             AgentStatus.RUNNING: (ICONS.running, "$accent", "RUNNING"),
@@ -506,28 +406,77 @@ class ConversationPanel(Vertical):
         }
         icon, color, label = status_map.get(agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
-        # Header: icon + name on left, time on right
+        # Update header (always - cheap operation)
         title.update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
         time_widget.update(f"[$foreground-muted]{agent.elapsed_str}[/]")
-
-        # Stats: status + role + counts
         stats.update(
             f"[{color}]{label}[/] · {agent.role} · "
             f"{len(agent.messages)} msgs · {agent.turns} turns · {agent.tool_calls_count} tools"
         )
 
-        # Only rebuild messages if agent changed or message count changed
-        agent_changed = agent.id != self._current_agent_id
-        messages_changed = len(agent.messages) != self._message_count
+        # Check if agent changed
+        agent_changed = agent.id != self.current_agent_id
+        if agent_changed:
+            # Clear and rebuild for new agent
+            rich_log.clear()
+            self._displayed_message_ids.clear()
+            self.current_agent_id = agent.id
 
-        if agent_changed or messages_changed or force_rebuild:
-            messages.remove_children()
-            for msg in agent.messages:
-                messages.mount(MessageBlock(msg))
-            messages.scroll_end(animate=False)
+        # Append only new messages (incremental update)
+        for msg in agent.messages:
+            if msg.id not in self._displayed_message_ids:
+                self._write_message(rich_log, msg)
+                self._displayed_message_ids.add(msg.id)
 
-            self._current_agent_id = agent.id
-            self._message_count = len(agent.messages)
+    def _write_message(self, log: RichLog, msg: AgentMessage) -> None:
+        """Write a single message to the RichLog."""
+        role_colors = {
+            "system": "blue",
+            "user": "cyan",
+            "assistant": "green",
+            "tool": "yellow",
+        }
+        role_color = role_colors.get(msg.role.value, "white")
+
+        # Write header
+        log.write(f"[bold {role_color}]{msg.role.value.upper()}[/] [dim]{msg.time_str}[/]")
+
+        # Write content
+        content = msg.content
+        if len(content) > 500:
+            content = content[:497] + "..."
+        if content:
+            log.write(f"  {content}")
+
+        # Write tool calls
+        for tc in msg.tool_calls:
+            tc_colors = {
+                "pending": "dim",
+                "running": "yellow",
+                "success": "green",
+                "error": "red",
+            }
+            tc_color = tc_colors.get(tc.status, "white")
+            duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
+            log.write(f"  [{tc_color}]▸ {tc.name}[/]{duration}")
+
+        # Empty line for spacing
+        log.write("")
+
+    def update_time(self, agent: AgentUIState) -> None:
+        """Update just the elapsed time display."""
+        if agent.id == self.current_agent_id:
+            try:
+                self.query_one("#conv-time", Static).update(
+                    f"[$foreground-muted]{agent.elapsed_str}[/]"
+                )
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Samples Screen
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 class SamplesScreen(Screen):
@@ -536,14 +485,15 @@ class SamplesScreen(Screen):
     BINDINGS = [
         # Navigation between screens
         Binding("1", "go_dashboard", "Dashboard", key_display="1"),
-        Binding("2", "noop", "Samples", show=False),  # Current screen
+        Binding("2", "noop", "Samples", show=False),
         Binding("3", "go_logs", "Logs", key_display="3"),
         Binding("tab", "cycle", "Next Screen"),
         # List navigation
-        Binding("j", "next", "Next", show=False),
-        Binding("k", "prev", "Previous", show=False),
-        Binding("down", "next", "Next Worker", key_display="↓"),
-        Binding("up", "prev", "Prev Worker", key_display="↑"),
+        Binding("j", "cursor_down", "Next", show=False),
+        Binding("k", "cursor_up", "Previous", show=False),
+        Binding("down", "cursor_down", "Next Worker", key_display="↓"),
+        Binding("up", "cursor_up", "Prev Worker", key_display="↑"),
+        Binding("enter", "select_worker", "Select", show=False),
         # Actions
         Binding("n", "new_task", "New Task"),
         Binding("q", "quit", "Quit"),
@@ -561,104 +511,73 @@ class SamplesScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="content"):
-            yield WorkersList(id="workers-list")
-            yield ConversationPanel(id="conversation")
+            yield WorkersPanel(id="workers-panel")
+            yield ConversationPanel(id="conversation-panel")
         yield TmuxBar(active_screen="samples")
 
     def on_mount(self) -> None:
-        """Initial projection from current state."""
+        """Initial sync from current state."""
+        get_state().add_listener(self._on_state_change)
+        self._sync()
+        # Set up periodic time updates
+        self.set_interval(1.0, self._tick)
+
+    def on_unmount(self) -> None:
+        get_state().remove_listener(self._on_state_change)
+
+    def _on_state_change(self, _) -> None:
+        """Handle state changes."""
         self._sync()
 
-    # ─────────────────────────────────────────────────────────────────
-    # Event Handlers - Targeted Updates
-    # ─────────────────────────────────────────────────────────────────
-
-    def on_time_tick(self, event: TimeTick) -> None:
-        """Handle time tick - update elapsed time displays only."""
+    def _tick(self) -> None:
+        """Periodic update for elapsed times."""
         state = get_state()
         extraction = state.selected_extraction
         if extraction and extraction.status == ExtractionStatus.RUNNING:
-            workers_list = self.query_one("#workers-list", WorkersList)
-            for agent_id, card in workers_list._worker_cards.items():
+            # Update worker times
+            workers_panel = self.query_one("#workers-panel", WorkersPanel)
+            for agent_id, item in workers_panel._items.items():
                 agent = extraction.agents.get(agent_id)
                 if agent and agent.status == AgentStatus.RUNNING:
                     try:
-                        card.query_one(".time", Static).update(agent.elapsed_str)
+                        item.query_one("#worker-time", Static).update(agent.elapsed_str)
                     except Exception:
                         pass
 
-            conversation = self.query_one("#conversation", ConversationPanel)
-            if conversation._current_agent_id:
-                agent = extraction.agents.get(conversation._current_agent_id)
+            # Update conversation time
+            conv_panel = self.query_one("#conversation-panel", ConversationPanel)
+            if conv_panel.current_agent_id:
+                agent = extraction.agents.get(conv_panel.current_agent_id)
                 if agent:
-                    try:
-                        conversation.query_one(".time", Static).update(
-                            f"[$foreground-muted]{agent.elapsed_str}[/]"
-                        )
-                    except Exception:
-                        pass
+                    conv_panel.update_time(agent)
 
         self.query_one(TmuxBar).refresh_info()
-
-    def on_agent_spawned(self, event: AgentSpawned) -> None:
-        """Handle agent spawn - add new worker card."""
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction and extraction.id == event.task_id:
-            workers_list = self.query_one("#workers-list", WorkersList)
-            workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
-
-    def on_agent_status_changed(self, event: AgentStatusChanged) -> None:
-        """Handle agent status change - update worker card."""
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction and extraction.id == event.task_id:
-            workers_list = self.query_one("#workers-list", WorkersList)
-            workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
-
-    def on_agent_message_received(self, event: AgentMessageReceived) -> None:
-        """Handle new message in agent conversation."""
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction and extraction.id == event.task_id:
-            conversation = self.query_one("#conversation", ConversationPanel)
-            if conversation._current_agent_id == event.agent_id:
-                agent = extraction.agents.get(event.agent_id)
-                if agent:
-                    conversation.show(agent)
-
-    def on_agent_selected(self, event: AgentSelected) -> None:
-        """Handle agent selection change."""
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction and extraction.id == event.task_id:
-            self._sync()
 
     def _sync(self) -> None:
+        """Sync UI with current state."""
         state = get_state()
         extraction = state.selected_extraction
 
-        workers_list = self.query_one("#workers-list", WorkersList)
-        conversation = self.query_one("#conversation", ConversationPanel)
+        workers_panel = self.query_one("#workers-panel", WorkersPanel)
+        conv_panel = self.query_one("#conversation-panel", ConversationPanel)
 
         if extraction is None:
-            workers_list.set_workers({}, None)
-            conversation.show(None)
+            workers_panel.update_workers({}, None)
+            conv_panel.show_agent(None)
         else:
-            workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
-            conversation.show(extraction.selected_agent)
+            workers_panel.update_workers(extraction.agents, extraction.selected_agent_id)
+            conv_panel.show_agent(extraction.selected_agent)
 
         self.query_one(TmuxBar).refresh_info()
 
-    def on_worker_card_selected(self, event: WorkerCard.Selected) -> None:
-        state = get_state()
-        extraction = state.selected_extraction
-        if extraction:
-            extraction.select_agent(event.agent_id)
-            self._sync()
-
-    def on_tool_call_row_clicked(self, event: ToolCallRow.Clicked) -> None:
-        self.app.push_screen(ToolCallModal(event.tool_call))
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle worker selection from ListView."""
+        if isinstance(event.item, WorkerListItem):
+            state = get_state()
+            extraction = state.selected_extraction
+            if extraction:
+                extraction.select_agent(event.item.agent_id)
+                self._sync()
 
     def action_noop(self) -> None:
         pass
@@ -672,39 +591,29 @@ class SamplesScreen(Screen):
     def action_cycle(self) -> None:
         self.app.switch_screen("logs")
 
-    def action_next(self) -> None:
-        state = get_state()
-        extraction = state.selected_extraction
-        if not extraction or not extraction.agents:
-            return
+    def action_cursor_down(self) -> None:
+        """Move cursor down in worker list."""
+        try:
+            list_view = self.query_one("#workers-list", ListView)
+            list_view.action_cursor_down()
+        except Exception:
+            pass
 
-        ids = list(extraction.agents.keys())
-        if extraction.selected_agent_id is None:
-            extraction.select_agent(ids[0])
-        else:
-            try:
-                idx = ids.index(extraction.selected_agent_id)
-                extraction.select_agent(ids[(idx + 1) % len(ids)])
-            except ValueError:
-                extraction.select_agent(ids[0])
-        self._sync()
+    def action_cursor_up(self) -> None:
+        """Move cursor up in worker list."""
+        try:
+            list_view = self.query_one("#workers-list", ListView)
+            list_view.action_cursor_up()
+        except Exception:
+            pass
 
-    def action_prev(self) -> None:
-        state = get_state()
-        extraction = state.selected_extraction
-        if not extraction or not extraction.agents:
-            return
-
-        ids = list(extraction.agents.keys())
-        if extraction.selected_agent_id is None:
-            extraction.select_agent(ids[-1])
-        else:
-            try:
-                idx = ids.index(extraction.selected_agent_id)
-                extraction.select_agent(ids[(idx - 1) % len(ids)])
-            except ValueError:
-                extraction.select_agent(ids[-1])
-        self._sync()
+    def action_select_worker(self) -> None:
+        """Select the currently highlighted worker."""
+        try:
+            list_view = self.query_one("#workers-list", ListView)
+            list_view.action_select_cursor()
+        except Exception:
+            pass
 
     def action_new_task(self) -> None:
         self.app.push_screen("create_task")

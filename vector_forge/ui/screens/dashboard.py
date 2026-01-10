@@ -201,7 +201,11 @@ class AgentRow(Static):
 
 
 class DetailsPanel(Vertical):
-    """Right panel showing details of selected task."""
+    """Right panel showing details of selected task.
+
+    Uses a fixed widget structure with in-place updates for performance.
+    No remove/mount cycles - just .update() calls for 60fps smooth updates.
+    """
 
     DEFAULT_CSS = """
     DetailsPanel {
@@ -215,6 +219,10 @@ class DetailsPanel(Vertical):
         height: 1fr;
         content-align: center middle;
         color: $foreground-muted;
+    }
+
+    DetailsPanel .content {
+        height: 1fr;
     }
 
     DetailsPanel .title {
@@ -245,26 +253,54 @@ class DetailsPanel(Vertical):
         max-height: 10;
     }
 
-    DetailsPanel .activity {
+    DetailsPanel RichLog {
         height: 1fr;
         min-height: 5;
-    }
-
-    DetailsPanel .log-entry {
-        height: 1;
-        color: $foreground-muted;
+        background: $background;
+        scrollbar-gutter: stable;
     }
     """
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._current_extraction_id: str | None = None
+        self._displayed_log_count: int = 0
+        self._agent_rows: dict[str, AgentRow] = {}
+
     def compose(self) -> ComposeResult:
-        yield Static("Select a task", classes="empty")
+        # Empty state (shown when no task selected)
+        yield Static("Select a task to view details", classes="empty", id="empty-state")
+        # Content container (hidden when empty)
+        with Vertical(classes="content", id="content-state"):
+            yield Static("", classes="title", id="detail-title")
+            yield Static("", classes="description", id="detail-desc")
+            yield Static("", classes="stats", id="detail-stats")
+            yield Static("PARALLEL RUNS", classes="section")
+            yield VerticalScroll(classes="list", id="agents-list")
+            yield Static("RECENT", classes="section")
+            from textual.widgets import RichLog
+            yield RichLog(id="activity-log", highlight=True, markup=True, max_lines=50)
+
+    def on_mount(self) -> None:
+        # Start with empty state visible
+        self.query_one("#content-state").display = False
 
     def show(self, extraction: ExtractionUIState | None) -> None:
-        self.remove_children()
+        """Update the panel to show an extraction's details."""
+        empty_state = self.query_one("#empty-state")
+        content_state = self.query_one("#content-state")
 
         if extraction is None:
-            self.mount(Static("Select a task to view details", classes="empty"))
+            # Show empty state
+            empty_state.display = True
+            content_state.display = False
+            self._current_extraction_id = None
+            self._displayed_log_count = 0
             return
+
+        # Show content state
+        empty_state.display = False
+        content_state.display = True
 
         ext = extraction
 
@@ -277,63 +313,104 @@ class DetailsPanel(Vertical):
             ExtractionStatus.FAILED: (ICONS.failed, "$error"),
         }
         icon, color = status_map.get(ext.status, (ICONS.pending, "$foreground-muted"))
-        self.mount(Static(f"[{color}]{icon}[/] {ext.behavior_name}", classes="title"))
 
-        # Description
+        # Update title (in place)
+        self.query_one("#detail-title", Static).update(
+            f"[{color}]{icon}[/] {ext.behavior_name}"
+        )
+
+        # Update description (in place)
         desc = ext.behavior_description or "No description"
         if len(desc) > 100:
             desc = desc[:97] + "..."
-        self.mount(Static(desc, classes="description"))
+        self.query_one("#detail-desc", Static).update(desc)
 
-        # Stats
+        # Update stats (in place)
         runs = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
         layer = f"L{ext.current_layer}" if ext.current_layer else "—"
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
-        self.mount(Static(
+        self.query_one("#detail-stats", Static).update(
             f"[$accent]{ext.phase.value.upper()}[/]  │  "
-            f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}",
-            classes="stats"
-        ))
+            f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}"
+        )
 
-        # Parallel runs section
-        self.mount(Static("PARALLEL RUNS", classes="section"))
-        runs_list = VerticalScroll(classes="list")
-        self.mount(runs_list)
+        # Update agents list efficiently
+        self._update_agents_list(ext)
 
-        if ext.agents:
-            for agent in list(ext.agents.values())[:8]:
-                icon_map = {
-                    AgentStatus.IDLE: ("○", "$foreground-muted"),
-                    AgentStatus.RUNNING: ("●", "$accent"),
-                    AgentStatus.WAITING: ("◐", "$foreground-muted"),
-                    AgentStatus.COMPLETE: ("●", "$success"),
-                    AgentStatus.ERROR: ("●", "$error"),
-                }
-                a_icon, a_color = icon_map.get(agent.status, ("○", "$foreground-muted"))
-                runs_list.mount(AgentRow(
-                    agent.id,
-                    f"[{a_color}]{a_icon}[/] {agent.name}  "
-                    f"[$foreground-muted]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
-                ))
+        # Update activity log
+        self._update_activity_log(ext)
+
+    def _update_agents_list(self, ext: ExtractionUIState) -> None:
+        """Update the agents list efficiently - only add/remove/update what changed."""
+        agents_list = self.query_one("#agents-list", VerticalScroll)
+        current_ids = set(ext.agents.keys())
+        existing_ids = set(self._agent_rows.keys())
+
+        # Remove agents that no longer exist
+        for agent_id in existing_ids - current_ids:
+            if agent_id in self._agent_rows:
+                self._agent_rows[agent_id].remove()
+                del self._agent_rows[agent_id]
+
+        # Update existing or add new agents (limit to 8)
+        for agent in list(ext.agents.values())[:8]:
+            agent_id = agent.id
+            icon_map = {
+                AgentStatus.IDLE: ("○", "$foreground-muted"),
+                AgentStatus.RUNNING: ("●", "$accent"),
+                AgentStatus.WAITING: ("◐", "$foreground-muted"),
+                AgentStatus.COMPLETE: ("●", "$success"),
+                AgentStatus.ERROR: ("●", "$error"),
+            }
+            a_icon, a_color = icon_map.get(agent.status, ("○", "$foreground-muted"))
+            content = (
+                f"[{a_color}]{a_icon}[/] {agent.name}  "
+                f"[$foreground-muted]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
+            )
+
+            if agent_id in self._agent_rows:
+                # Update existing row
+                self._agent_rows[agent_id].update(content)
+            else:
+                # Add new row
+                row = AgentRow(agent_id, content)
+                agents_list.mount(row)
+                self._agent_rows[agent_id] = row
+
+        # Handle empty state
+        empties = list(agents_list.query(".empty-agents"))
+        if not ext.agents:
+            if not empties:
+                agents_list.mount(Static("[$foreground-muted]No runs yet[/]", classes="empty-agents"))
         else:
-            runs_list.mount(Static("[$foreground-muted]No runs yet[/]"))
+            for e in empties:
+                e.remove()
 
-        # Recent activity section
-        self.mount(Static("RECENT", classes="section"))
-        activity_list = VerticalScroll(classes="activity")
-        self.mount(activity_list)
+    def _update_activity_log(self, ext: ExtractionUIState) -> None:
+        """Update the activity log efficiently using RichLog."""
+        from textual.widgets import RichLog as RichLogWidget
+        activity_log = self.query_one("#activity-log", RichLogWidget)
 
-        logs = get_state().get_filtered_logs(extraction_id=ext.id)[-5:]
-        if logs:
-            for log in reversed(logs):
-                # Escape log message to prevent Rich markup interpretation of brackets
+        # Check if extraction changed
+        extraction_changed = ext.id != self._current_extraction_id
+        if extraction_changed:
+            activity_log.clear()
+            self._displayed_log_count = 0
+            self._current_extraction_id = ext.id
+
+        # Get logs for this extraction
+        logs = get_state().get_filtered_logs(extraction_id=ext.id)[-10:]
+
+        # Only write new logs (incremental update)
+        if len(logs) > self._displayed_log_count or extraction_changed:
+            # If extraction changed, write all logs
+            start_idx = 0 if extraction_changed else self._displayed_log_count
+            for log in logs[start_idx:]:
                 safe_message = escape_markup(log.message)
-                activity_list.mount(Static(
-                    f"[$foreground-muted]{log.time_str}[/] {safe_message}",
-                    classes="log-entry"
-                ))
-        else:
-            activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="log-entry"))
+                level_colors = {"info": "blue", "warning": "yellow", "error": "red"}
+                color = level_colors.get(log.level, "white")
+                activity_log.write(f"[dim]{log.time_str}[/] [{color}]●[/] {safe_message}")
+            self._displayed_log_count = len(logs)
 
 
 class ConfirmHideTaskScreen(ModalScreen[bool]):
