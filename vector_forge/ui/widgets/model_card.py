@@ -4,12 +4,12 @@ Displays a selected model configuration with click-to-change functionality.
 """
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.widgets import Static
 from textual.message import Message
 
 from vector_forge.storage.models import ModelConfig, Provider
-from vector_forge.ui.theme import COLORS
+from vector_forge.ui.theme import COLORS, ICONS
 
 
 # Provider display info - follows theme semantic colors
@@ -26,22 +26,15 @@ PROVIDER_INFO = {
 class ModelCard(Static):
     """Clickable card showing a selected model configuration.
 
-    Displays the model name, provider, and model ID. Clicking opens
-    a model selection modal.
-
-    Example:
-        >>> card = ModelCard(
-        ...     field_name="extractor",
-        ...     label="EXTRACTOR MODEL",
-        ...     config=model_config,
-        ... )
+    Used in CreateTaskScreen to display and select extractor/judge models.
+    Click to open model selection modal.
     """
 
     DEFAULT_CSS = """
     ModelCard {
-        height: 5;
+        height: auto;
         width: 1fr;
-        padding: 1 1;
+        padding: 1 2;
         background: $surface;
         margin-right: 1;
     }
@@ -58,11 +51,20 @@ class ModelCard(Static):
         background: $surface-hl;
     }
 
-    ModelCard .label {
+    ModelCard .header-row {
         height: 1;
+        margin-bottom: 1;
+    }
+
+    ModelCard .label {
+        width: 1fr;
         color: $accent;
         text-style: bold;
-        margin-bottom: 1;
+    }
+
+    ModelCard .click-hint {
+        width: auto;
+        color: $text-dim;
     }
 
     ModelCard .model-row {
@@ -80,6 +82,7 @@ class ModelCard(Static):
     ModelCard .model-id {
         height: 1;
         color: $text-muted;
+        margin-top: 1;
     }
     """
 
@@ -105,7 +108,9 @@ class ModelCard(Static):
         self._config = config
 
     def compose(self) -> ComposeResult:
-        yield Static(self._label, classes="label")
+        with Horizontal(classes="header-row"):
+            yield Static(self._label, classes="label")
+            yield Static(f"[{COLORS.text_dim}]click to change[/]", classes="click-hint")
         with Horizontal(classes="model-row"):
             yield Static(classes="model-name")
             yield Static(classes="provider-badge")
@@ -136,11 +141,11 @@ class ModelCard(Static):
         """Update the display with current config."""
         if self._config is None:
             self.query_one(".model-name", Static).update(
-                f"[{COLORS.text_muted}]No model selected[/]"
+                f"[{COLORS.text_muted}]{ICONS.pending} No model selected[/]"
             )
             self.query_one(".provider-badge", Static).update("")
             self.query_one(".model-id", Static).update(
-                f"[{COLORS.text_dim}]Click to select...[/]"
+                f"[{COLORS.text_dim}]Click to select a model...[/]"
             )
             return
 
@@ -149,9 +154,9 @@ class ModelCard(Static):
             config.provider, ("Unknown", COLORS.text_muted)
         )
 
-        # Model name
+        # Model name with status icon
         self.query_one(".model-name", Static).update(
-            f"[bold]{config.name}[/]"
+            f"[{COLORS.success}]{ICONS.complete}[/] [bold]{config.name}[/]"
         )
 
         # Provider badge
@@ -169,12 +174,13 @@ class ModelCardCompact(Static):
     """Compact model card for selection lists.
 
     Used in the model selection modal to display selectable options.
+    Matches TaskCard style from dashboard.
     """
 
     DEFAULT_CSS = """
     ModelCardCompact {
-        height: 3;
-        padding: 0 1;
+        height: auto;
+        padding: 1 2;
         background: $surface;
         margin-bottom: 1;
     }
@@ -195,9 +201,8 @@ class ModelCardCompact(Static):
         background: $primary 20%;
     }
 
-    ModelCardCompact .top-row {
+    ModelCardCompact .header-row {
         height: 1;
-        margin-bottom: 0;
     }
 
     ModelCardCompact .icon {
@@ -239,7 +244,7 @@ class ModelCardCompact(Static):
         self._is_selected = is_selected
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="top-row"):
+        with Horizontal(classes="header-row"):
             yield Static(classes="icon")
             yield Static(classes="name")
             yield Static(classes="provider")
@@ -276,9 +281,11 @@ class ModelCardCompact(Static):
         )
 
         # Selection icon
-        icon = "●" if self._is_selected else "○"
-        icon_color = COLORS.accent if self._is_selected else COLORS.text_dim
-        self.query_one(".icon", Static).update(f"[{icon_color}]{icon}[/]")
+        if self._is_selected:
+            icon = f"[{COLORS.accent}]{ICONS.complete}[/]"
+        else:
+            icon = f"[{COLORS.text_dim}]{ICONS.pending}[/]"
+        self.query_one(".icon", Static).update(icon)
 
         # Name
         self.query_one(".name", Static).update(f"[bold]{config.name}[/]")
