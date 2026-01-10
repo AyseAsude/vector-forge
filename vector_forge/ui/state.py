@@ -275,6 +275,16 @@ class ExtractionUIState:
             self.selected_agent_id = agent_id
 
 
+class StateChannel:
+    """Channels for granular state notifications."""
+    EXTRACTION = "extraction"  # Extraction added/removed/status changed
+    PROGRESS = "progress"      # Progress/phase updates
+    AGENTS = "agents"          # Agent added/removed/status changed
+    MESSAGES = "messages"      # New messages in agents
+    LOGS = "logs"              # New log entries
+    SELECTION = "selection"    # Selection changed
+
+
 @dataclass
 class UIState:
     """Global UI state container."""
@@ -293,8 +303,13 @@ class UIState:
     log_source_filter: Optional[str] = None
     log_level_filter: Optional[str] = None
 
-    # Callbacks for state changes
+    # Callbacks for state changes - now channel-based
     _listeners: List[Callable[["UIState"], None]] = field(default_factory=list)
+    _channel_listeners: Dict[str, List[Callable[["UIState", str], None]]] = field(default_factory=dict)
+
+    # Debouncing support
+    _pending_channels: set = field(default_factory=set)
+    _debounce_callback: Optional[Callable] = None
 
     @property
     def selected_extraction(self) -> Optional[ExtractionUIState]:
@@ -329,7 +344,7 @@ class UIState:
         self.extractions[extraction.id] = extraction
         if self.selected_id is None:
             self.selected_id = extraction.id
-        self._notify()
+        self._notify(StateChannel.EXTRACTION)
 
     def remove_extraction(self, extraction_id: str) -> None:
         """Remove an extraction."""
@@ -337,7 +352,7 @@ class UIState:
             del self.extractions[extraction_id]
             if self.selected_id == extraction_id:
                 self.selected_id = next(iter(self.extractions), None)
-            self._notify()
+            self._notify(StateChannel.EXTRACTION)
 
     def update_extraction(
         self,
@@ -353,7 +368,13 @@ class UIState:
             if hasattr(extraction, key):
                 setattr(extraction, key, value)
 
-        self._notify()
+        # Determine channel based on what changed
+        if "progress" in updates or "phase" in updates:
+            self._notify(StateChannel.PROGRESS)
+        elif "status" in updates:
+            self._notify(StateChannel.EXTRACTION)
+        else:
+            self._notify(StateChannel.EXTRACTION)
 
     def add_log(
         self,
@@ -378,7 +399,7 @@ class UIState:
         if len(self.logs) > 1000:
             self.logs = self.logs[-1000:]
 
-        self._notify()
+        self._notify(StateChannel.LOGS)
 
     def get_filtered_logs(
         self,
@@ -417,10 +438,10 @@ class UIState:
         """Select an extraction for detailed view."""
         if extraction_id in self.extractions:
             self.selected_id = extraction_id
-            self._notify()
+            self._notify(StateChannel.SELECTION)
 
     def add_listener(self, callback: Callable[["UIState"], None]) -> None:
-        """Register a state change listener."""
+        """Register a state change listener (legacy - receives all changes)."""
         self._listeners.append(callback)
 
     def remove_listener(self, callback: Callable[["UIState"], None]) -> None:
@@ -428,10 +449,64 @@ class UIState:
         if callback in self._listeners:
             self._listeners.remove(callback)
 
-    def _notify(self) -> None:
-        """Notify all listeners of state change."""
-        for listener in self._listeners:
-            listener(self)
+    def add_channel_listener(
+        self,
+        channel: str,
+        callback: Callable[["UIState", str], None],
+    ) -> None:
+        """Register a listener for a specific channel."""
+        if channel not in self._channel_listeners:
+            self._channel_listeners[channel] = []
+        self._channel_listeners[channel].append(callback)
+
+    def remove_channel_listener(
+        self,
+        channel: str,
+        callback: Callable[["UIState", str], None],
+    ) -> None:
+        """Remove a channel-specific listener."""
+        if channel in self._channel_listeners:
+            listeners = self._channel_listeners[channel]
+            if callback in listeners:
+                listeners.remove(callback)
+
+    def set_debounce_callback(self, callback: Callable[[], None]) -> None:
+        """Set the debounce flush callback (typically app.call_later)."""
+        self._debounce_callback = callback
+
+    def _notify(self, channel: str = StateChannel.EXTRACTION) -> None:
+        """Notify listeners of state change with debouncing support.
+
+        If debounce_callback is set, batches notifications and flushes via callback.
+        Otherwise notifies immediately.
+        """
+        # Add to pending channels
+        self._pending_channels.add(channel)
+
+        # If we have a debounce callback, use it
+        if self._debounce_callback is not None:
+            # Schedule flush if not already pending
+            if len(self._pending_channels) == 1:
+                self._debounce_callback(self._flush_notifications)
+        else:
+            # No debouncing - notify immediately
+            self._flush_notifications()
+
+    def _flush_notifications(self) -> None:
+        """Flush all pending notifications."""
+        channels = self._pending_channels.copy()
+        self._pending_channels.clear()
+
+        # Notify channel-specific listeners
+        for channel in channels:
+            if channel in self._channel_listeners:
+                for listener in self._channel_listeners[channel]:
+                    listener(self, channel)
+
+        # Notify legacy listeners (they receive all changes)
+        if channels:
+            for listener in self._listeners:
+                listener(self)
 
 
 # Global state instance

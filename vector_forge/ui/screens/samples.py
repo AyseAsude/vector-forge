@@ -17,6 +17,11 @@ from vector_forge.ui.state import (
 )
 from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
+from vector_forge.ui.messages import (
+    AgentUpdated,
+    AgentMessageAdded,
+    RefreshTime,
+)
 
 
 class ToolCallModal(ModalScreen):
@@ -360,6 +365,10 @@ class WorkersList(Vertical):
     }
     """
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._worker_cards: dict[str, WorkerCard] = {}
+
     def compose(self) -> ComposeResult:
         yield Static("PARALLEL RUNS", classes="header")
         yield Static(classes="count")
@@ -378,21 +387,27 @@ class WorkersList(Vertical):
         else:
             count_widget.update(f"{total} workers")
 
-        existing = {c.agent.id: c for c in scroll.query(WorkerCard)}
+        current_ids = set(agents.keys())
+        existing_ids = set(self._worker_cards.keys())
 
+        # Remove workers that no longer exist
+        for agent_id in existing_ids - current_ids:
+            if agent_id in self._worker_cards:
+                self._worker_cards[agent_id].remove()
+                del self._worker_cards[agent_id]
+
+        # Update existing or add new workers
         for agent_id, agent in agents.items():
-            if agent_id in existing:
-                existing[agent_id].update(agent)
-                existing[agent_id].set_class(agent_id == selected_id, "-selected")
+            if agent_id in self._worker_cards:
+                self._worker_cards[agent_id].update(agent)
+                self._worker_cards[agent_id].set_class(agent_id == selected_id, "-selected")
             else:
                 card = WorkerCard(agent)
                 card.set_class(agent_id == selected_id, "-selected")
                 scroll.mount(card)
+                self._worker_cards[agent_id] = card
 
-        for agent_id, card in existing.items():
-            if agent_id not in agents:
-                card.remove()
-
+        # Handle empty state
         empties = list(scroll.query(".empty"))
         if agents:
             for e in empties:
@@ -549,21 +564,58 @@ class SamplesScreen(Screen):
         yield TmuxBar(active_screen="samples")
 
     def on_mount(self) -> None:
-        get_state().add_listener(self._on_state_change)
-        self._sync()
-        self.set_interval(1.0, self._tick)
-
-    def on_unmount(self) -> None:
-        get_state().remove_listener(self._on_state_change)
-
-    def _on_state_change(self, _) -> None:
         self._sync()
 
-    def _tick(self) -> None:
+    # ─────────────────────────────────────────────────────────────────
+    # Message handlers - pure event-driven updates, no polling
+    # ─────────────────────────────────────────────────────────────────
+
+    def on_refresh_time(self, message: RefreshTime) -> None:
+        """Handle time refresh - update elapsed time displays only."""
         state = get_state()
         extraction = state.selected_extraction
         if extraction and extraction.status == ExtractionStatus.RUNNING:
-            self._sync()
+            workers_list = self.query_one("#workers-list", WorkersList)
+            for agent_id, card in workers_list._worker_cards.items():
+                agent = extraction.agents.get(agent_id)
+                if agent and agent.status == AgentStatus.RUNNING:
+                    try:
+                        card.query_one(".time", Static).update(agent.elapsed_str)
+                    except Exception:
+                        pass
+
+            conversation = self.query_one("#conversation", ConversationPanel)
+            if conversation._current_agent_id:
+                agent = extraction.agents.get(conversation._current_agent_id)
+                if agent:
+                    try:
+                        conversation.query_one(".time", Static).update(
+                            f"[$foreground-muted]{agent.elapsed_str}[/]"
+                        )
+                    except Exception:
+                        pass
+
+        self.query_one(TmuxBar).refresh_info()
+
+    def on_agent_updated(self, message: AgentUpdated) -> None:
+        """Handle agent state change - update worker card."""
+        state = get_state()
+        extraction = state.selected_extraction
+        if extraction and extraction.id == message.extraction_id:
+            workers_list = self.query_one("#workers-list", WorkersList)
+            workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
+
+    def on_agent_message_added(self, message: AgentMessageAdded) -> None:
+        """Handle new message in agent conversation."""
+        state = get_state()
+        extraction = state.selected_extraction
+        if extraction and extraction.id == message.extraction_id:
+            conversation = self.query_one("#conversation", ConversationPanel)
+            if conversation._current_agent_id == message.agent_id:
+                # Incrementally add the new message
+                agent = extraction.agents.get(message.agent_id)
+                if agent:
+                    conversation.show(agent)
 
     def _sync(self) -> None:
         state = get_state()

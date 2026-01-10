@@ -157,9 +157,6 @@ class AgentsList(Widget):
     }
     """
 
-    agents: reactive[Dict[str, AgentUIState]] = reactive(
-        dict, always_update=True, init=False
-    )
     selected_id: reactive[Optional[str]] = reactive(None, init=False)
 
     class SelectionChanged(Message):
@@ -169,6 +166,11 @@ class AgentsList(Widget):
             super().__init__()
             self.agent_id = agent_id
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._agents: Dict[str, AgentUIState] = {}
+        self._agent_items: Dict[str, AgentItem] = {}
+
     def compose(self) -> ComposeResult:
         with Widget(id="agents-header"):
             yield Static("Agents", id="agents-title")
@@ -176,18 +178,13 @@ class AgentsList(Widget):
         yield VerticalScroll(id="agents-scroll")
 
     def on_mount(self) -> None:
-        self._refresh_list()
-
-    def watch_agents(self, agents: Dict[str, AgentUIState]) -> None:
-        if self.is_mounted:
-            self._update_subtitle()
-            self._refresh_list()
+        self._update_subtitle()
 
     def watch_selected_id(self, selected_id: Optional[str]) -> None:
         if not self.is_mounted:
             return
-        for item in self.query(AgentItem):
-            item.selected = item.agent_id == selected_id
+        for agent_id, item in self._agent_items.items():
+            item.selected = agent_id == selected_id
 
     def on_agent_item_selected(self, message: AgentItem.Selected) -> None:
         self.selected_id = message.agent_id
@@ -197,8 +194,8 @@ class AgentsList(Widget):
     def _update_subtitle(self) -> None:
         """Update the subtitle with agent counts."""
         subtitle = self.query_one("#agents-subtitle", Static)
-        total = len(self.agents)
-        running = sum(1 for a in self.agents.values() if a.status == AgentStatus.RUNNING)
+        total = len(self._agents)
+        running = sum(1 for a in self._agents.values() if a.status == AgentStatus.RUNNING)
         if total == 0:
             subtitle.update("No agents")
         elif running > 0:
@@ -206,43 +203,62 @@ class AgentsList(Widget):
         else:
             subtitle.update(f"{total} total")
 
-    def _refresh_list(self) -> None:
-        """Refresh the agent list."""
-        scroll = self.query_one("#agents-scroll", VerticalScroll)
+    def set_agents(self, agents: Dict[str, AgentUIState]) -> None:
+        """Set agents and update the list incrementally."""
+        self._agents = agents
 
-        # Clear existing children
-        for child in list(scroll.children):
-            child.remove()
-
-        if not self.agents:
-            scroll.mount(Static("No agents running", id="agents-empty"))
+        if not self.is_mounted:
             return
 
-        # Sort agents: running first, then by start time
-        sorted_agents = sorted(
-            self.agents.values(),
-            key=lambda a: (
-                0 if a.status == AgentStatus.RUNNING else 1,
-                a.started_at or 0,
-            ),
-        )
+        self._update_subtitle()
 
-        for agent in sorted_agents:
-            item = AgentItem(agent)
-            item.selected = agent.id == self.selected_id
-            scroll.mount(item)
+        scroll = self.query_one("#agents-scroll", VerticalScroll)
+        current_ids = set(agents.keys())
+        existing_ids = set(self._agent_items.keys())
+
+        # Remove agents that no longer exist
+        for agent_id in existing_ids - current_ids:
+            if agent_id in self._agent_items:
+                self._agent_items[agent_id].remove()
+                del self._agent_items[agent_id]
+
+        # Update existing or add new agents
+        for agent_id, agent in agents.items():
+            if agent_id in self._agent_items:
+                # Update existing item in place
+                self._agent_items[agent_id].update_agent(agent)
+            else:
+                # Add new item
+                item = AgentItem(agent)
+                item.selected = agent_id == self.selected_id
+                scroll.mount(item)
+                self._agent_items[agent_id] = item
+
+        # Handle empty state
+        empty_widgets = list(scroll.query("#agents-empty"))
+        if not agents:
+            if not empty_widgets:
+                scroll.mount(Static("No agents running", id="agents-empty"))
+        else:
+            for w in empty_widgets:
+                w.remove()
+
+    @property
+    def agents(self) -> Dict[str, AgentUIState]:
+        """Get current agents."""
+        return self._agents
 
     def select_agent(self, agent_id: str) -> None:
         """Select an agent."""
-        if agent_id in self.agents:
+        if agent_id in self._agents:
             self.selected_id = agent_id
             self.post_message(self.SelectionChanged(agent_id))
 
     def select_next(self) -> None:
         """Select next agent."""
-        if not self.agents:
+        if not self._agents:
             return
-        ids = list(self.agents.keys())
+        ids = list(self._agents.keys())
         if self.selected_id is None:
             self.select_agent(ids[0])
         else:
@@ -255,9 +271,9 @@ class AgentsList(Widget):
 
     def select_previous(self) -> None:
         """Select previous agent."""
-        if not self.agents:
+        if not self._agents:
             return
-        ids = list(self.agents.keys())
+        ids = list(self._agents.keys())
         if self.selected_id is None:
             self.select_agent(ids[-1])
         else:

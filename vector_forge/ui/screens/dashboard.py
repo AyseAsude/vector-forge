@@ -17,6 +17,13 @@ from vector_forge.ui.state import (
 from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.widgets.model_card import DeleteButton
+from vector_forge.ui.messages import (
+    LogAdded,
+    ProgressUpdated,
+    AgentUpdated,
+    ExtractionStatusChanged,
+    RefreshTime,
+)
 
 
 class ProgressBar(Static):
@@ -211,25 +218,29 @@ class DetailsPanel(Vertical):
         background: $surface;
     }
 
-    DetailsPanel .empty {
+    DetailsPanel #empty-state {
         height: 1fr;
         content-align: center middle;
         color: $foreground-muted;
     }
 
-    DetailsPanel .title {
+    DetailsPanel #details-content {
+        height: 1fr;
+    }
+
+    DetailsPanel #detail-title {
         height: 1;
         text-style: bold;
         margin-bottom: 1;
     }
 
-    DetailsPanel .description {
+    DetailsPanel #detail-description {
         height: auto;
         color: $foreground-muted;
         margin-bottom: 1;
     }
 
-    DetailsPanel .stats {
+    DetailsPanel #detail-stats {
         height: 1;
         margin-bottom: 1;
     }
@@ -240,12 +251,12 @@ class DetailsPanel(Vertical):
         margin-top: 1;
     }
 
-    DetailsPanel .list {
+    DetailsPanel #runs-list {
         height: auto;
         max-height: 10;
     }
 
-    DetailsPanel .activity {
+    DetailsPanel #activity-list {
         height: 1fr;
         min-height: 5;
     }
@@ -256,19 +267,42 @@ class DetailsPanel(Vertical):
     }
     """
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._current_extraction_id: str | None = None
+        self._agent_rows: dict[str, AgentRow] = {}
+        self._log_entries: list[str] = []
+
     def compose(self) -> ComposeResult:
-        yield Static("Select a task", classes="empty")
+        yield Static("Select a task to view details", id="empty-state")
+        with Vertical(id="details-content"):
+            yield Static(id="detail-title")
+            yield Static(id="detail-description")
+            yield Static(id="detail-stats")
+            yield Static("PARALLEL RUNS", classes="section")
+            yield VerticalScroll(id="runs-list")
+            yield Static("RECENT", classes="section")
+            yield VerticalScroll(id="activity-list")
+
+    def on_mount(self) -> None:
+        self.query_one("#details-content").display = False
 
     def show(self, extraction: ExtractionUIState | None) -> None:
-        self.remove_children()
+        empty_state = self.query_one("#empty-state")
+        details_content = self.query_one("#details-content")
 
         if extraction is None:
-            self.mount(Static("Select a task to view details", classes="empty"))
+            empty_state.display = True
+            details_content.display = False
+            self._current_extraction_id = None
             return
+
+        empty_state.display = False
+        details_content.display = True
 
         ext = extraction
 
-        # Status icon and color
+        # Update title
         status_map = {
             ExtractionStatus.PENDING: (ICONS.pending, "$foreground-muted"),
             ExtractionStatus.RUNNING: (ICONS.running, "$accent"),
@@ -277,56 +311,93 @@ class DetailsPanel(Vertical):
             ExtractionStatus.FAILED: (ICONS.failed, "$error"),
         }
         icon, color = status_map.get(ext.status, (ICONS.pending, "$foreground-muted"))
-        self.mount(Static(f"[{color}]{icon}[/] {ext.behavior_name}", classes="title"))
+        self.query_one("#detail-title", Static).update(f"[{color}]{icon}[/] {ext.behavior_name}")
 
-        # Description
+        # Update description
         desc = ext.behavior_description or "No description"
         if len(desc) > 100:
             desc = desc[:97] + "..."
-        self.mount(Static(desc, classes="description"))
+        self.query_one("#detail-description", Static).update(desc)
 
-        # Stats
+        # Update stats
         runs = f"{ext.running_agents_count}/{ext.total_agents_count}" if ext.total_agents_count else "—"
         layer = f"L{ext.current_layer}" if ext.current_layer else "—"
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
-        self.mount(Static(
+        self.query_one("#detail-stats", Static).update(
             f"[$accent]{ext.phase.value.upper()}[/]  │  "
-            f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}",
-            classes="stats"
-        ))
+            f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}"
+        )
 
-        # Parallel runs section
-        self.mount(Static("PARALLEL RUNS", classes="section"))
-        runs_list = VerticalScroll(classes="list")
-        self.mount(runs_list)
+        # Update runs list - only if extraction changed or agents changed
+        self._update_runs_list(ext)
 
-        if ext.agents:
-            for agent in list(ext.agents.values())[:8]:
-                icon_map = {
-                    AgentStatus.IDLE: ("○", "$foreground-muted"),
-                    AgentStatus.RUNNING: ("●", "$accent"),
-                    AgentStatus.WAITING: ("◐", "$foreground-muted"),
-                    AgentStatus.COMPLETE: ("●", "$success"),
-                    AgentStatus.ERROR: ("●", "$error"),
-                }
-                a_icon, a_color = icon_map.get(agent.status, ("○", "$foreground-muted"))
-                runs_list.mount(AgentRow(
-                    agent.id,
-                    f"[{a_color}]{a_icon}[/] {agent.name}  "
-                    f"[$foreground-muted]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
-                ))
+        # Update activity list - only if logs changed
+        self._update_activity_list(ext.id)
+
+        self._current_extraction_id = ext.id
+
+    def _update_runs_list(self, ext: ExtractionUIState) -> None:
+        """Update the parallel runs list incrementally."""
+        runs_list = self.query_one("#runs-list", VerticalScroll)
+        current_agent_ids = set(list(ext.agents.keys())[:8])
+        existing_ids = set(self._agent_rows.keys())
+
+        # Remove agents that no longer exist
+        for agent_id in existing_ids - current_agent_ids:
+            if agent_id in self._agent_rows:
+                self._agent_rows[agent_id].remove()
+                del self._agent_rows[agent_id]
+
+        # Update or add agents
+        for agent in list(ext.agents.values())[:8]:
+            icon_map = {
+                AgentStatus.IDLE: ("○", "$foreground-muted"),
+                AgentStatus.RUNNING: ("●", "$accent"),
+                AgentStatus.WAITING: ("◐", "$foreground-muted"),
+                AgentStatus.COMPLETE: ("●", "$success"),
+                AgentStatus.ERROR: ("●", "$error"),
+            }
+            a_icon, a_color = icon_map.get(agent.status, ("○", "$foreground-muted"))
+            content = (
+                f"[{a_color}]{a_icon}[/] {agent.name}  "
+                f"[$foreground-muted]{agent.status.value}  {agent.turns}t  {agent.elapsed_str}[/]"
+            )
+
+            if agent.id in self._agent_rows:
+                # Update existing row
+                self._agent_rows[agent.id].update(content)
+            else:
+                # Add new row
+                row = AgentRow(agent.id, content)
+                runs_list.mount(row)
+                self._agent_rows[agent.id] = row
+
+        # Handle empty state
+        empty_widgets = list(runs_list.query(".empty-runs"))
+        if not ext.agents:
+            if not empty_widgets:
+                runs_list.mount(Static("[$foreground-muted]No runs yet[/]", classes="empty-runs"))
         else:
-            runs_list.mount(Static("[$foreground-muted]No runs yet[/]"))
+            for w in empty_widgets:
+                w.remove()
 
-        # Recent activity section
-        self.mount(Static("RECENT", classes="section"))
-        activity_list = VerticalScroll(classes="activity")
-        self.mount(activity_list)
+    def _update_activity_list(self, extraction_id: str) -> None:
+        """Update the activity list incrementally."""
+        activity_list = self.query_one("#activity-list", VerticalScroll)
+        logs = get_state().get_filtered_logs(extraction_id=extraction_id)[-5:]
 
-        logs = get_state().get_filtered_logs(extraction_id=ext.id)[-5:]
+        # Create list of log identifiers
+        new_log_keys = [f"{log.timestamp}:{log.message[:50]}" for log in logs]
+
+        # Only update if logs changed
+        if new_log_keys == self._log_entries:
+            return
+
+        # Clear and rebuild (logs are small - 5 items max)
+        activity_list.remove_children()
+
         if logs:
             for log in reversed(logs):
-                # Escape log message to prevent Rich markup interpretation of brackets
                 safe_message = escape_markup(log.message)
                 activity_list.mount(Static(
                     f"[$foreground-muted]{log.time_str}[/] {safe_message}",
@@ -334,6 +405,8 @@ class DetailsPanel(Vertical):
                 ))
         else:
             activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="log-entry"))
+
+        self._log_entries = new_log_keys
 
 
 class ConfirmHideTaskScreen(ModalScreen[bool]):
@@ -526,30 +599,50 @@ class DashboardScreen(Screen):
         yield TmuxBar(active_screen="dashboard")
 
     def on_mount(self) -> None:
-        get_state().add_listener(self._on_state_change)
-        self._sync()
-        self.set_interval(1.0, self._tick)
-
-    def on_unmount(self) -> None:
-        get_state().remove_listener(self._on_state_change)
-
-    def _on_state_change(self, _) -> None:
         self._sync()
 
-    def _tick(self) -> None:
+    # ─────────────────────────────────────────────────────────────────
+    # Message handlers - pure event-driven updates, no polling
+    # ─────────────────────────────────────────────────────────────────
+
+    def on_refresh_time(self, message: RefreshTime) -> None:
+        """Handle time refresh - update elapsed time displays only."""
         state = get_state()
-
-        # Update running task cards
         for card in self.query(TaskCard):
             ext = state.extractions.get(card.extraction.id)
             if ext and ext.status == ExtractionStatus.RUNNING:
-                card.update(ext)
+                card.query_one(".time", Static).update(ext.elapsed_str)
+        self.query_one(TmuxBar).refresh_info()
 
-        # Update details if showing running task
-        if state.selected_extraction and state.selected_extraction.status == ExtractionStatus.RUNNING:
+    def on_progress_updated(self, message: ProgressUpdated) -> None:
+        """Handle progress update - update specific task card."""
+        state = get_state()
+        for card in self.query(TaskCard):
+            if card.extraction.id == message.extraction_id:
+                ext = state.extractions.get(message.extraction_id)
+                if ext:
+                    card.update(ext)
+                break
+        # Update details if showing this extraction
+        if state.selected_id == message.extraction_id:
             self.query_one("#right", DetailsPanel).show(state.selected_extraction)
 
-        self.query_one(TmuxBar).refresh_info()
+    def on_extraction_status_changed(self, message: ExtractionStatusChanged) -> None:
+        """Handle extraction status change."""
+        self._sync()
+
+    def on_agent_updated(self, message: AgentUpdated) -> None:
+        """Handle agent update - refresh details panel if showing this extraction."""
+        state = get_state()
+        if state.selected_id == message.extraction_id:
+            self.query_one("#right", DetailsPanel).show(state.selected_extraction)
+
+    def on_log_added(self, message: LogAdded) -> None:
+        """Handle new log - refresh activity list if showing this extraction."""
+        state = get_state()
+        if message.extraction_id and state.selected_id == message.extraction_id:
+            details = self.query_one("#right", DetailsPanel)
+            details._update_activity_list(message.extraction_id)
 
     def _sync(self) -> None:
         state = get_state()

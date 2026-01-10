@@ -181,11 +181,25 @@ class ExtractionSelector(Widget):
             super().__init__()
             self.extraction_id = extraction_id
 
-    extractions: reactive[Dict[str, ExtractionUIState]] = reactive(
-        dict, always_update=True, init=False
-    )
     selected_id: reactive[Optional[str]] = reactive(None, init=False)
     expanded: reactive[bool] = reactive(False)
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._extractions: Dict[str, ExtractionUIState] = {}
+
+    @property
+    def extractions(self) -> Dict[str, ExtractionUIState]:
+        """Get current extractions."""
+        return self._extractions
+
+    def set_extractions(self, extractions: Dict[str, ExtractionUIState]) -> None:
+        """Set extractions and update display."""
+        self._extractions = extractions
+        if self.is_mounted:
+            self._update_header()
+            if self.expanded:
+                self._refresh_dropdown()
 
     def _get_header_content(self) -> tuple:
         """Get content for the three header lines."""
@@ -245,12 +259,6 @@ class ExtractionSelector(Widget):
             yield Static(line2, id="header-line2", classes="header-row")
             yield Static(line3, id="header-line3", classes="header-row")
         yield Vertical(id="dropdown-container")
-
-    def watch_extractions(self, extractions: Dict[str, ExtractionUIState]) -> None:
-        if self.is_mounted:
-            self._update_header()
-            if self.expanded:
-                self._refresh_dropdown()
 
     def watch_selected_id(self, selected_id: Optional[str]) -> None:
         if self.is_mounted:

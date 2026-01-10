@@ -135,8 +135,14 @@ class LogPanel(Widget):
     }
     """
 
-    entries: reactive[List[LogEntry]] = reactive(list, always_update=True, init=False)
     filter_text: reactive[str] = reactive("", init=False)
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._entries: List[LogEntry] = []
+        self._displayed_timestamps: set[float] = set()
+        self._last_filter: str = ""
+        self._needs_full_rebuild: bool = True
 
     def compose(self) -> ComposeResult:
         with Widget(id="log-header"):
@@ -153,12 +159,10 @@ class LogPanel(Widget):
     def on_mount(self) -> None:
         self._refresh_logs()
 
-    def watch_entries(self, entries: List[LogEntry]) -> None:
-        if self.is_mounted:
-            self._refresh_logs()
-
     def watch_filter_text(self, filter_text: str) -> None:
         if self.is_mounted:
+            # Filter change requires full rebuild
+            self._needs_full_rebuild = True
             self._refresh_logs()
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -168,15 +172,12 @@ class LogPanel(Widget):
             event.stop()
 
     def _refresh_logs(self) -> None:
-        """Refresh the log display."""
+        """Refresh the log display incrementally."""
         scroll = self.query_one("#log-scroll", VerticalScroll)
         count_widget = self.query_one("#log-count", Static)
 
-        # Clear all children synchronously
-        scroll.remove_children()
-
         # Filter entries
-        filtered = list(self.entries) if self.entries else []
+        filtered = list(self._entries) if self._entries else []
         if self.filter_text:
             filter_lower = self.filter_text.lower()
             filtered = [
@@ -186,29 +187,61 @@ class LogPanel(Widget):
             ]
 
         # Update count
-        total = len(self.entries) if self.entries else 0
+        total = len(self._entries) if self._entries else 0
         shown = len(filtered)
         if total == shown:
             count_widget.update(f"[$foreground-disabled]{total} entries[/]")
         else:
             count_widget.update(f"[$foreground-disabled]{shown}/{total} entries[/]")
 
-        # Show entries or empty message
-        if not filtered:
-            scroll.mount(
-                Static(
-                    "[$foreground-muted]No log entries[/]",
-                    classes="log-empty-msg",
+        # Get entries to display (last 100)
+        display_entries = filtered[-100:]
+
+        # Handle empty state
+        if not display_entries:
+            if self._displayed_timestamps or self._needs_full_rebuild:
+                scroll.remove_children()
+                scroll.mount(
+                    Static(
+                        "[$foreground-muted]No log entries[/]",
+                        classes="log-empty-msg",
+                    )
                 )
-            )
+                self._displayed_timestamps.clear()
+            self._needs_full_rebuild = False
             return
 
-        # Show last 100 entries (most recent at bottom)
-        for entry in filtered[-100:]:
-            scroll.mount(LogEntryDisplay(entry))
+        # Check if we need full rebuild (filter changed or first load)
+        if self._needs_full_rebuild:
+            scroll.remove_children()
+            for entry in display_entries:
+                scroll.mount(LogEntryDisplay(entry))
+            self._displayed_timestamps = {e.timestamp for e in display_entries}
+            scroll.scroll_end(animate=False)
+            self._needs_full_rebuild = False
+            return
 
-        # Scroll to bottom
-        scroll.scroll_end(animate=False)
+        # Incremental update - only add new entries
+        new_timestamps = {e.timestamp for e in display_entries}
+        entries_to_add = [e for e in display_entries if e.timestamp not in self._displayed_timestamps]
+
+        if entries_to_add:
+            # Remove empty message if present
+            for empty in scroll.query(".log-empty-msg"):
+                empty.remove()
+
+            # Add new entries at the end
+            for entry in entries_to_add:
+                scroll.mount(LogEntryDisplay(entry))
+
+            # Remove old entries if we exceed 100
+            children = list(scroll.query(LogEntryDisplay))
+            while len(children) > 100:
+                children[0].remove()
+                children = children[1:]
+
+            self._displayed_timestamps = new_timestamps
+            scroll.scroll_end(animate=False)
 
     def focus_filter(self) -> None:
         """Focus the filter input."""
@@ -217,4 +250,6 @@ class LogPanel(Widget):
 
     def set_entries(self, entries: List[LogEntry]) -> None:
         """Set log entries."""
-        self.entries = entries
+        self._entries = entries
+        if self.is_mounted:
+            self._refresh_logs()

@@ -20,8 +20,18 @@ from vector_forge.ui.state import (
     AgentStatus,
     MessageRole,
     ToolCall,
+    LogEntry,
     get_state,
     reset_state,
+)
+from vector_forge.ui.messages import (
+    LogAdded,
+    ProgressUpdated,
+    AgentUpdated,
+    AgentMessageAdded,
+    ExtractionStatusChanged,
+    MetricsUpdated,
+    RefreshTime,
 )
 from vector_forge.ui.screens.dashboard import DashboardScreen
 from vector_forge.ui.screens.samples import SamplesScreen
@@ -84,14 +94,118 @@ class VectorForgeApp(App):
             # Reset to clean state
             reset_state()
 
+        # Set up state to post messages to this app (thread-safe)
+        get_state()._app = self
+
         if self._demo_mode:
             # Load demo data
             _populate_demo_state(get_state())
+            # Start time refresh timer for demo
+            self.set_interval(1.0, self._refresh_time)
         else:
             # Initialize services and load real sessions
             self._init_services()
+            # Start time refresh timer
+            self.set_interval(1.0, self._refresh_time)
 
         self.push_screen("dashboard")
+
+    def _refresh_time(self) -> None:
+        """Post a time refresh message for elapsed time displays."""
+        self.post_message(RefreshTime())
+
+    # ─────────────────────────────────────────────────────────────────
+    # Streaming message handlers - these run in the main event loop
+    # ─────────────────────────────────────────────────────────────────
+
+    def on_log_added(self, message: LogAdded) -> None:
+        """Handle new log entry - update state and notify screen."""
+        state = get_state()
+        entry = LogEntry(
+            timestamp=message.timestamp,
+            source=message.source,
+            message=message.message,
+            level=message.level,
+            extraction_id=message.extraction_id,
+            agent_id=message.agent_id,
+        )
+        state.logs.append(entry)
+        if len(state.logs) > 1000:
+            state.logs = state.logs[-1000:]
+
+    def on_progress_updated(self, message: ProgressUpdated) -> None:
+        """Handle progress update."""
+        state = get_state()
+        extraction = state.extractions.get(message.extraction_id)
+        if extraction:
+            extraction.progress = message.progress
+            # Map phase string to enum
+            phase_map = {
+                "loading_model": Phase.INITIALIZING,
+                "init": Phase.INITIALIZING,
+                "generating_contrast": Phase.GENERATING_DATAPOINTS,
+                "gen": Phase.GENERATING_DATAPOINTS,
+                "extracting": Phase.OPTIMIZING,
+                "opt": Phase.OPTIMIZING,
+                "evaluating": Phase.EVALUATING,
+                "eval": Phase.EVALUATING,
+                "complete": Phase.COMPLETE,
+                "done": Phase.COMPLETE,
+                "failed": Phase.FAILED,
+                "fail": Phase.FAILED,
+            }
+            extraction.phase = phase_map.get(message.phase, extraction.phase)
+
+    def on_agent_updated(self, message: AgentUpdated) -> None:
+        """Handle agent state change."""
+        state = get_state()
+        extraction = state.extractions.get(message.extraction_id)
+        if extraction:
+            agent = extraction.agents.get(message.agent_id)
+            if agent:
+                agent.status = AgentStatus(message.status)
+                agent.current_tool = message.current_tool
+                agent.turns = message.turns
+                agent.tool_calls_count = message.tool_calls_count
+
+    def on_agent_message_added(self, message: AgentMessageAdded) -> None:
+        """Handle new message in agent conversation."""
+        state = get_state()
+        extraction = state.extractions.get(message.extraction_id)
+        if extraction:
+            agent = extraction.agents.get(message.agent_id)
+            if agent:
+                # Convert tool calls
+                tool_calls = []
+                for tc in message.tool_calls:
+                    if isinstance(tc, dict):
+                        tool_calls.append(ToolCall(**tc))
+                    else:
+                        tool_calls.append(tc)
+                agent.add_message(
+                    MessageRole(message.role),
+                    message.content,
+                    tool_calls,
+                )
+
+    def on_extraction_status_changed(self, message: ExtractionStatusChanged) -> None:
+        """Handle extraction status change."""
+        state = get_state()
+        extraction = state.extractions.get(message.extraction_id)
+        if extraction:
+            extraction.status = ExtractionStatus(message.status)
+            if message.completed_at:
+                extraction.completed_at = message.completed_at
+
+    def on_metrics_updated(self, message: MetricsUpdated) -> None:
+        """Handle metrics update."""
+        state = get_state()
+        extraction = state.extractions.get(message.extraction_id)
+        if extraction and message.data:
+            if message.metric_type == "datapoints":
+                extraction.datapoints = DatapointMetrics(**message.data)
+            elif message.metric_type == "evaluation":
+                extraction.evaluation = EvaluationMetrics(**message.data)
 
     def _init_services(self) -> None:
         """Initialize services and load existing sessions."""
@@ -364,13 +478,36 @@ def _populate_demo_state(state: UIState) -> None:
         "Extracting steering vector for sycophancy behavior."
     )
     extractor.add_message(
+        MessageRole.USER,
+        "Please generate contrast pairs for the sycophancy behavior."
+    )
+    extractor.add_message(
+        MessageRole.ASSISTANT,
+        "I'll generate contrastive pairs for sycophancy behavior.",
+        [
+            ToolCall(
+                id="tc_0", name="generate_pairs",
+                arguments='{"behavior": "sycophancy", "count": 12}',
+                result='{"pairs": 12, "quality": 0.85}',
+                status="success", started_at=time.time()-60, completed_at=time.time()-55
+            ),
+        ]
+    )
+    extractor.add_message(
         MessageRole.ASSISTANT,
         "Generated 12 contrastive pairs. Running extraction on layer 16.",
-        [ToolCall(
-            id="tc_1", name="extract_vector",
-            arguments='{"layer": 16, "pairs": 12}',
-            status="running", started_at=time.time()-5
-        )]
+        [
+            ToolCall(
+                id="tc_1", name="extract_vector",
+                arguments='{"layer": 16, "pairs": 12}',
+                status="running", started_at=time.time()-5
+            ),
+            ToolCall(
+                id="tc_2", name="evaluate_quality",
+                arguments='{"threshold": 0.7}',
+                status="pending"
+            ),
+        ]
     )
     extraction.add_agent(extractor)
 

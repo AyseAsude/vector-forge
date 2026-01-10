@@ -219,7 +219,11 @@ class AgentInspector(Widget):
     }
     """
 
-    agent: reactive[Optional[AgentUIState]] = reactive(None, init=False)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._current_agent_id: Optional[str] = None
+        self._message_count: int = 0
+        self._agent: Optional[AgentUIState] = None
 
     def compose(self) -> ComposeResult:
         with Widget(id="inspector-header"):
@@ -229,31 +233,21 @@ class AgentInspector(Widget):
         yield VerticalScroll(id="inspector-scroll")
 
     def on_mount(self) -> None:
-        self._update_display()
+        self._update_header()
 
-    def watch_agent(self, agent: Optional[AgentUIState]) -> None:
-        if self.is_mounted:
-            self._update_display()
-
-    def _update_display(self) -> None:
-        """Update the inspector display."""
+    def _update_header(self) -> None:
+        """Update the header without touching messages."""
         title = self.query_one("#inspector-title", Static)
         subtitle = self.query_one("#inspector-subtitle", Static)
         stats = self.query_one("#inspector-stats", Static)
-        scroll = self.query_one("#inspector-scroll", VerticalScroll)
 
-        # Clear existing messages
-        for child in list(scroll.children):
-            child.remove()
-
-        if self.agent is None:
+        if self._agent is None:
             title.update("[$foreground-muted]Select an agent[/]")
             subtitle.update("[$foreground-disabled]Click an agent to view its messages[/]")
             stats.update("")
-            scroll.mount(Static("", id="inspector-empty"))
             return
 
-        agent = self.agent
+        agent = self._agent
 
         # Status styling
         status_map = {
@@ -288,22 +282,58 @@ class AgentInspector(Widget):
             f"{agent.turns} turns · {agent.tool_calls_count} tools · {agent.elapsed_str}[/]"
         )
 
-        # Messages
-        if not agent.messages:
-            scroll.mount(
-                Static(
-                    "[$foreground-muted]No messages yet[/]",
-                    id="inspector-empty",
-                )
-            )
+    def _update_messages(self, force_rebuild: bool = False) -> None:
+        """Update messages incrementally."""
+        scroll = self.query_one("#inspector-scroll", VerticalScroll)
+
+        if self._agent is None:
+            if self._current_agent_id is not None or force_rebuild:
+                scroll.remove_children()
+                scroll.mount(Static("", id="inspector-empty"))
+                self._current_agent_id = None
+                self._message_count = 0
             return
 
-        for msg in agent.messages:
-            scroll.mount(MessageDisplay(msg))
+        agent = self._agent
+        agent_changed = agent.id != self._current_agent_id
+        new_message_count = len(agent.messages)
 
-        # Scroll to bottom
-        scroll.scroll_end(animate=False)
+        # Full rebuild if agent changed
+        if agent_changed or force_rebuild:
+            scroll.remove_children()
+
+            if not agent.messages:
+                scroll.mount(
+                    Static(
+                        "[$foreground-muted]No messages yet[/]",
+                        id="inspector-empty",
+                    )
+                )
+            else:
+                for msg in agent.messages:
+                    scroll.mount(MessageDisplay(msg))
+                scroll.scroll_end(animate=False)
+
+            self._current_agent_id = agent.id
+            self._message_count = new_message_count
+            return
+
+        # Incremental update - only add new messages
+        if new_message_count > self._message_count:
+            # Remove empty placeholder if present
+            for empty in scroll.query("#inspector-empty"):
+                empty.remove()
+
+            # Add only new messages
+            for msg in agent.messages[self._message_count:]:
+                scroll.mount(MessageDisplay(msg))
+
+            scroll.scroll_end(animate=False)
+            self._message_count = new_message_count
 
     def set_agent(self, agent: Optional[AgentUIState]) -> None:
         """Set the agent to inspect."""
-        self.agent = agent
+        self._agent = agent
+        if self.is_mounted:
+            self._update_header()
+            self._update_messages()
