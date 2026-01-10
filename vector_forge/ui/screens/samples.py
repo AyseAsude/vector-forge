@@ -162,12 +162,12 @@ class ToolCallRow(Static):
 
     def __init__(self, tool_call: ToolCall, **kwargs) -> None:
         self.tool_call = tool_call
-        super().__init__(**kwargs)
+        # Compute initial content to pass to super().__init__()
+        initial_content = self._compute_content()
+        super().__init__(initial_content, **kwargs)
 
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def _update_display(self) -> None:
+    def _compute_content(self) -> str:
+        """Compute the display content for this tool call."""
         tc = self.tool_call
 
         status_colors = {
@@ -179,7 +179,7 @@ class ToolCallRow(Static):
         color = status_colors.get(tc.status, "$foreground-disabled")
         duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
 
-        self.update(f"  [{color}]▸ {tc.name}[/]{duration}")
+        return f"  [{color}]▸ {tc.name}[/]{duration}"
 
     def on_click(self) -> None:
         self.post_message(self.Clicked(self.tool_call))

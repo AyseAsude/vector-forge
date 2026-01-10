@@ -67,14 +67,13 @@ class ProfileCard(Static):
         if selected:
             existing_classes = kwargs.get("classes", "")
             kwargs["classes"] = f"{existing_classes} -selected".strip()
-        super().__init__(**kwargs)
         self._profile = profile
         self._name = name
         self._desc = desc
         self._selected = selected
-
-    def on_mount(self) -> None:
-        self._update()
+        # Compute initial content to pass to super().__init__()
+        initial_content = self._compute_content()
+        super().__init__(initial_content, **kwargs)
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self._profile))
@@ -82,17 +81,17 @@ class ProfileCard(Static):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self.set_class(selected, "-selected")
-        if self.is_mounted:
-            self._update()
+        self.update(self._compute_content())
 
     @property
     def profile(self) -> str:
         return self._profile
 
-    def _update(self) -> None:
+    def _compute_content(self) -> str:
+        """Compute the display content for this profile card."""
         icon = "●" if self._selected else "○"
         color = "$accent" if self._selected else "$foreground-disabled"
-        self.update(f"[{color}]{icon}[/] [bold]{self._name}[/] [$foreground-muted]{self._desc}[/]")
+        return f"[{color}]{icon}[/] [bold]{self._name}[/] [$foreground-muted]{self._desc}[/]"
 
 
 class OptionPill(Static):
@@ -131,14 +130,13 @@ class OptionPill(Static):
         if selected:
             existing_classes = kwargs.get("classes", "")
             kwargs["classes"] = f"{existing_classes} -selected".strip()
-        super().__init__(**kwargs)
         self._group = group
         self._value = value
         self._label = label
         self._selected = selected
-
-    def on_mount(self) -> None:
-        self._update()
+        # Compute initial content to pass to super().__init__()
+        initial_content = self._compute_content()
+        super().__init__(initial_content, **kwargs)
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self._group, self._value))
@@ -146,8 +144,7 @@ class OptionPill(Static):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self.set_class(selected, "-selected")
-        if self.is_mounted:
-            self._update()
+        self.update(self._compute_content())
 
     @property
     def value(self) -> str:
@@ -157,11 +154,12 @@ class OptionPill(Static):
     def group(self) -> str:
         return self._group
 
-    def _update(self) -> None:
+    def _compute_content(self) -> str:
+        """Compute the display content for this option pill."""
         if self._selected:
-            self.update(f"[$accent]●[/] {self._label}")
+            return f"[$accent]●[/] {self._label}"
         else:
-            self.update(f"[$foreground-disabled]○[/] [$foreground-muted]{self._label}[/]")
+            return f"[$foreground-disabled]○[/] [$foreground-muted]{self._label}[/]"
 
 
 class ParamRow(Horizontal):

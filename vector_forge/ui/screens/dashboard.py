@@ -51,24 +51,23 @@ class ProgressBar(Static):
     """
 
     def __init__(self, value: float = 0.0, width: int = 20, **kwargs) -> None:
-        super().__init__(**kwargs)
         self._value = value
         self._width = width
+        # Compute initial content before calling super().__init__()
+        # This ensures there's always content to render
+        initial_bar = self._compute_bar()
+        super().__init__(initial_bar, **kwargs)
 
-    def on_mount(self) -> None:
-        self._render()
-
-    def set_value(self, value: float) -> None:
-        self._value = max(0.0, min(100.0, value))
-        if self.is_mounted:
-            self._render()
-
-    def _render(self) -> None:
+    def _compute_bar(self) -> str:
+        """Compute the progress bar string."""
         progress = self._value / 100.0
         filled = int(progress * self._width)
         empty = self._width - filled
-        bar = f"[$accent]{BLOCK_FULL * filled}[/][$surface]{BLOCK_EMPTY * empty}[/]"
-        self.update(bar)
+        return f"[$accent]{BLOCK_FULL * filled}[/][$surface]{BLOCK_EMPTY * empty}[/]"
+
+    def set_value(self, value: float) -> None:
+        self._value = max(0.0, min(100.0, value))
+        self.update(self._compute_bar())
 
 
 class AgentRow(Static):
@@ -89,17 +88,15 @@ class AgentRow(Static):
             self.agent_id = agent_id
 
     def __init__(self, agent_id: str, content: str, **kwargs) -> None:
-        super().__init__(**kwargs)
+        # Pass initial content to super().__init__() to ensure there's always
+        # something to render, even before on_mount()
+        super().__init__(content, **kwargs)
         self.agent_id = agent_id
         self._content = content
 
-    def on_mount(self) -> None:
-        self.update(self._content)
-
     def set_content(self, content: str) -> None:
         self._content = content
-        if self.is_mounted:
-            self.update(content)
+        self.update(content)
 
     def on_click(self) -> None:
         self.post_message(self.Clicked(self.agent_id))

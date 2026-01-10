@@ -135,23 +135,21 @@ class LevelFilterRow(Static):
             self.active = active
 
     def __init__(self, level: str, count: int = 0, active: bool = True, **kwargs) -> None:
-        super().__init__(**kwargs)
         self._level = level
         self._count = count
         self._active = active
-
-    def on_mount(self) -> None:
-        self._update_display()
+        # Compute initial content to pass to super().__init__()
+        initial_content = self._compute_content()
+        super().__init__(initial_content, **kwargs)
 
     def on_click(self) -> None:
         self._active = not self._active
-        self._update_display()
+        self.update(self._compute_content())
         self.post_message(self.Toggled(self._level, self._active))
 
     def set_count(self, count: int) -> None:
         self._count = count
-        if self.is_mounted:
-            self._update_display()
+        self.update(self._compute_content())
 
     @property
     def is_active(self) -> bool:
@@ -161,7 +159,8 @@ class LevelFilterRow(Static):
     def level(self) -> str:
         return self._level
 
-    def _update_display(self) -> None:
+    def _compute_content(self) -> str:
+        """Compute the display content for this filter row."""
         level_colors = {
             "info": "$primary",
             "warning": "$warning",
@@ -170,14 +169,12 @@ class LevelFilterRow(Static):
         color = level_colors.get(self._level, "$foreground-muted")
 
         if self._active:
-            self.update(
+            return (
                 f"[{color}]●[/] {self._level.upper():<8} "
                 f"[$foreground-muted]{self._count:>4}[/]"
             )
         else:
-            self.update(
-                f"[$foreground-disabled]○ {self._level.upper():<8} {self._count:>4}[/]"
-            )
+            return f"[$foreground-disabled]○ {self._level.upper():<8} {self._count:>4}[/]"
 
 
 class SourceFilterRow(Static):
@@ -200,31 +197,30 @@ class SourceFilterRow(Static):
             self.source = source
 
     def __init__(self, source: str, label: str, selected: bool = False, **kwargs) -> None:
-        super().__init__(**kwargs)
         self._source = source
         self._label = label
         self._selected = selected
-
-    def on_mount(self) -> None:
-        self._update_display()
+        # Compute initial content to pass to super().__init__()
+        initial_content = self._compute_content()
+        super().__init__(initial_content, **kwargs)
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self._source))
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
-        if self.is_mounted:
-            self._update_display()
+        self.update(self._compute_content())
 
     @property
     def source(self) -> str:
         return self._source
 
-    def _update_display(self) -> None:
+    def _compute_content(self) -> str:
+        """Compute the display content for this filter row."""
         if self._selected:
-            self.update(f"[$accent]●[/] {self._label}")
+            return f"[$accent]●[/] {self._label}"
         else:
-            self.update(f"[$foreground-disabled]○[/] [$foreground-muted]{self._label}[/]")
+            return f"[$foreground-disabled]○[/] [$foreground-muted]{self._label}[/]"
 
 
 class FilterPanel(Vertical):
@@ -342,12 +338,12 @@ class LogRow(Static):
 
     def __init__(self, entry: LogEntry, **kwargs) -> None:
         self.entry = entry
-        super().__init__(**kwargs)
+        # Compute initial content to pass to super().__init__()
+        initial_content = self._compute_content()
+        super().__init__(initial_content, **kwargs)
 
-    def on_mount(self) -> None:
-        self._update_display()
-
-    def _update_display(self) -> None:
+    def _compute_content(self) -> str:
+        """Compute the display content for this log row."""
         entry = self.entry
 
         level_colors = {
@@ -363,13 +359,12 @@ class LogRow(Static):
         if len(message) > max_msg_len:
             message = message[:max_msg_len - 3] + "..."
 
-        content = (
+        return (
             f"[$foreground-disabled]{entry.time_str}[/]  "
             f"[{color}]●[/]  "
             f"[$foreground-muted]{entry.source:<10}[/]  "
             f"{message}"
         )
-        self.update(content)
 
     def on_click(self) -> None:
         self.post_message(self.Clicked(self.entry))
