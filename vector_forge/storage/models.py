@@ -2,6 +2,8 @@
 
 Stores LLM provider configurations for reuse across tasks.
 Supports OpenAI, Anthropic, Azure, Ollama, and custom providers.
+
+All model constants are centralized in vector_forge.constants for DRY compliance.
 """
 
 import json
@@ -14,66 +16,40 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from vector_forge.constants import DEFAULT_MODEL, DEFAULT_MODEL_NAME
+from vector_forge.constants import (
+    DEFAULT_MODEL,
+    DEFAULT_MODEL_NAME,
+    PROVIDER_ORDER,
+    API_KEY_ENV_VARS,
+    DEFAULT_API_BASES,
+    COMMON_MODELS,
+    BUILTIN_MODELS,
+    BUILTIN_MODEL_IDS,
+)
 
 
 class Provider(str, Enum):
-    """Supported LLM providers."""
+    """Supported LLM providers.
 
-    OPENAI = "openai"
+    Note: Order matches PROVIDER_ORDER in constants - Anthropic first as preferred.
+    """
+
     ANTHROPIC = "anthropic"
+    OPENAI = "openai"
     OPENROUTER = "openrouter"
     AZURE = "azure"
     OLLAMA = "ollama"
     CUSTOM = "custom"
 
 
-# Common models for quick selection
-COMMON_MODELS: Dict[Provider, List[str]] = {
-    Provider.OPENAI: [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "o1",
-        "o1-mini",
-        "o3-mini",
-    ],
-    Provider.ANTHROPIC: [
-        "claude-opus-4-5",
-        "claude-sonnet-4-5",
-        "claude-sonnet-4-0",
-        "claude-haiku-3-5",
-    ],
-    Provider.OPENROUTER: [
-        "openrouter/anthropic/claude-opus-4-5",
-        "openrouter/anthropic/claude-sonnet-4-5",
-        "openrouter/openai/gpt-4o",
-        "openrouter/google/gemini-2.0-flash",
-        "openrouter/deepseek/deepseek-r1",
-    ],
-    Provider.AZURE: [
-        "azure/gpt-4o",
-        "azure/gpt-4o-mini",
-    ],
-    Provider.OLLAMA: [
-        "ollama/llama3.3",
-        "ollama/qwen2.5",
-        "ollama/deepseek-r1",
-    ],
-}
+def _get_api_key_env(provider: Provider) -> Optional[str]:
+    """Get the environment variable name for a provider's API key."""
+    return API_KEY_ENV_VARS.get(provider.value)
 
-# Environment variable names for API keys by provider
-API_KEY_ENV_VARS: Dict[Provider, str] = {
-    Provider.OPENAI: "OPENAI_API_KEY",
-    Provider.ANTHROPIC: "ANTHROPIC_API_KEY",
-    Provider.OPENROUTER: "OPENROUTER_API_KEY",
-    Provider.AZURE: "AZURE_API_KEY",
-}
 
-# Default API base URLs by provider
-DEFAULT_API_BASES: Dict[Provider, str] = {
-    Provider.OPENROUTER: "https://openrouter.ai/api/v1",
-    Provider.OLLAMA: "http://localhost:11434",
-}
+def _get_common_models(provider: Provider) -> List[str]:
+    """Get common models for a provider from centralized constants."""
+    return COMMON_MODELS.get(provider.value, [])
 
 
 class ModelConfig(BaseModel):
@@ -120,7 +96,7 @@ class ModelConfig(BaseModel):
         if self.api_key_env:
             return os.environ.get(self.api_key_env)
         # Fallback to default env var for provider
-        default_env = API_KEY_ENV_VARS.get(self.provider)
+        default_env = _get_api_key_env(self.provider)
         if default_env:
             return os.environ.get(default_env)
         return None
@@ -151,8 +127,9 @@ class ModelConfig(BaseModel):
         if name is None:
             # Generate a nice name
             provider_names = {
-                Provider.OPENAI: "OpenAI",
                 Provider.ANTHROPIC: "Anthropic",
+                Provider.OPENAI: "OpenAI",
+                Provider.OPENROUTER: "OpenRouter",
                 Provider.AZURE: "Azure",
                 Provider.OLLAMA: "Ollama",
                 Provider.CUSTOM: "Custom",
@@ -164,7 +141,7 @@ class ModelConfig(BaseModel):
             name=name,
             provider=provider,
             model=model,
-            api_key_env=API_KEY_ENV_VARS.get(provider),
+            api_key_env=_get_api_key_env(provider),
             **kwargs,
         )
 
@@ -223,15 +200,6 @@ class ModelConfigManager:
         >>> configs = manager.list_all()
     """
 
-    # Default model IDs that should be marked as builtin
-    _BUILTIN_IDS = {
-        "anthropic-opus",
-        "anthropic-sonnet",
-        "openai-gpt4o",
-        "openai-gpt4o-mini",
-        "openrouter-claude",
-    }
-
     def __init__(self, base_path: Optional[Path] = None) -> None:
         """Initialize the manager.
 
@@ -273,7 +241,7 @@ class ModelConfigManager:
         """Ensure default models have is_builtin=True."""
         changed = False
         for config in self._store.configs:
-            if config.id in self._BUILTIN_IDS and not config.is_builtin:
+            if config.id in BUILTIN_MODEL_IDS and not config.is_builtin:
                 config.is_builtin = True
                 changed = True
         if changed:
@@ -291,55 +259,19 @@ class ModelConfigManager:
             )
 
     def _create_defaults(self) -> ModelConfigStore:
-        """Create default model configurations."""
+        """Create default model configurations from centralized BUILTIN_MODELS."""
         store = ModelConfigStore()
 
-        # Default: Claude Opus 4.5 (primary)
-        store.add(ModelConfig(
-            id="anthropic-opus",
-            name=DEFAULT_MODEL_NAME,
-            provider=Provider.ANTHROPIC,
-            model=DEFAULT_MODEL,
-            is_default=True,
-            is_builtin=True,
-        ))
-
-        # Claude Sonnet 4.5
-        store.add(ModelConfig(
-            id="anthropic-sonnet",
-            name="Claude Sonnet 4.5",
-            provider=Provider.ANTHROPIC,
-            model="claude-sonnet-4-5",
-            is_builtin=True,
-        ))
-
-        # OpenAI GPT-4o
-        store.add(ModelConfig(
-            id="openai-gpt4o",
-            name="GPT-4o",
-            provider=Provider.OPENAI,
-            model="gpt-4o",
-            is_builtin=True,
-        ))
-
-        # OpenAI GPT-4o Mini
-        store.add(ModelConfig(
-            id="openai-gpt4o-mini",
-            name="GPT-4o Mini",
-            provider=Provider.OPENAI,
-            model="gpt-4o-mini",
-            is_builtin=True,
-        ))
-
-        # OpenRouter Claude
-        store.add(ModelConfig(
-            id="openrouter-claude",
-            name="Claude Opus 4.5 (OpenRouter)",
-            provider=Provider.OPENROUTER,
-            model="openrouter/anthropic/claude-opus-4-5",
-            api_base="https://openrouter.ai/api/v1",
-            is_builtin=True,
-        ))
+        for model_def in BUILTIN_MODELS:
+            store.add(ModelConfig(
+                id=model_def["id"],
+                name=model_def["name"],
+                provider=Provider(model_def["provider"]),
+                model=model_def["model"],
+                api_base=model_def.get("api_base"),
+                is_default=model_def.get("is_default", False),
+                is_builtin=True,
+            ))
 
         return store
 
@@ -393,7 +325,7 @@ class ModelConfigManager:
 
     def get_common_models(self, provider: Provider) -> List[str]:
         """Get list of common models for a provider."""
-        return COMMON_MODELS.get(provider, [])
+        return _get_common_models(provider)
 
     def create_from_common(
         self,

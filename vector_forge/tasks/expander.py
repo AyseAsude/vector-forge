@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Protocol
 import json
 
+from vector_forge.constants import DEFAULT_MODEL
 from vector_forge.core.behavior import BehaviorSpec
 
 
@@ -113,7 +114,7 @@ class BehaviorExpander:
     def __init__(
         self,
         llm_client: LLMClient,
-        model: str = "gpt-4o",
+        model: str = DEFAULT_MODEL,
     ) -> None:
         """Initialize the behavior expander.
 
@@ -238,7 +239,7 @@ class BehaviorExpander:
 async def expand_behavior(
     description: str,
     llm_client: LLMClient,
-    model: str = "gpt-4o",
+    model: str = DEFAULT_MODEL,
 ) -> ExpandedBehavior:
     """Convenience function to expand a behavior description.
 

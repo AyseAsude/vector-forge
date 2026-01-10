@@ -5,6 +5,7 @@ import asyncio
 import sys
 from typing import Optional
 
+from vector_forge.constants import DEFAULT_MODEL
 from vector_forge.core.behavior import BehaviorSpec
 from vector_forge.core.config import PipelineConfig, LLMConfig, EvaluationBudget
 from vector_forge.core.events import Event, EventType
@@ -42,8 +43,8 @@ def create_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument(
         "--llm",
         type=str,
-        default="gpt-4o",
-        help="LLM model for agents (default: gpt-4o)",
+        default=DEFAULT_MODEL,
+        help=f"LLM model for agents (default: {DEFAULT_MODEL})",
     )
     extract_parser.add_argument(
         "-n", "--prompts",

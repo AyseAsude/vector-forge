@@ -31,7 +31,7 @@ class LiteLLMClient(BaseLLMClient):
     complete reproducibility.
 
     Example:
-        >>> config = LLMConfig(model="gpt-4o", temperature=0.7)
+        >>> config = LLMConfig(model="claude-opus-4-5", temperature=0.7)
         >>> client = LiteLLMClient(config)
         >>> response = await client.complete([Message(role="user", content="Hello")])
     """

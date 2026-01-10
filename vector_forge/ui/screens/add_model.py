@@ -168,7 +168,7 @@ class AddModelScreen(ModalScreen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._manager = ModelConfigManager()
-        self._selected_provider = Provider.OPENAI
+        self._selected_provider = Provider.ANTHROPIC
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -180,11 +180,12 @@ class AddModelScreen(ModalScreen):
             # Form content - scrollable for small screens
             with VerticalScroll(id="form-content"):
                 # Provider dropdown - no "Select" prompt, always has value
+                # Anthropic is first in the list as the preferred provider
                 with Horizontal(classes="form-row"):
                     yield Static("Provider", classes="form-label")
                     yield Select(
                         [(p.value.title(), p.value) for p in Provider if p != Provider.CUSTOM],
-                        value=Provider.OPENAI.value,
+                        value=Provider.ANTHROPIC.value,
                         allow_blank=False,
                         id="sel-provider",
                     )
@@ -192,7 +193,7 @@ class AddModelScreen(ModalScreen):
                 # Model - text input
                 with Horizontal(classes="form-row"):
                     yield Static("Model", classes="form-label")
-                    yield Input(placeholder="e.g. gpt-4o, claude-3-opus", id="inp-model")
+                    yield Input(placeholder="e.g. claude-opus-4-5, gpt-5.2", id="inp-model")
 
                 # Display name
                 with Horizontal(classes="form-row"):

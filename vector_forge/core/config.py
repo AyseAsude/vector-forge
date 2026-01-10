@@ -4,6 +4,8 @@ from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
+from vector_forge.constants import DEFAULT_MODEL
+
 
 class DatapointStrategyType(str, Enum):
     """Available strategies for generating training datapoints."""
@@ -40,12 +42,12 @@ class LLMConfig(BaseModel):
     Compatible with litellm model strings for easy provider switching.
 
     Example:
-        >>> config = LLMConfig(model="gpt-4o", temperature=0.7)
-        >>> config = LLMConfig(model="claude-3-opus-20240229")
+        >>> config = LLMConfig(model="claude-opus-4-5", temperature=0.7)
+        >>> config = LLMConfig(model="gpt-5.2")
         >>> config = LLMConfig(model="ollama/llama3", api_base="http://localhost:11434")
     """
 
-    model: str = Field(default="gpt-4o", description="Model identifier (litellm format)")
+    model: str = Field(default=DEFAULT_MODEL, description="Model identifier (litellm format)")
     temperature: float = Field(default=0.7, ge=0, le=2)
     max_tokens: int = Field(default=4096, gt=0)
     api_base: Optional[str] = Field(default=None, description="Custom API endpoint")
@@ -141,8 +143,8 @@ class PipelineConfig(BaseModel):
 
     Example:
         >>> config = PipelineConfig(
-        ...     extractor_llm=LLMConfig(model="gpt-4o"),
-        ...     judge_llm=LLMConfig(model="claude-3-opus-20240229"),
+        ...     extractor_llm=LLMConfig(model="claude-opus-4-5"),
+        ...     judge_llm=LLMConfig(model="claude-sonnet-4-5"),
         ...     datapoint_strategy=DatapointStrategyType.CONTRASTIVE,
         ...     num_prompts=20,
         ...     max_iterations=5,

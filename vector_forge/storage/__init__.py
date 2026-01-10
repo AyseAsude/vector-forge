@@ -14,7 +14,7 @@ Example:
     >>>
     >>> # Create a new session
     >>> manager = StorageManager()
-    >>> store = manager.create_session("sycophancy", {"model": "gpt-4o"})
+    >>> store = manager.create_session("sycophancy", {"model": "claude-opus-4-5"})
     >>>
     >>> # Append events during extraction
     >>> store.append_event(LLMRequestEvent(...), source="extractor")
