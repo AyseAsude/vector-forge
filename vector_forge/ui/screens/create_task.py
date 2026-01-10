@@ -1,79 +1,205 @@
-"""Task creation screen for configuring and launching extractions."""
+"""Task creation screen with profile-based configuration."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, Horizontal, Grid
+from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import (
-    Static,
-    Input,
-    Button,
-    Select,
-    Label,
-    TextArea,
-    Switch,
-    ProgressBar,
-)
+from textual.widgets import Static, Input, Button, TextArea
 from textual.message import Message
 
-from vector_forge.tasks.config import (
-    TaskConfig,
-    LayerStrategy,
-    AggregationStrategy,
-)
+from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
+from vector_forge.ui.theme import COLORS
+from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
-class TaskParameterGroup(Static):
-    """A group of related task parameters."""
+class ProfileCard(Static):
+    """Clickable profile card."""
 
     DEFAULT_CSS = """
-    TaskParameterGroup {
-        height: auto;
-        padding: 1;
-        border: solid $primary-darken-2;
-        margin-bottom: 1;
-    }
-
-    TaskParameterGroup .group-title {
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
-    }
-
-    TaskParameterGroup .param-row {
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    TaskParameterGroup Label {
-        width: 20;
-        padding-right: 1;
-    }
-
-    TaskParameterGroup Input {
+    ProfileCard {
         width: 1fr;
+        height: 3;
+        padding: 0 1;
+        background: $surface;
+        content-align: center middle;
     }
 
-    TaskParameterGroup Select {
-        width: 1fr;
+    ProfileCard:hover {
+        background: $surface-hl;
+    }
+
+    ProfileCard.-selected {
+        background: $primary 20%;
     }
     """
+
+    class Selected(Message):
+        def __init__(self, profile: str) -> None:
+            super().__init__()
+            self.profile = profile
+
+    def __init__(self, profile: str, name: str, desc: str, selected: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._profile = profile
+        self._name = name
+        self._desc = desc
+        self._selected = selected
+
+    def on_mount(self) -> None:
+        self._update()
+
+    def on_click(self) -> None:
+        self.post_message(self.Selected(self._profile))
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self.set_class(selected, "-selected")
+        if self.is_mounted:
+            self._update()
+
+    @property
+    def profile(self) -> str:
+        return self._profile
+
+    def _update(self) -> None:
+        icon = "●" if self._selected else "○"
+        color = COLORS.accent if self._selected else COLORS.text_dim
+        self.update(f"[{color}]{icon}[/] [bold]{self._name}[/] [{COLORS.text_muted}]{self._desc}[/]")
+
+
+class OptionPill(Static):
+    """Clickable option pill for enum selections."""
+
+    DEFAULT_CSS = """
+    OptionPill {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        margin-right: 1;
+        background: $surface;
+    }
+
+    OptionPill:hover {
+        background: $surface-hl;
+    }
+
+    OptionPill.-selected {
+        background: $primary 25%;
+    }
+    """
+
+    class Selected(Message):
+        def __init__(self, group: str, value: str) -> None:
+            super().__init__()
+            self.group = group
+            self.value = value
+
+    def __init__(self, group: str, value: str, label: str, selected: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._group = group
+        self._value = value
+        self._label = label
+        self._selected = selected
+
+    def on_mount(self) -> None:
+        self._update()
+
+    def on_click(self) -> None:
+        self.post_message(self.Selected(self._group, self._value))
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self.set_class(selected, "-selected")
+        if self.is_mounted:
+            self._update()
+
+    @property
+    def value(self) -> str:
+        return self._value
+
+    @property
+    def group(self) -> str:
+        return self._group
+
+    def _update(self) -> None:
+        if self._selected:
+            self.update(f"[{COLORS.accent}]●[/] {self._label}")
+        else:
+            self.update(f"[{COLORS.text_dim}]○[/] [{COLORS.text_muted}]{self._label}[/]")
+
+
+class ParamRow(Horizontal):
+    """A parameter row with label and input."""
+
+    DEFAULT_CSS = """
+    ParamRow {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    ParamRow .label {
+        width: 14;
+        color: $text-muted;
+    }
+
+    ParamRow Input {
+        width: 1fr;
+        background: $surface;
+        border: none;
+    }
+
+    ParamRow Input:focus {
+        background: $surface-hl;
+    }
+    """
+
+    def __init__(self, label: str, input_id: str, value: str, hint: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._label = label
+        self._input_id = input_id
+        self._value = value
+        self._hint = hint
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._label, classes="label")
+        yield Input(value=self._value, placeholder=self._hint, id=self._input_id)
+
+
+class ParamSection(Vertical):
+    """A section of parameters with a title."""
+
+    DEFAULT_CSS = """
+    ParamSection {
+        height: auto;
+        width: 1fr;
+        padding-right: 2;
+    }
+
+    ParamSection:last-child {
+        padding-right: 0;
+    }
+
+    ParamSection .section-title {
+        height: 1;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, title: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._title = title
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._title, classes="section-title")
 
 
 class CreateTaskScreen(Screen):
-    """Screen for creating and configuring extraction tasks.
-
-    Provides a form-based interface for:
-    - Entering behavior descriptions
-    - Configuring parallelism and sampling parameters
-    - Selecting evaluation thoroughness
-    - Previewing expanded behavior
-    - Launching extraction tasks
-    """
+    """Full-screen form for creating extraction tasks."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
-        Binding("ctrl+enter", "create", "Create Task"),
+        Binding("ctrl+s", "create", "Create"),
     ]
 
     DEFAULT_CSS = """
@@ -81,101 +207,151 @@ class CreateTaskScreen(Screen):
         background: $background;
     }
 
-    CreateTaskScreen #main-container {
-        width: 100%;
-        height: 100%;
+    /* Header */
+    CreateTaskScreen #header {
+        height: 3;
+        padding: 1 2;
+        background: $surface;
+    }
+
+    CreateTaskScreen #header-title {
+        width: 1fr;
+        text-style: bold;
+    }
+
+    CreateTaskScreen #cancel-link {
+        width: auto;
+    }
+
+    /* Content */
+    CreateTaskScreen #content {
+        height: 1fr;
         padding: 1 2;
     }
 
-    CreateTaskScreen #title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1;
+    CreateTaskScreen .main-section {
+        height: 1;
+        color: $text-muted;
+        margin-bottom: 1;
+        margin-top: 1;
+    }
+
+    /* Profiles */
+    CreateTaskScreen #profiles {
+        height: 3;
         margin-bottom: 1;
     }
 
-    CreateTaskScreen #behavior-section {
+    /* Behavior */
+    CreateTaskScreen #behavior-box {
         height: auto;
         margin-bottom: 1;
     }
 
     CreateTaskScreen #behavior-input {
-        height: 4;
+        height: 8;
         margin-bottom: 1;
+        background: $surface;
+        border: none;
     }
 
-    CreateTaskScreen #params-grid {
-        grid-size: 2;
-        grid-gutter: 1 2;
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    CreateTaskScreen #preview-section {
-        height: 1fr;
-        min-height: 10;
-        border: solid $primary-darken-2;
-        padding: 1;
-        margin-bottom: 1;
-    }
-
-    CreateTaskScreen #preview-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
-    CreateTaskScreen #preview-content {
-        height: 1fr;
+    CreateTaskScreen #behavior-input:focus {
         background: $surface;
     }
 
-    CreateTaskScreen #actions {
-        height: auto;
-        align: center middle;
-        padding: 1;
+    /* Remove cursor line highlight */
+    CreateTaskScreen #behavior-input .text-area--cursor-line {
+        background: $surface;
     }
 
-    CreateTaskScreen Button {
-        margin: 0 1;
-    }
-
-    CreateTaskScreen #create-btn {
-        background: $success;
+    CreateTaskScreen #behavior-input:focus .text-area--cursor-line {
+        background: $surface;
     }
 
     CreateTaskScreen #expand-btn {
-        background: $primary;
-    }
-
-    CreateTaskScreen .section-label {
-        text-style: bold;
-        color: $text-muted;
-        margin-bottom: 1;
-    }
-
-    CreateTaskScreen .param-label {
-        width: 18;
-    }
-
-    CreateTaskScreen .param-input {
-        width: 1fr;
-    }
-
-    CreateTaskScreen #status-bar {
+        width: auto;
+        min-width: 16;
         height: 1;
-        background: $surface;
+        background: $accent;
+        color: $background;
+        border: none;
         padding: 0 1;
     }
 
-    CreateTaskScreen .expanding {
-        color: $warning;
+    CreateTaskScreen #expand-btn:hover {
+        background: $accent 80%;
+    }
+
+    /* Parameters */
+    CreateTaskScreen #params-container {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    CreateTaskScreen .params-row {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    CreateTaskScreen .option-row {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    CreateTaskScreen .option-label {
+        width: 14;
+        color: $text-muted;
+    }
+
+    CreateTaskScreen .option-pills {
+        width: 1fr;
+    }
+
+    /* Footer */
+    CreateTaskScreen #footer {
+        height: 3;
+        padding: 1 2;
+        background: $surface;
+    }
+
+    CreateTaskScreen #status {
+        width: 1fr;
+        height: 1;
+        content-align: left middle;
+    }
+
+    CreateTaskScreen #btn-cancel {
+        width: auto;
+        min-width: 10;
+        height: 1;
+        background: $surface-hl;
+        color: $text;
+        border: none;
+        padding: 0 2;
+        margin-right: 1;
+    }
+
+    CreateTaskScreen #btn-cancel:hover {
+        background: $primary 20%;
+    }
+
+    CreateTaskScreen #btn-create {
+        width: auto;
+        min-width: 14;
+        height: 1;
+        background: $success;
+        color: $background;
+        border: none;
+        padding: 0 2;
+        text-style: bold;
+    }
+
+    CreateTaskScreen #btn-create:hover {
+        background: $success 80%;
     }
     """
 
     class TaskCreated(Message):
-        """Message sent when a task is created."""
-
         def __init__(self, config: TaskConfig, description: str) -> None:
             super().__init__()
             self.config = config
@@ -183,238 +359,277 @@ class CreateTaskScreen(Screen):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._expanded_behavior = None
-        self._is_expanding = False
+        self._profile = "standard"
+        self._expanded = None
+        self._expanding = False
+        self._layer_strategy = "auto"
+        self._aggregation = "top_k_average"
+        self._save_all = False
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="main-container"):
-            yield Static("Create Extraction Task", id="title")
+        # Header
+        with Horizontal(id="header"):
+            yield Static("CREATE TASK", id="header-title")
+            yield Static(f"[{COLORS.text_dim}]ESC to cancel[/]", id="cancel-link")
 
-            # Behavior description section
-            with Vertical(id="behavior-section"):
-                yield Static("Behavior Description", classes="section-label")
+        # Content
+        with VerticalScroll(id="content"):
+            # Profile section
+            yield Static("PROFILE", classes="main-section")
+            with Horizontal(id="profiles"):
+                yield ProfileCard("quick", "Quick", "4 samples", id="profile-quick")
+                yield ProfileCard("standard", "Standard", "16 samples", selected=True, id="profile-standard")
+                yield ProfileCard("comprehensive", "Full", "32 samples", id="profile-comprehensive")
+
+            # Behavior section
+            yield Static("BEHAVIOR", classes="main-section")
+            with Vertical(id="behavior-box"):
                 yield TextArea(
-                    placeholder="Describe the behavior to extract (e.g., 'sycophancy - agreeing with users even when they are factually wrong')",
-                    id="behavior-input",
+                    placeholder="Describe the behavior to extract (e.g., 'sycophancy', 'helpfulness')",
+                    id="behavior-input"
                 )
-                yield Button("Expand with LLM", id="expand-btn", variant="primary")
+                yield Button("Expand with LLM", id="expand-btn")
 
-            # Parameters grid
-            with Grid(id="params-grid"):
-                # Left column - Sampling
-                with TaskParameterGroup():
-                    yield Static("Sampling", classes="group-title")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Samples:", classes="param-label")
-                        yield Input(value="16", id="num-samples", type="integer")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Seeds:", classes="param-label")
-                        yield Input(value="4", id="num-seeds", type="integer")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Contrast Pairs:", classes="param-label")
-                        yield Input(value="100", id="contrast-pairs", type="integer")
+            # Parameters section
+            yield Static("PARAMETERS", classes="main-section")
+            with Vertical(id="params-container"):
+                # Row 1: Sampling & Parallelism
+                with Horizontal(classes="params-row"):
+                    with ParamSection("SAMPLING"):
+                        yield ParamRow("Samples", "inp-samples", "16")
+                        yield ParamRow("Seeds", "inp-seeds", "4")
+                        yield ParamRow("Temperatures", "inp-temps", "0.5, 0.7, 1.0", "comma separated")
+                        yield ParamRow("Datapoints", "inp-datapoints", "30, 50, 100", "comma separated")
 
-                # Right column - Parallelism
-                with TaskParameterGroup():
-                    yield Static("Parallelism", classes="group-title")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Extractions:", classes="param-label")
-                        yield Input(value="8", id="max-extractions", type="integer")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Evaluations:", classes="param-label")
-                        yield Input(value="16", id="max-evaluations", type="integer")
+                    with ParamSection("PARALLELISM"):
+                        yield ParamRow("Extractions", "inp-extractions", "8")
+                        yield ParamRow("Evaluations", "inp-evaluations", "16")
+                        yield ParamRow("Contrast Pairs", "inp-contrast", "100")
+                        yield ParamRow("Top K", "inp-topk", "5")
 
-                # Left column - Strategy
-                with TaskParameterGroup():
-                    yield Static("Strategy", classes="group-title")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Layer:", classes="param-label")
-                        yield Select(
-                            [(s.value, s) for s in LayerStrategy],
-                            value=LayerStrategy.AUTO,
-                            id="layer-strategy",
-                        )
-                    with Horizontal(classes="param-row"):
-                        yield Label("Aggregation:", classes="param-label")
-                        yield Select(
-                            [(s.value, s) for s in AggregationStrategy],
-                            value=AggregationStrategy.TOP_K_AVERAGE,
-                            id="aggregation",
-                        )
+                # Row 2: Strategy options
+                with Horizontal(classes="option-row"):
+                    yield Static("Layer", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("layer", "auto", "Auto", selected=True, id="layer-auto")
+                        yield OptionPill("layer", "sweep", "Sweep", id="layer-sweep")
+                        yield OptionPill("layer", "middle", "Middle", id="layer-middle")
+                        yield OptionPill("layer", "late", "Late", id="layer-late")
 
-                # Right column - Evaluation
-                with TaskParameterGroup():
-                    yield Static("Evaluation", classes="group-title")
-                    with Horizontal(classes="param-row"):
-                        yield Label("Preset:", classes="param-label")
-                        yield Select(
-                            [
-                                ("Fast", "fast"),
-                                ("Standard", "standard"),
-                                ("Thorough", "thorough"),
-                            ],
-                            value="standard",
-                            id="eval-preset",
-                        )
-                    with Horizontal(classes="param-row"):
-                        yield Label("Top K:", classes="param-label")
-                        yield Input(value="5", id="top-k", type="integer")
+                with Horizontal(classes="option-row"):
+                    yield Static("Aggregation", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("aggregation", "top_k_average", "Top K Avg", selected=True, id="agg-topk")
+                        yield OptionPill("aggregation", "best_single", "Best", id="agg-best")
+                        yield OptionPill("aggregation", "weighted_average", "Weighted", id="agg-weighted")
+                        yield OptionPill("aggregation", "pca_principal", "PCA", id="agg-pca")
 
-            # Preview section
-            with Vertical(id="preview-section"):
-                yield Static("Expanded Behavior Preview", id="preview-title")
-                yield TextArea(
-                    "",
-                    id="preview-content",
-                    read_only=True,
-                )
+                # Row 3: Models
+                with Horizontal(classes="params-row"):
+                    with ParamSection("MODELS"):
+                        yield ParamRow("Extractor", "inp-extractor", "gpt-4o")
+                        yield ParamRow("Judge", "inp-judge", "gpt-4o")
 
-            # Action buttons
-            with Horizontal(id="actions"):
-                yield Button("Cancel", id="cancel-btn", variant="default")
-                yield Button("Create Task", id="create-btn", variant="success")
+                    with ParamSection("OPTIONS"):
+                        with Horizontal(classes="option-row"):
+                            yield Static("Save All", classes="option-label")
+                            with Horizontal(classes="option-pills"):
+                                yield OptionPill("save_all", "false", "No", selected=True, id="save-no")
+                                yield OptionPill("save_all", "true", "Yes", id="save-yes")
 
-            yield Static("", id="status-bar")
+        # Footer
+        with Horizontal(id="footer"):
+            yield Static("", id="status")
+            yield Button("Cancel", id="btn-cancel")
+            yield Button("Create Task", id="btn-create")
+
+        yield TmuxBar(active_screen="dashboard")
+
+    def on_profile_card_selected(self, event: ProfileCard.Selected) -> None:
+        self._profile = event.profile
+        for p in ["quick", "standard", "comprehensive"]:
+            self.query_one(f"#profile-{p}", ProfileCard).set_selected(p == event.profile)
+        self._apply_profile(event.profile)
+
+    def on_option_pill_selected(self, event: OptionPill.Selected) -> None:
+        """Handle option pill selection."""
+        if event.group == "layer":
+            self._layer_strategy = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "layer":
+                    pill.set_selected(pill.value == event.value)
+        elif event.group == "aggregation":
+            self._aggregation = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "aggregation":
+                    pill.set_selected(pill.value == event.value)
+        elif event.group == "save_all":
+            self._save_all = event.value == "true"
+            self.query_one("#save-no", OptionPill).set_selected(event.value == "false")
+            self.query_one("#save-yes", OptionPill).set_selected(event.value == "true")
+
+    def _apply_profile(self, profile: str) -> None:
+        configs = {
+            "quick": TaskConfig.quick(),
+            "standard": TaskConfig.standard(),
+            "comprehensive": TaskConfig.comprehensive(),
+        }
+        cfg = configs.get(profile, TaskConfig.standard())
+
+        # Update all fields
+        self.query_one("#inp-samples", Input).value = str(cfg.num_samples)
+        self.query_one("#inp-seeds", Input).value = str(cfg.num_seeds)
+        self.query_one("#inp-temps", Input).value = ", ".join(str(t) for t in cfg.temperatures)
+        self.query_one("#inp-datapoints", Input).value = ", ".join(str(d) for d in cfg.datapoint_counts)
+        self.query_one("#inp-extractions", Input).value = str(cfg.max_concurrent_extractions)
+        self.query_one("#inp-evaluations", Input).value = str(cfg.max_concurrent_evaluations)
+        self.query_one("#inp-contrast", Input).value = str(cfg.contrast_pair_count)
+        self.query_one("#inp-topk", Input).value = str(cfg.top_k)
+        self.query_one("#inp-extractor", Input).value = cfg.extractor_model
+        self.query_one("#inp-judge", Input).value = cfg.judge_model
+
+        # Update layer strategy pills
+        strategy = cfg.layer_strategies[0].value if cfg.layer_strategies else "auto"
+        self._layer_strategy = strategy
+        for pill in self.query(OptionPill):
+            if pill.group == "layer":
+                pill.set_selected(pill.value == strategy)
+
+        # Update aggregation pills
+        self._aggregation = cfg.aggregation_strategy.value
+        for pill in self.query(OptionPill):
+            if pill.group == "aggregation":
+                pill.set_selected(pill.value == cfg.aggregation_strategy.value)
+
+        # Update save all
+        self._save_all = cfg.save_all_vectors
+        self.query_one("#save-no", OptionPill).set_selected(not cfg.save_all_vectors)
+        self.query_one("#save-yes", OptionPill).set_selected(cfg.save_all_vectors)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        button_id = event.button.id
-
-        if button_id == "cancel-btn":
+        if event.button.id == "btn-cancel":
             self.action_cancel()
-        elif button_id == "create-btn":
+        elif event.button.id == "btn-create":
             self.action_create()
-        elif button_id == "expand-btn":
-            self._expand_behavior()
+        elif event.button.id == "expand-btn":
+            self._do_expand()
 
-    def _expand_behavior(self) -> None:
-        """Expand the behavior description using LLM."""
-        if self._is_expanding:
+    def _do_expand(self) -> None:
+        if self._expanding:
             return
 
-        behavior_input = self.query_one("#behavior-input", TextArea)
-        description = behavior_input.text.strip()
-
-        if not description:
-            self._set_status("Please enter a behavior description", "error")
+        textarea = self.query_one("#behavior-input", TextArea)
+        text = textarea.text.strip()
+        if not text:
+            self._status("Enter a behavior first", "error")
             return
 
-        self._is_expanding = True
-        self._set_status("Expanding behavior with LLM...", "expanding")
+        self._expanding = True
+        self._status("Expanding with LLM...", "warning")
+        textarea.disabled = True
+        self.run_worker(self._expand_async(text), exclusive=True)
 
-        # Run expansion asynchronously
-        self.run_worker(self._do_expand(description), exclusive=True)
-
-    async def _do_expand(self, description: str) -> None:
-        """Perform the behavior expansion."""
+    async def _expand_async(self, text: str) -> None:
         try:
-            # Import here to avoid circular dependency
             from vector_forge.tasks.expander import BehaviorExpander
             from vector_forge.llm import create_client
 
-            # Create LLM client
             llm = create_client("gpt-4o")
-
             expander = BehaviorExpander(llm)
-            expanded = await expander.expand(description)
+            result = await expander.expand(text)
 
-            self._expanded_behavior = expanded
-            self._show_preview(expanded)
-            self._set_status("Behavior expanded successfully", "success")
+            self._expanded = result
+
+            expanded_text = f"""{result.name}
+
+{result.description}
+
+DEFINITION:
+{result.detailed_definition[:500]}{'...' if len(result.detailed_definition) > 500 else ''}
+
+POSITIVE EXAMPLES:
+{chr(10).join('• ' + ex[:150] for ex in result.positive_examples[:3])}
+
+NEGATIVE EXAMPLES:
+{chr(10).join('• ' + ex[:150] for ex in result.negative_examples[:3])}
+
+DOMAINS: {', '.join(result.domains[:6])}
+"""
+            textarea = self.query_one("#behavior-input", TextArea)
+            textarea.text = expanded_text
+            textarea.disabled = False
+            self._status("Expanded - you can edit", "success")
 
         except Exception as e:
-            self._set_status(f"Expansion failed: {e}", "error")
+            self._status(f"Error: {e}", "error")
+            self.query_one("#behavior-input", TextArea).disabled = False
         finally:
-            self._is_expanding = False
+            self._expanding = False
 
-    def _show_preview(self, expanded) -> None:
-        """Display the expanded behavior in the preview area."""
-        preview = self.query_one("#preview-content", TextArea)
+    def _status(self, msg: str, level: str = "info") -> None:
+        colors = {"error": COLORS.error, "success": COLORS.success, "warning": COLORS.warning}
+        color = colors.get(level, COLORS.text_muted)
+        self.query_one("#status", Static).update(f"[{color}]{msg}[/]")
 
-        text = f"""Name: {expanded.name}
-
-Description: {expanded.description}
-
-Detailed Definition:
-{expanded.detailed_definition[:500]}...
-
-Positive Examples:
-{chr(10).join('• ' + ex[:100] for ex in expanded.positive_examples[:3])}
-
-Negative Examples:
-{chr(10).join('• ' + ex[:100] for ex in expanded.negative_examples[:3])}
-
-Domains: {', '.join(expanded.domains[:6])}
-
-Evaluation Criteria:
-{chr(10).join('• ' + c[:80] for c in expanded.evaluation_criteria[:4])}
-"""
-        preview.text = text
-
-    def _set_status(self, message: str, level: str = "info") -> None:
-        """Update the status bar."""
-        status = self.query_one("#status-bar", Static)
-        if level == "error":
-            status.update(f"[red]✗ {message}[/]")
-        elif level == "success":
-            status.update(f"[green]✓ {message}[/]")
-        elif level == "expanding":
-            status.update(f"[yellow]⟳ {message}[/]")
-        else:
-            status.update(message)
+    def _parse_list(self, value: str, cast=float) -> list:
+        """Parse comma-separated values into a list."""
+        if not value.strip():
+            return []
+        return [cast(x.strip()) for x in value.split(",") if x.strip()]
 
     def _build_config(self) -> TaskConfig:
-        """Build TaskConfig from form values."""
-        from vector_forge.tasks.config import EvaluationConfig
+        # Parse temperatures and datapoints
+        temps = self._parse_list(self.query_one("#inp-temps", Input).value, float)
+        datapoints = self._parse_list(self.query_one("#inp-datapoints", Input).value, int)
 
-        # Get form values
-        num_samples = int(self.query_one("#num-samples", Input).value or "16")
-        num_seeds = int(self.query_one("#num-seeds", Input).value or "4")
-        contrast_pairs = int(self.query_one("#contrast-pairs", Input).value or "100")
-        max_extractions = int(self.query_one("#max-extractions", Input).value or "8")
-        max_evaluations = int(self.query_one("#max-evaluations", Input).value or "16")
-        top_k = int(self.query_one("#top-k", Input).value or "5")
+        # Map layer strategy
+        layer_map = {
+            "auto": LayerStrategy.AUTO,
+            "sweep": LayerStrategy.SWEEP,
+            "middle": LayerStrategy.MIDDLE,
+            "late": LayerStrategy.LATE,
+            "fixed": LayerStrategy.FIXED,
+        }
+        layer_strategy = layer_map.get(self._layer_strategy, LayerStrategy.AUTO)
 
-        layer_strategy = self.query_one("#layer-strategy", Select).value
-        aggregation = self.query_one("#aggregation", Select).value
-        eval_preset = self.query_one("#eval-preset", Select).value
-
-        # Build evaluation config
-        if eval_preset == "fast":
-            evaluation = EvaluationConfig.fast()
-        elif eval_preset == "thorough":
-            evaluation = EvaluationConfig.thorough()
-        else:
-            evaluation = EvaluationConfig.standard()
+        # Map aggregation strategy
+        agg_map = {
+            "best_single": AggregationStrategy.BEST_SINGLE,
+            "top_k_average": AggregationStrategy.TOP_K_AVERAGE,
+            "weighted_average": AggregationStrategy.WEIGHTED_AVERAGE,
+            "pca_principal": AggregationStrategy.PCA_PRINCIPAL,
+            "strategy_grouped": AggregationStrategy.STRATEGY_GROUPED,
+        }
+        aggregation = agg_map.get(self._aggregation, AggregationStrategy.TOP_K_AVERAGE)
 
         return TaskConfig(
-            num_samples=num_samples,
-            num_seeds=num_seeds,
-            layer_strategies=[layer_strategy] if isinstance(layer_strategy, LayerStrategy) else [LayerStrategy.AUTO],
-            contrast_pair_count=contrast_pairs,
-            max_concurrent_extractions=max_extractions,
-            max_concurrent_evaluations=max_evaluations,
-            evaluation=evaluation,
-            aggregation_strategy=aggregation if isinstance(aggregation, AggregationStrategy) else AggregationStrategy.TOP_K_AVERAGE,
-            top_k=top_k,
+            num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
+            num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
+            layer_strategies=[layer_strategy],
+            temperatures=temps or [0.7],
+            datapoint_counts=datapoints or [50],
+            contrast_pair_count=int(self.query_one("#inp-contrast", Input).value or "100"),
+            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "8"),
+            max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
+            aggregation_strategy=aggregation,
+            top_k=int(self.query_one("#inp-topk", Input).value or "5"),
+            save_all_vectors=self._save_all,
+            extractor_model=self.query_one("#inp-extractor", Input).value or "gpt-4o",
+            judge_model=self.query_one("#inp-judge", Input).value or "gpt-4o",
         )
 
     def action_cancel(self) -> None:
-        """Cancel and return to previous screen."""
         self.app.pop_screen()
 
     def action_create(self) -> None:
-        """Create the task with current configuration."""
-        behavior_input = self.query_one("#behavior-input", TextArea)
-        description = behavior_input.text.strip()
-
-        if not description:
-            self._set_status("Please enter a behavior description", "error")
+        text = self.query_one("#behavior-input", TextArea).text.strip()
+        if not text:
+            self._status("Enter a behavior description", "error")
             return
 
         try:
             config = self._build_config()
-            self.post_message(self.TaskCreated(config, description))
+            self.post_message(self.TaskCreated(config, text))
             self.app.pop_screen()
         except Exception as e:
-            self._set_status(f"Invalid configuration: {e}", "error")
+            self._status(f"Error: {e}", "error")
