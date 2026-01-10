@@ -204,11 +204,6 @@ class MessageBlock(Vertical):
         self.message = message
 
     def compose(self) -> ComposeResult:
-        yield Static(classes="msg-header")
-        yield Static(classes="msg-content")
-        # Tool call rows will be added in on_mount
-
-    def on_mount(self) -> None:
         msg = self.message
 
         role_colors = {
@@ -219,18 +214,18 @@ class MessageBlock(Vertical):
         }
         role_color = role_colors.get(msg.role.value, "$foreground-disabled")
 
-        self.query_one(".msg-header", Static).update(
-            f"[{role_color} bold]{msg.role.value.upper()}[/] [$foreground-disabled]{msg.time_str}[/]"
+        yield Static(
+            f"[{role_color} bold]{msg.role.value.upper()}[/] [$foreground-disabled]{msg.time_str}[/]",
+            classes="msg-header"
         )
 
         content = msg.content
         if len(content) > 500:
             content = content[:497] + "..."
-        if content:
-            self.query_one(".msg-content", Static).update(content)
+        yield Static(content if content else "", classes="msg-content")
 
         for tc in msg.tool_calls:
-            self.mount(ToolCallRow(tc))
+            yield ToolCallRow(tc)
 
 
 class WorkerCard(Static):
