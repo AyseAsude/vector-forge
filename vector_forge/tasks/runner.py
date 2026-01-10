@@ -380,12 +380,15 @@ class TaskRunner:
 
                 # Emit datapoint events for complete traceability
                 for dp in datapoints:
+                    # TrainingDatapoint uses dst_completions/src_completions (lists)
+                    dst = dp.dst_completions[0] if dp.dst_completions else ""
+                    src = dp.src_completions[0] if dp.src_completions else None
                     self._emit(
                         "emit_datapoint_added",
                         datapoint_id=self._generate_id("dp"),
                         prompt=dp.prompt[:500] if dp.prompt else "",
-                        positive_completion=dp.positive[:500] if dp.positive else "",
-                        negative_completion=dp.negative[:500] if dp.negative else None,
+                        positive_completion=dst[:500] if dst else "",
+                        negative_completion=src[:500] if src else None,
                         domain=f"sample_{sample_idx}",
                         format_type="contrast_pair",
                     )

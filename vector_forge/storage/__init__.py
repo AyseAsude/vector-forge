@@ -84,6 +84,10 @@ from vector_forge.storage.replay import (
     ReplayedDatapoint,
     ReplayedVector,
     ReplayedEvaluation,
+    ReplayedContrastPair,
+    ReplayedSeed,
+    ReplayedOptimization,
+    ReplayedLogEntry,
 )
 from vector_forge.storage.store import (
     SessionStore,
@@ -125,6 +129,10 @@ __all__ = [
     "ReplayedDatapoint",
     "ReplayedVector",
     "ReplayedEvaluation",
+    "ReplayedContrastPair",
+    "ReplayedSeed",
+    "ReplayedOptimization",
+    "ReplayedLogEntry",
     # Event envelope
     "EventCategory",
     "EventEnvelope",

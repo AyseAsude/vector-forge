@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 from vector_forge.storage import (
     EventEnvelope,
     EventCategory,
+    SessionReplayer,
 )
 from vector_forge.services.session import SessionService, SessionInfo
 from vector_forge.ui.state import (
@@ -24,6 +25,7 @@ from vector_forge.ui.state import (
     ToolCall,
     DatapointMetrics,
     EvaluationMetrics,
+    LogEntry,
     get_state,
 )
 
@@ -102,14 +104,23 @@ class UIStateSynchronizer:
         self,
         session_info: SessionInfo,
     ) -> ExtractionUIState:
-        """Create an ExtractionUIState from session info.
+        """Create an ExtractionUIState from session info by replaying events.
 
         Args:
             session_info: Session information.
 
         Returns:
-            ExtractionUIState for UI display.
+            ExtractionUIState for UI display with full state from events.
         """
+        # Get the session store and replay events
+        try:
+            store = self._session_service.get_session_store(session_info.session_id)
+            replayer = SessionReplayer(store)
+            replayed = replayer.reconstruct_state()
+        except Exception as e:
+            logger.warning(f"Failed to replay session {session_info.session_id}: {e}")
+            replayed = None
+
         # Map status
         status_map = {
             "running": ExtractionStatus.RUNNING,
@@ -118,41 +129,82 @@ class UIStateSynchronizer:
         }
         status = status_map.get(session_info.status, ExtractionStatus.PENDING)
 
-        # Determine phase from status
-        if status == ExtractionStatus.COMPLETE:
-            phase = Phase.COMPLETE
-        elif status == ExtractionStatus.FAILED:
-            phase = Phase.FAILED
-        elif status == ExtractionStatus.RUNNING:
-            phase = Phase.GENERATING_DATAPOINTS  # Will be updated by events
+        # Determine phase from replayed state or status
+        if replayed:
+            phase_map = {
+                "initializing": Phase.INITIALIZING,
+                "generating": Phase.GENERATING_DATAPOINTS,
+                "extracting": Phase.OPTIMIZING,
+                "evaluating": Phase.EVALUATING,
+                "complete": Phase.COMPLETE,
+                "failed": Phase.FAILED,
+            }
+            phase = phase_map.get(replayed.current_phase, Phase.INITIALIZING)
+            progress = replayed.progress
         else:
-            phase = Phase.INITIALIZING
-
-        # Calculate progress from status
-        progress = 0.0
-        if status == ExtractionStatus.COMPLETE:
-            progress = 1.0
-        elif status == ExtractionStatus.RUNNING:
-            progress = 0.5  # Will be updated by events
+            if status == ExtractionStatus.COMPLETE:
+                phase = Phase.COMPLETE
+                progress = 1.0
+            elif status == ExtractionStatus.FAILED:
+                phase = Phase.FAILED
+                progress = 0.0
+            elif status == ExtractionStatus.RUNNING:
+                phase = Phase.GENERATING_DATAPOINTS
+                progress = 0.5
+            else:
+                phase = Phase.INITIALIZING
+                progress = 0.0
 
         # Get timing
         started_at = session_info.created_at.timestamp() if session_info.created_at else None
         completed_at = session_info.completed_at.timestamp() if session_info.completed_at else None
 
+        # Build datapoint metrics from replayed state
+        datapoints = DatapointMetrics()
+        if replayed:
+            datapoints.total = replayed.datapoint_count
+            datapoints.keep = replayed.datapoint_count  # All are kept unless removed
+
+        # Build evaluation metrics from replayed state
+        evaluation = EvaluationMetrics()
+        if replayed:
+            evaluation.overall = replayed.best_score
+            evaluation.best_layer = replayed.best_layer
+            evaluation.best_strength = replayed.best_strength
+            if replayed.evaluations:
+                last_eval = replayed.evaluations[-1]
+                evaluation.behavior = last_eval.scores.get("behavior", 0.0)
+                evaluation.coherence = last_eval.scores.get("coherence", 0.0)
+                evaluation.specificity = last_eval.scores.get("specificity", 0.0)
+                evaluation.verdict = last_eval.verdict
+        elif session_info.final_score is not None:
+            evaluation.overall = session_info.final_score
+
+        # Create extraction state
         extraction = ExtractionUIState(
             id=session_info.session_id,
-            behavior_name=session_info.behavior,
-            behavior_description="",  # Will be enriched from session data
+            behavior_name=replayed.behavior_name if replayed and replayed.behavior_name else session_info.behavior,
+            behavior_description=replayed.behavior_description if replayed else "",
             status=status,
             phase=phase,
             progress=progress,
             started_at=started_at,
             completed_at=completed_at,
+            current_layer=replayed.best_layer if replayed else None,
+            datapoints=datapoints,
+            evaluation=evaluation,
         )
 
-        # Set evaluation score if available
-        if session_info.final_score is not None:
-            extraction.evaluation.overall = session_info.final_score
+        # Add logs from replayed events to global UI state
+        if replayed and replayed.logs:
+            for log in replayed.logs[-50:]:  # Last 50 logs
+                self._ui_state.logs.append(LogEntry(
+                    timestamp=log.timestamp.timestamp(),
+                    source=log.source,
+                    message=log.message,
+                    level=log.level,
+                    extraction_id=session_info.session_id,
+                ))
 
         return extraction
 
