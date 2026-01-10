@@ -1,350 +1,499 @@
-"""Samples screen - split view of parallel extraction samples."""
-
-from typing import Optional
+"""Samples screen - split view of parallel extraction workers."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.screen import Screen
-from textual.widgets import Static, RichLog
-from textual.reactive import reactive
+from textual.screen import Screen, ModalScreen
+from textual.widgets import Static
 
 from vector_forge.ui.state import (
     AgentUIState,
     AgentStatus,
+    AgentMessage,
+    ToolCall,
     ExtractionStatus,
     get_state,
 )
 from vector_forge.ui.theme import COLORS, ICONS
+from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
-class SampleItem(Static):
-    """A single sample item in the list."""
+class ToolCallModal(ModalScreen):
+    """Modal showing tool call details."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "close"),
+        Binding("q", "dismiss", "close"),
+    ]
 
     DEFAULT_CSS = """
-    SampleItem {
-        height: 4;
-        padding: 0 1;
-        background: transparent;
+    ToolCallModal {
+        align: center middle;
     }
 
-    SampleItem:hover {
-        background: $surface-hl;
-    }
-
-    SampleItem.-selected {
+    ToolCallModal #modal {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 80%;
         background: $surface;
-        border-left: wide $accent;
+        padding: 1 2;
     }
 
-    SampleItem.-running .sample-status {
-        color: $accent;
-    }
-
-    SampleItem.-complete .sample-status {
-        color: $success;
-    }
-
-    SampleItem.-error .sample-status {
-        color: $error;
-    }
-
-    SampleItem .sample-row {
+    ToolCallModal #modal-title {
         height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ToolCallModal #modal-status {
+        height: 1;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    ToolCallModal .section {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    ToolCallModal #modal-args {
+        height: auto;
+        max-height: 10;
+        padding: 1;
+        background: $background;
+        margin-bottom: 1;
+    }
+
+    ToolCallModal #modal-result {
+        height: auto;
+        max-height: 15;
+        padding: 1;
+        background: $background;
+    }
+
+    ToolCallModal #modal-footer {
+        height: 1;
+        color: $text-muted;
+        text-align: center;
+        margin-top: 1;
     }
     """
 
-    selected: reactive[bool] = reactive(False)
+    def __init__(self, tool_call: ToolCall, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.tool_call = tool_call
+
+    def compose(self) -> ComposeResult:
+        tc = self.tool_call
+
+        status_colors = {
+            "pending": COLORS.text_muted,
+            "running": COLORS.accent,
+            "success": COLORS.success,
+            "error": COLORS.error,
+        }
+        color = status_colors.get(tc.status, COLORS.text_dim)
+        duration = f" · {tc.duration_ms}ms" if tc.duration_ms else ""
+
+        with Vertical(id="modal"):
+            yield Static(f"[{color}]{ICONS.active}[/] [bold]{tc.name}[/]", id="modal-title")
+            yield Static(f"{tc.status}{duration}", id="modal-status")
+
+            yield Static("ARGUMENTS", classes="section")
+            args_text = tc.arguments if tc.arguments else "(none)"
+            if len(args_text) > 500:
+                args_text = args_text[:497] + "..."
+            yield Static(args_text, id="modal-args")
+
+            if tc.result:
+                yield Static("RESULT", classes="section")
+                result_text = tc.result
+                if len(result_text) > 1000:
+                    result_text = result_text[:997] + "..."
+                yield Static(result_text, id="modal-result")
+
+            yield Static("Press ESC to close", id="modal-footer")
+
+
+class ToolCallRow(Static):
+    """Clickable tool call row."""
+
+    DEFAULT_CSS = """
+    ToolCallRow {
+        height: 1;
+        padding: 0 2;
+    }
+
+    ToolCallRow:hover {
+        background: $surface-hl;
+    }
+    """
+
+    class Clicked(Message):
+        def __init__(self, tool_call: ToolCall) -> None:
+            super().__init__()
+            self.tool_call = tool_call
+
+    def __init__(self, tool_call: ToolCall, **kwargs) -> None:
+        self.tool_call = tool_call
+
+        status_colors = {
+            "pending": COLORS.text_muted,
+            "running": COLORS.accent,
+            "success": COLORS.success,
+            "error": COLORS.error,
+        }
+        color = status_colors.get(tool_call.status, COLORS.text_dim)
+        duration = f" ({tool_call.duration_ms}ms)" if tool_call.duration_ms else ""
+
+        content = f"  [{color}]{ICONS.active} {tool_call.name}[/]{duration} [{COLORS.text_dim}]▸[/]"
+        super().__init__(content, **kwargs)
+
+    def on_click(self) -> None:
+        self.post_message(self.Clicked(self.tool_call))
+
+
+class MessageBlock(Vertical):
+    """A single message in the conversation."""
+
+    DEFAULT_CSS = """
+    MessageBlock {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    MessageBlock .msg-header {
+        height: 1;
+    }
+
+    MessageBlock .msg-content {
+        height: auto;
+        padding: 0 2;
+        color: $text;
+    }
+    """
+
+    def __init__(self, message: AgentMessage, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        msg = self.message
+
+        role_colors = {
+            "system": COLORS.purple,
+            "user": COLORS.blue,
+            "assistant": COLORS.accent,
+            "tool": COLORS.aqua,
+        }
+        role_color = role_colors.get(msg.role.value, COLORS.text_dim)
+
+        yield Static(
+            f"[{role_color} bold]{msg.role.value.upper()}[/] [{COLORS.text_dim}]{msg.time_str}[/]",
+            classes="msg-header"
+        )
+
+        content = msg.content
+        if len(content) > 500:
+            content = content[:497] + "..."
+        if content:
+            yield Static(content, classes="msg-content")
+
+        for tc in msg.tool_calls:
+            yield ToolCallRow(tc)
+
+
+class WorkerCard(Static):
+    """Worker card in the list."""
+
+    DEFAULT_CSS = """
+    WorkerCard {
+        height: auto;
+        padding: 1;
+        margin-bottom: 1;
+        background: $surface-hl;
+    }
+
+    WorkerCard:hover {
+        background: $primary 15%;
+    }
+
+    WorkerCard.-selected {
+        background: $primary 20%;
+    }
+
+    WorkerCard .header {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    WorkerCard .name {
+        width: 1fr;
+    }
+
+    WorkerCard .time {
+        width: auto;
+        color: $text-muted;
+    }
+
+    WorkerCard .meta {
+        height: 1;
+        color: $text-muted;
+    }
+    """
+
+    class Selected(Message):
+        def __init__(self, agent_id: str) -> None:
+            super().__init__()
+            self.agent_id = agent_id
 
     def __init__(self, agent: AgentUIState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.agent = agent
-        self.agent_id = agent.id
 
     def compose(self) -> ComposeResult:
-        yield Static(classes="sample-row sample-name")
-        yield Static(classes="sample-row sample-status")
-        yield Static(classes="sample-row sample-progress")
-        yield Static(classes="sample-row sample-time")
+        with Horizontal(classes="header"):
+            yield Static(classes="name")
+            yield Static(classes="time")
+        yield Static(classes="meta")
 
     def on_mount(self) -> None:
-        self._refresh()
+        self._update_display()
 
     def on_click(self) -> None:
-        self.post_message(SamplesList.SampleClicked(self.agent_id))
+        self.post_message(self.Selected(self.agent.id))
 
-    def watch_selected(self, selected: bool) -> None:
-        self.set_class(selected, "-selected")
-
-    def update_agent(self, agent: AgentUIState) -> None:
+    def update(self, agent: AgentUIState) -> None:
         self.agent = agent
         if self.is_mounted:
-            self._refresh()
+            self._update_display()
 
-    def _refresh(self) -> None:
+    def _update_display(self) -> None:
         agent = self.agent
 
-        # Status class
-        self.remove_class("-running", "-complete", "-error", "-idle")
-        status_class = {
-            AgentStatus.RUNNING: "-running",
-            AgentStatus.COMPLETE: "-complete",
-            AgentStatus.ERROR: "-error",
-        }.get(agent.status, "-idle")
-        self.add_class(status_class)
-
-        # Status icon
-        status_info = {
-            AgentStatus.IDLE: (ICONS.pending, COLORS.text_dim, "idle"),
-            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "running"),
-            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "waiting"),
-            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "done"),
-            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "error"),
+        status_map = {
+            AgentStatus.IDLE: (ICONS.pending, COLORS.text_muted, "IDLE"),
+            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "RUNNING"),
+            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "WAITING"),
+            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "DONE"),
+            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "ERROR"),
         }
-        icon, color, label = status_info.get(agent.status, (ICONS.pending, COLORS.text_dim, "?"))
+        icon, color, label = status_map.get(agent.status, (ICONS.pending, COLORS.text_muted, "?"))
 
-        # Update display
-        name = self.query_one(".sample-name", Static)
-        name.update(f"[bold]{agent.name}[/]")
+        # Header: icon + name on left, time on right
+        self.query_one(".name", Static).update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
+        self.query_one(".time", Static).update(agent.elapsed_str)
 
-        status = self.query_one(".sample-status", Static)
-        status.update(f"[{color}]{icon}[/] {label}")
-
-        progress = self.query_one(".sample-progress", Static)
-        progress.update(f"[{COLORS.text_dim}]{agent.turns} turns · {agent.tool_calls_count} tools[/]")
-
-        time_widget = self.query_one(".sample-time", Static)
-        time_widget.update(f"[{COLORS.text_dim}]{agent.elapsed_str}[/]")
+        # Meta: status label + stats
+        self.query_one(".meta", Static).update(
+            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools"
+        )
 
 
-class SamplesList(Vertical):
-    """List of running samples."""
+class WorkersList(Vertical):
+    """Left panel with list of workers."""
 
     DEFAULT_CSS = """
-    SamplesList {
+    WorkersList {
         width: 1fr;
-        min-width: 30;
-        max-width: 50;
+        max-width: 40;
+        padding: 1 2;
         background: $surface;
-        border-right: solid $border;
     }
 
-    SamplesList #samples-header {
-        height: 3;
-        padding: 1;
-        background: $surface;
-        border-bottom: solid $border;
-    }
-
-    SamplesList #samples-title {
+    WorkersList .header {
+        height: 1;
         text-style: bold;
+        margin-bottom: 1;
     }
 
-    SamplesList #samples-count {
+    WorkersList .count {
+        height: 1;
         color: $text-muted;
+        margin-bottom: 1;
     }
 
-    SamplesList #samples-scroll {
+    WorkersList .list {
         height: 1fr;
     }
 
-    SamplesList .samples-empty-msg {
+    WorkersList .empty {
         padding: 2;
         color: $text-muted;
         text-align: center;
     }
     """
 
-    class SampleClicked(Message):
-        """Sample was clicked."""
-        def __init__(self, agent_id: str) -> None:
-            super().__init__()
-            self.agent_id = agent_id
-
     def compose(self) -> ComposeResult:
-        with Vertical(id="samples-header"):
-            yield Static("Samples", id="samples-title")
-            yield Static(id="samples-count")
-        yield VerticalScroll(id="samples-scroll")
+        yield Static("PARALLEL RUNS", classes="header")
+        yield Static(classes="count")
+        yield VerticalScroll(classes="list")
 
-    def set_samples(self, agents: dict, selected_id: Optional[str] = None) -> None:
-        """Update the samples list."""
-        scroll = self.query_one("#samples-scroll", VerticalScroll)
+    def set_workers(self, agents: dict, selected_id: str | None = None) -> None:
+        count_widget = self.query_one(".count", Static)
+        scroll = self.query_one(".list", VerticalScroll)
 
-        # Update count
-        count = self.query_one("#samples-count", Static)
         running = sum(1 for a in agents.values() if a.status == AgentStatus.RUNNING)
         total = len(agents)
         if total == 0:
-            count.update("No samples")
+            count_widget.update("No workers")
         elif running > 0:
-            count.update(f"{running} running / {total} total")
+            count_widget.update(f"{running} active / {total} total")
         else:
-            count.update(f"{total} samples")
+            count_widget.update(f"{total} workers")
 
-        # Get existing items
-        existing = {item.agent_id: item for item in scroll.query(SampleItem)}
+        existing = {c.agent.id: c for c in scroll.query(WorkerCard)}
 
-        # Update or create items
         for agent_id, agent in agents.items():
             if agent_id in existing:
-                existing[agent_id].update_agent(agent)
-                existing[agent_id].selected = agent_id == selected_id
+                existing[agent_id].update(agent)
+                existing[agent_id].set_class(agent_id == selected_id, "-selected")
             else:
-                item = SampleItem(agent)
-                item.selected = agent_id == selected_id
-                scroll.mount(item)
+                card = WorkerCard(agent)
+                card.set_class(agent_id == selected_id, "-selected")
+                scroll.mount(card)
 
-        # Remove stale items
-        for agent_id, item in existing.items():
+        for agent_id, card in existing.items():
             if agent_id not in agents:
-                item.remove()
+                card.remove()
 
-        # Handle empty state
-        empty_widgets = list(scroll.query(".samples-empty-msg"))
+        empties = list(scroll.query(".empty"))
         if agents:
-            for w in empty_widgets:
-                w.remove()
-        elif not empty_widgets:
-            scroll.mount(Static("No samples running", classes="samples-empty-msg"))
-
-    def select(self, agent_id: str) -> None:
-        """Select a sample."""
-        for item in self.query(SampleItem):
-            item.selected = item.agent_id == agent_id
+            for e in empties:
+                e.remove()
+        elif not empties:
+            scroll.mount(Static("No workers running", classes="empty"))
 
 
-class SampleDetails(Vertical):
-    """Details panel for selected sample."""
+class ConversationPanel(Vertical):
+    """Right panel showing worker conversation."""
 
     DEFAULT_CSS = """
-    SampleDetails {
+    ConversationPanel {
         width: 2fr;
-        background: $background;
-    }
-
-    SampleDetails #details-header {
-        height: 4;
-        padding: 1;
         background: $surface;
-        border-bottom: solid $border;
     }
 
-    SampleDetails #details-title {
+    ConversationPanel .panel-header {
+        height: auto;
+        padding: 1 2;
+    }
+
+    ConversationPanel .title-row {
+        height: 1;
+        margin-bottom: 1;
+    }
+
+    ConversationPanel .title {
+        width: 1fr;
         text-style: bold;
     }
 
-    SampleDetails #details-status {
+    ConversationPanel .time {
+        width: auto;
         color: $text-muted;
     }
 
-    SampleDetails #details-stats {
+    ConversationPanel .stats {
+        height: 1;
         color: $text-muted;
     }
 
-    SampleDetails #details-log {
+    ConversationPanel .messages {
         height: 1fr;
-        padding: 1;
+        padding: 1 2;
         background: $background;
     }
 
-    SampleDetails #details-empty {
+    ConversationPanel .empty {
         height: 1fr;
         content-align: center middle;
         color: $text-muted;
     }
     """
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="details-header"):
-            yield Static("Select a sample", id="details-title")
-            yield Static(id="details-status")
-            yield Static(id="details-stats")
-        yield RichLog(id="details-log", highlight=True, markup=True)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._current_agent_id: str | None = None
+        self._message_count: int = 0
 
-    def set_agent(self, agent: Optional[AgentUIState]) -> None:
-        """Update with agent details."""
-        title = self.query_one("#details-title", Static)
-        status = self.query_one("#details-status", Static)
-        stats = self.query_one("#details-stats", Static)
-        log = self.query_one("#details-log", RichLog)
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="panel-header"):
+            with Horizontal(classes="title-row"):
+                yield Static(classes="title")
+                yield Static(classes="time")
+            yield Static(classes="stats")
+        yield VerticalScroll(classes="messages")
+
+    def show(self, agent: AgentUIState | None, force_rebuild: bool = False) -> None:
+        title = self.query_one(".title", Static)
+        time_widget = self.query_one(".time", Static)
+        stats = self.query_one(".stats", Static)
+        messages = self.query_one(".messages", VerticalScroll)
 
         if agent is None:
-            title.update(f"[{COLORS.text_muted}]Select a sample[/]")
-            status.update(f"[{COLORS.text_dim}]Click a sample to view details[/]")
-            stats.update("")
-            log.clear()
+            if self._current_agent_id is not None or force_rebuild:
+                title.update(f"[{COLORS.text_muted}]Select a worker[/]")
+                time_widget.update("")
+                stats.update(f"[{COLORS.text_dim}]Click a worker to view conversation[/]")
+                messages.remove_children()
+                messages.mount(Static("", classes="empty"))
+                self._current_agent_id = None
+                self._message_count = 0
             return
 
-        # Status styling
-        status_info = {
-            AgentStatus.IDLE: (ICONS.pending, COLORS.text_dim, "idle"),
-            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "running"),
-            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "waiting"),
-            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "complete"),
-            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "error"),
+        status_map = {
+            AgentStatus.IDLE: (ICONS.pending, COLORS.text_muted, "IDLE"),
+            AgentStatus.RUNNING: (ICONS.running, COLORS.accent, "RUNNING"),
+            AgentStatus.WAITING: (ICONS.waiting, COLORS.text_muted, "WAITING"),
+            AgentStatus.COMPLETE: (ICONS.complete, COLORS.success, "DONE"),
+            AgentStatus.ERROR: (ICONS.failed, COLORS.error, "ERROR"),
         }
-        icon, color, label = status_info.get(agent.status, (ICONS.pending, COLORS.text_dim, "?"))
+        icon, color, label = status_map.get(agent.status, (ICONS.pending, COLORS.text_muted, "?"))
 
+        # Header: icon + name on left, time on right
         title.update(f"[{color}]{icon}[/] [bold]{agent.name}[/]")
-        status.update(f"{agent.role} · {label}")
+        time_widget.update(agent.elapsed_str)
+
+        # Stats: status + role + counts
         stats.update(
-            f"{len(agent.messages)} messages · {agent.turns} turns · "
-            f"{agent.tool_calls_count} tools · {agent.elapsed_str}"
+            f"[{color}]{label}[/] · {agent.role} · "
+            f"{len(agent.messages)} msgs · {agent.turns} turns · {agent.tool_calls_count} tools"
         )
 
-        # Update log with messages
-        log.clear()
-        for msg in agent.messages:
-            role_colors = {
-                "system": COLORS.purple,
-                "user": COLORS.blue,
-                "assistant": COLORS.accent,
-                "tool": COLORS.aqua,
-            }
-            role_color = role_colors.get(msg.role.value, COLORS.text_dim)
+        # Only rebuild messages if agent changed or message count changed
+        agent_changed = agent.id != self._current_agent_id
+        messages_changed = len(agent.messages) != self._message_count
 
-            # Header
-            log.write(f"[{role_color} bold]{msg.role.value.upper()}[/] [{COLORS.text_dim}]{msg.time_str}[/]")
+        if agent_changed or messages_changed or force_rebuild:
+            messages.remove_children()
+            for msg in agent.messages:
+                messages.mount(MessageBlock(msg))
+            messages.scroll_end(animate=False)
 
-            # Content (truncated)
-            content = msg.content
-            if len(content) > 500:
-                content = content[:497] + "..."
-            if content:
-                log.write(f"  {content}")
-
-            # Tool calls
-            for tc in msg.tool_calls:
-                tc_color = {
-                    "pending": COLORS.text_muted,
-                    "running": COLORS.accent,
-                    "success": COLORS.success,
-                    "error": COLORS.error,
-                }.get(tc.status, COLORS.text_dim)
-
-                duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
-                log.write(f"  [{tc_color}]{ICONS.active} {tc.name}[/]{duration}")
-
-            log.write("")
+            self._current_agent_id = agent.id
+            self._message_count = len(agent.messages)
 
 
 class SamplesScreen(Screen):
-    """Split view screen showing parallel samples."""
+    """Split view screen showing parallel workers."""
 
     BINDINGS = [
-        Binding("1", "switch_dashboard", "dashboard"),
-        Binding("2", "noop", "samples", show=False),
-        Binding("3", "switch_logs", "logs"),
-        Binding("tab", "cycle_screen", "cycle", show=False),
-        Binding("q", "quit", "quit"),
-        Binding("n", "new_task", "new task"),
-        Binding("j", "select_next", "next", show=False),
-        Binding("k", "select_prev", "prev", show=False),
-        Binding("down", "select_next", "next", show=False),
-        Binding("up", "select_prev", "prev", show=False),
-        Binding("?", "show_help", "help"),
+        Binding("1", "go_dashboard", ""),
+        Binding("2", "noop", ""),
+        Binding("3", "go_logs", ""),
+        Binding("tab", "cycle", ""),
+        Binding("j", "next", ""),
+        Binding("k", "prev", ""),
+        Binding("down", "next", ""),
+        Binding("up", "prev", ""),
+        Binding("n", "new_task", ""),
+        Binding("q", "quit", ""),
+        Binding("?", "help", ""),
     ]
 
     DEFAULT_CSS = """
@@ -352,127 +501,73 @@ class SamplesScreen(Screen):
         background: $background;
     }
 
-    SamplesScreen #header {
-        height: 3;
-        padding: 1 2;
-        background: $surface;
-        border-bottom: solid $border;
-    }
-
-    SamplesScreen #header-title {
-        width: 1fr;
-        text-style: bold;
-    }
-
-    SamplesScreen #header-task {
-        width: auto;
-        color: $text-muted;
-    }
-
     SamplesScreen #content {
         height: 1fr;
-    }
-
-    SamplesScreen #footer {
-        dock: bottom;
-        height: 1;
-        background: $surface;
-        padding: 0 2;
-    }
-
-    SamplesScreen #footer-left {
-        width: 1fr;
-    }
-
-    SamplesScreen #footer-right {
-        width: auto;
-        color: $text-muted;
     }
     """
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="header"):
-            yield Static("Samples", id="header-title")
-            yield Static(id="header-task")
-
         with Horizontal(id="content"):
-            yield SamplesList(id="samples-list")
-            yield SampleDetails(id="sample-details")
-
-        with Horizontal(id="footer"):
-            yield Static(id="footer-left")
-            yield Static("j/k: navigate  |  1: dashboard  |  3: logs  |  n: new task", id="footer-right")
+            yield WorkersList(id="workers-list")
+            yield ConversationPanel(id="conversation")
+        yield TmuxBar(active_screen="samples")
 
     def on_mount(self) -> None:
-        self._sync_from_state()
-
-        state = get_state()
-        state.add_listener(self._on_state_changed)
-        self.set_interval(1.0, self._refresh_timers)
+        get_state().add_listener(self._on_state_change)
+        self._sync()
+        self.set_interval(1.0, self._tick)
 
     def on_unmount(self) -> None:
-        state = get_state()
-        state.remove_listener(self._on_state_changed)
+        get_state().remove_listener(self._on_state_change)
 
-    def _on_state_changed(self, state) -> None:
-        self._sync_from_state()
+    def _on_state_change(self, _) -> None:
+        self._sync()
 
-    def _sync_from_state(self) -> None:
-        state = get_state()
-        extraction = state.selected_extraction
-
-        # Update header
-        task_label = self.query_one("#header-task", Static)
-        if extraction:
-            task_label.update(f"Task: {extraction.behavior_name}")
-        else:
-            task_label.update("No task selected")
-
-        # Update samples list
-        samples_list = self.query_one("#samples-list", SamplesList)
-        details = self.query_one("#sample-details", SampleDetails)
-
-        if extraction is None:
-            samples_list.set_samples({}, None)
-            details.set_agent(None)
-            return
-
-        samples_list.set_samples(extraction.agents, extraction.selected_agent_id)
-        details.set_agent(extraction.selected_agent)
-
-        # Update footer
-        footer_left = self.query_one("#footer-left", Static)
-        running = extraction.running_agents_count
-        total = extraction.total_agents_count
-        footer_left.update(f"[{COLORS.accent}]{running}[/] running / {total} total · {extraction.elapsed_str}")
-
-    def _refresh_timers(self) -> None:
+    def _tick(self) -> None:
         state = get_state()
         extraction = state.selected_extraction
         if extraction and extraction.status == ExtractionStatus.RUNNING:
-            self._sync_from_state()
+            self._sync()
 
-    def on_samples_list_sample_clicked(self, message: SamplesList.SampleClicked) -> None:
-        """Handle sample selection."""
+    def _sync(self) -> None:
+        state = get_state()
+        extraction = state.selected_extraction
+
+        workers_list = self.query_one("#workers-list", WorkersList)
+        conversation = self.query_one("#conversation", ConversationPanel)
+
+        if extraction is None:
+            workers_list.set_workers({}, None)
+            conversation.show(None)
+        else:
+            workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
+            conversation.show(extraction.selected_agent)
+
+        self.query_one(TmuxBar).refresh_info()
+
+    def on_worker_card_selected(self, event: WorkerCard.Selected) -> None:
         state = get_state()
         extraction = state.selected_extraction
         if extraction:
-            extraction.select_agent(message.agent_id)
-            self._sync_from_state()
+            extraction.select_agent(event.agent_id)
+            self._sync()
+
+    def on_tool_call_row_clicked(self, event: ToolCallRow.Clicked) -> None:
+        self.app.push_screen(ToolCallModal(event.tool_call))
 
     def action_noop(self) -> None:
         pass
 
-    def action_switch_dashboard(self) -> None:
+    def action_go_dashboard(self) -> None:
         self.app.switch_screen("dashboard")
 
-    def action_switch_logs(self) -> None:
+    def action_go_logs(self) -> None:
         self.app.switch_screen("logs")
 
-    def action_cycle_screen(self) -> None:
+    def action_cycle(self) -> None:
         self.app.switch_screen("logs")
 
-    def action_select_next(self) -> None:
+    def action_next(self) -> None:
         state = get_state()
         extraction = state.selected_extraction
         if not extraction or not extraction.agents:
@@ -487,10 +582,9 @@ class SamplesScreen(Screen):
                 extraction.select_agent(ids[(idx + 1) % len(ids)])
             except ValueError:
                 extraction.select_agent(ids[0])
+        self._sync()
 
-        self._sync_from_state()
-
-    def action_select_prev(self) -> None:
+    def action_prev(self) -> None:
         state = get_state()
         extraction = state.selected_extraction
         if not extraction or not extraction.agents:
@@ -505,13 +599,12 @@ class SamplesScreen(Screen):
                 extraction.select_agent(ids[(idx - 1) % len(ids)])
             except ValueError:
                 extraction.select_agent(ids[-1])
-
-        self._sync_from_state()
+        self._sync()
 
     def action_new_task(self) -> None:
         self.app.push_screen("create_task")
 
-    def action_show_help(self) -> None:
+    def action_help(self) -> None:
         self.app.push_screen("help")
 
     def action_quit(self) -> None:
