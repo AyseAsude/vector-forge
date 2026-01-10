@@ -486,7 +486,7 @@ class LogPanel(Vertical):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._displayed_timestamps: set[float] = set()
-        self._last_filter_hash: int = 0
+        self._last_filter_hash: str = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -495,22 +495,31 @@ class LogPanel(Vertical):
                 yield Static(classes="count", id="log-count")
         yield VerticalScroll(classes="log-stream", id="log-stream")
 
-    def set_logs(self, logs: list[LogEntry], total: int, force: bool = False) -> None:
+    def set_logs(
+        self,
+        logs: list[LogEntry],
+        total: int,
+        force: bool = False,
+        filter_key: str = "",
+    ) -> None:
         """Update the log stream efficiently.
 
         Uses incremental updates when possible - only appends new entries
         if the filter hasn't changed. Falls back to full rebuild on filter change.
+
+        Args:
+            logs: Filtered log entries to display
+            total: Total number of logs (before filtering)
+            force: Force full rebuild
+            filter_key: String representing current filter state (for change detection)
         """
         count = self.query_one("#log-count", Static)
         count.update(f"{len(logs)} / {total}")
 
         stream = self.query_one("#log-stream", VerticalScroll)
 
-        # Compute a hash of the current filter state to detect changes
-        filter_hash = hash((total, len(logs)))
-
-        # Check if we need a full rebuild
-        filter_changed = filter_hash != self._last_filter_hash
+        # Check if filter changed (not just log count)
+        filter_changed = filter_key != self._last_filter_hash
         if force or filter_changed:
             # Full rebuild needed - use batch_update for less flicker
             with self.app.batch_update():
@@ -525,7 +534,7 @@ class LogPanel(Vertical):
                         stream.mount(LogRow(entry))
                         self._displayed_timestamps.add(entry.timestamp)
 
-            self._last_filter_hash = filter_hash
+            self._last_filter_hash = filter_key
             stream.scroll_end(animate=False)
             return
 
@@ -598,6 +607,15 @@ class LogsScreen(Screen):
 
     def on_mount(self) -> None:
         """Initial projection from current state."""
+        get_state().add_listener(self._on_state_change)
+        self._sync()
+
+    def on_unmount(self) -> None:
+        """Clean up state listener."""
+        get_state().remove_listener(self._on_state_change)
+
+    def _on_state_change(self, _) -> None:
+        """Handle state changes - update logs."""
         self._sync()
 
     # ─────────────────────────────────────────────────────────────────
@@ -663,8 +681,13 @@ class LogsScreen(Screen):
         filter_panel.update_level_counts(info_count, warning_count, error_count)
         filter_panel.update_sources(self._get_unique_sources(), self._selected_source)
 
+        # Build filter key from current filter state (not counts)
+        filter_key = f"{sorted(self._active_levels)}|{self._selected_source}|{self._search_text}"
+
         # Update log panel
-        self.query_one("#log-panel", LogPanel).set_logs(filtered, total, force=force_logs)
+        self.query_one("#log-panel", LogPanel).set_logs(
+            filtered, total, force=force_logs, filter_key=filter_key
+        )
         self.query_one(TmuxBar).refresh_info()
 
     # Event handlers

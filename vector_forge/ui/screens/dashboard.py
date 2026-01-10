@@ -253,12 +253,15 @@ class DetailsPanel(Vertical):
         max-height: 10;
     }
 
-    DetailsPanel RichLog {
+    DetailsPanel .activity-list {
         height: 1fr;
         min-height: 5;
         background: $background;
-        overflow-x: hidden;
-        overflow-y: auto;
+        padding: 0 1;
+    }
+
+    DetailsPanel .log-row {
+        height: 1;
     }
     """
 
@@ -279,8 +282,7 @@ class DetailsPanel(Vertical):
             yield Static("PARALLEL RUNS", classes="section")
             yield VerticalScroll(classes="list", id="agents-list")
             yield Static("RECENT", classes="section")
-            from textual.widgets import RichLog
-            yield RichLog(id="activity-log", highlight=True, markup=True, wrap=False, max_lines=50)
+            yield VerticalScroll(classes="activity-list", id="activity-list")
 
     def on_mount(self) -> None:
         # Start with empty state visible
@@ -388,34 +390,49 @@ class DetailsPanel(Vertical):
                 e.remove()
 
     def _update_activity_log(self, ext: ExtractionUIState) -> None:
-        """Update the activity log efficiently using RichLog."""
-        from textual.widgets import RichLog as RichLogWidget
-        activity_log = self.query_one("#activity-log", RichLogWidget)
+        """Update the activity log with same style as logs screen."""
+        activity_list = self.query_one("#activity-list", VerticalScroll)
 
         # Check if extraction changed
         extraction_changed = ext.id != self._current_extraction_id
         if extraction_changed:
-            activity_log.clear()
+            activity_list.remove_children()
             self._displayed_log_count = 0
             self._current_extraction_id = ext.id
 
         # Get logs for this extraction
         logs = get_state().get_filtered_logs(extraction_id=ext.id)[-10:]
 
-        # Only write new logs (incremental update)
+        # Only add new logs (incremental update)
         if len(logs) > self._displayed_log_count or extraction_changed:
-            # If extraction changed, write all logs
             start_idx = 0 if extraction_changed else self._displayed_log_count
             for log in logs[start_idx:]:
                 safe_message = escape_markup(log.message)
-                # Truncate long messages with ellipsis (leave room for timestamp prefix)
-                max_len = 60
-                if len(safe_message) > max_len:
-                    safe_message = safe_message[:max_len - 3] + "..."
-                level_colors = {"info": "blue", "warning": "yellow", "error": "red"}
-                color = level_colors.get(log.level, "white")
-                activity_log.write(f"[dim]{log.time_str}[/] [{color}]●[/] {safe_message}")
+                # Truncate long messages (same style as LogRow)
+                message = safe_message.replace("\n", " ")
+                max_len = 80
+                if len(message) > max_len:
+                    message = message[:max_len - 3] + "..."
+
+                level_colors = {"info": "$primary", "warning": "$warning", "error": "$error"}
+                color = level_colors.get(log.level, "$foreground-muted")
+
+                # Same format as LogRow in logs screen
+                content = (
+                    f"[$foreground-disabled]{log.time_str}[/]  "
+                    f"[{color}]●[/]  "
+                    f"[$foreground-muted]{log.source:<10}[/]  "
+                    f"{message}"
+                )
+                activity_list.mount(Static(content, classes="log-row"))
             self._displayed_log_count = len(logs)
+            activity_list.scroll_end(animate=False)
+
+        # Handle empty state
+        if not logs:
+            empties = list(activity_list.query(".empty"))
+            if not empties:
+                activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="empty"))
 
 
 class ConfirmHideTaskScreen(ModalScreen[bool]):
