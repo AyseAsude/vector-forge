@@ -101,10 +101,31 @@ class ModelConfig(BaseModel):
             return os.environ.get(default_env)
         return None
 
+    def get_litellm_model(self) -> str:
+        """Get the full model string with provider prefix for litellm.
+
+        LiteLLM requires provider prefixes for certain providers:
+        - openrouter/model-name
+        - ollama/model-name
+        - azure/deployment-name
+        """
+        # Providers that need prefix
+        prefix_map = {
+            Provider.OPENROUTER: "openrouter/",
+            Provider.OLLAMA: "ollama/",
+            Provider.AZURE: "azure/",
+        }
+        prefix = prefix_map.get(self.provider, "")
+
+        # Don't double-prefix if already present
+        if prefix and not self.model.startswith(prefix):
+            return f"{prefix}{self.model}"
+        return self.model
+
     def to_llm_config(self) -> Dict[str, Any]:
         """Convert to LLMConfig-compatible dict for litellm."""
         config = {
-            "model": self.model,
+            "model": self.get_litellm_model(),
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
@@ -455,8 +476,9 @@ class ModelConfigManager:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 self._store = ModelConfigStore.model_validate(data)
-                # Migration: ensure builtin models are marked correctly
+                # Migrations
                 self._migrate_builtin_flags()
+                self._migrate_strip_provider_prefixes()
             except (json.JSONDecodeError, Exception):
                 # Start fresh on error
                 self._store = self._create_defaults()
@@ -471,6 +493,26 @@ class ModelConfigManager:
         for config in self._store.configs:
             if config.id in BUILTIN_MODEL_IDS and not config.is_builtin:
                 config.is_builtin = True
+                changed = True
+        if changed:
+            self._save()
+
+    def _migrate_strip_provider_prefixes(self) -> None:
+        """Strip redundant provider prefixes from model names.
+
+        Provider prefix is now added automatically by get_litellm_model(),
+        so we strip any existing prefixes from saved configs.
+        """
+        prefix_map = {
+            Provider.OPENROUTER: "openrouter/",
+            Provider.OLLAMA: "ollama/",
+            Provider.AZURE: "azure/",
+        }
+        changed = False
+        for config in self._store.configs:
+            prefix = prefix_map.get(config.provider)
+            if prefix and config.model.startswith(prefix):
+                config.model = config.model[len(prefix):]
                 changed = True
         if changed:
             self._save()

@@ -20,6 +20,38 @@ if TYPE_CHECKING:
     from vector_forge.storage import SessionStore
 
 
+def _usage_to_dict(usage: Any) -> Optional[dict]:
+    """Safely convert usage object to dict.
+
+    Handles various usage object types from different litellm providers.
+    """
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return usage
+    # Try _asdict (namedtuple)
+    if hasattr(usage, "_asdict"):
+        return usage._asdict()
+    # Try model_dump (Pydantic v2)
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump()
+    # Try dict (Pydantic v1)
+    if hasattr(usage, "dict"):
+        return usage.dict()
+    # Try __dict__
+    if hasattr(usage, "__dict__"):
+        return dict(usage.__dict__)
+    # Last resort: try to access common fields
+    try:
+        return {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+            "completion_tokens": getattr(usage, "completion_tokens", 0),
+            "total_tokens": getattr(usage, "total_tokens", 0),
+        }
+    except Exception:
+        return None
+
+
 class LiteLLMClient(BaseLLMClient):
     """
     LLM client using litellm for multi-provider support.
@@ -91,7 +123,7 @@ class LiteLLMClient(BaseLLMClient):
                 **merged_kwargs,
             )
 
-            self._track_usage(response.usage._asdict() if response.usage else None)
+            self._track_usage(_usage_to_dict(response.usage))
 
             latency_ms = (time.time() - start_time) * 1000
 
@@ -101,14 +133,14 @@ class LiteLLMClient(BaseLLMClient):
                 content=response.choices[0].message.content,
                 tool_calls=[],
                 finish_reason=response.choices[0].finish_reason or "stop",
-                usage=response.usage._asdict() if response.usage else None,
+                usage=_usage_to_dict(response.usage),
                 latency_ms=latency_ms,
             )
 
             return LLMResponse(
                 content=response.choices[0].message.content,
                 finish_reason=response.choices[0].finish_reason or "stop",
-                usage=response.usage._asdict() if response.usage else None,
+                usage=_usage_to_dict(response.usage),
             )
 
         except Exception as e:
@@ -171,7 +203,7 @@ class LiteLLMClient(BaseLLMClient):
                 **merged_kwargs,
             )
 
-            self._track_usage(response.usage._asdict() if response.usage else None)
+            self._track_usage(_usage_to_dict(response.usage))
 
             message = response.choices[0].message
             tool_calls = []
@@ -210,7 +242,7 @@ class LiteLLMClient(BaseLLMClient):
                 content=message.content,
                 tool_calls=tool_calls_dicts,
                 finish_reason=response.choices[0].finish_reason or "stop",
-                usage=response.usage._asdict() if response.usage else None,
+                usage=_usage_to_dict(response.usage),
                 latency_ms=latency_ms,
             )
 
@@ -218,7 +250,7 @@ class LiteLLMClient(BaseLLMClient):
                 content=message.content,
                 tool_calls=tool_calls,
                 finish_reason=response.choices[0].finish_reason or "stop",
-                usage=response.usage._asdict() if response.usage else None,
+                usage=_usage_to_dict(response.usage),
             )
 
         except Exception as e:

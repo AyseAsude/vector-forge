@@ -269,10 +269,10 @@ class AddTargetModelScreen(ModalScreen):
                 param_count=param_count,
             )
 
-            self.call_from_thread(self._probe_success, hf_config)
+            self.app.call_from_thread(self._probe_success, hf_config)
 
         except Exception as e:
-            self.call_from_thread(self._probe_error, str(e))
+            self.app.call_from_thread(self._probe_error, str(e))
 
     def _probe_success(self, config: HFModelConfig) -> None:
         self._probing = False

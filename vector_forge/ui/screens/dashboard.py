@@ -440,14 +440,16 @@ class DashboardScreen(Screen):
         # Update or create cards
         existing = {c.extraction.id: c for c in self.query(TaskCard)}
 
-        for ext_id, ext in state.extractions.items():
+        # Reverse order so newest extractions appear at top
+        for ext_id, ext in reversed(list(state.extractions.items())):
             if ext_id in existing:
                 existing[ext_id].update(ext)
                 existing[ext_id].set_class(ext_id == state.selected_id, "-selected")
             else:
                 card = TaskCard(ext)
                 card.set_class(ext_id == state.selected_id, "-selected")
-                tasks_container.mount(card)
+                # Insert at top (index 0) to maintain newest-first order
+                tasks_container.mount(card, before=0)
 
         # Remove stale cards
         for ext_id, card in existing.items():

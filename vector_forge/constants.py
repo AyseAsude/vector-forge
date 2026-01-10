@@ -51,20 +51,23 @@ COMMON_MODELS: Dict[str, List[str]] = {
         "o3",
     ],
     "openrouter": [
-        "openrouter/anthropic/claude-opus-4-5",
-        "openrouter/anthropic/claude-sonnet-4-5",
-        "openrouter/openai/gpt-5.2",
-        "openrouter/google/gemini-2.0-flash",
-        "openrouter/deepseek/deepseek-r1",
+        # Provider prefix added automatically by get_litellm_model()
+        "anthropic/claude-opus-4-5",
+        "anthropic/claude-sonnet-4-5",
+        "openai/gpt-5.2",
+        "google/gemini-2.0-flash",
+        "deepseek/deepseek-r1",
     ],
     "azure": [
-        "azure/gpt-5.2",
-        "azure/gpt-5.2-pro",
+        # Provider prefix added automatically by get_litellm_model()
+        "gpt-5.2",
+        "gpt-5.2-pro",
     ],
     "ollama": [
-        "ollama/llama3.3",
-        "ollama/qwen2.5",
-        "ollama/deepseek-r1",
+        # Provider prefix added automatically by get_litellm_model()
+        "llama3.3",
+        "qwen2.5",
+        "deepseek-r1",
     ],
 }
 
@@ -113,9 +116,9 @@ BUILTIN_MODELS: List[Dict[str, Any]] = [
     },
     {
         "id": "openrouter-claude",
-        "name": "Claude Opus 4.5 (OpenRouter)",
+        "name": "Claude Opus 4.5",  # Provider shown separately in UI
         "provider": "openrouter",
-        "model": "openrouter/anthropic/claude-opus-4-5",
+        "model": "anthropic/claude-opus-4-5",  # Prefix added by get_litellm_model()
         "api_base": "https://openrouter.ai/api/v1",
     },
 ]
@@ -130,5 +133,5 @@ BUILTIN_MODEL_IDS = {m["id"] for m in BUILTIN_MODELS}
 FALLBACK_MODELS: Dict[str, str] = {
     "anthropic": "claude-opus-4-5",
     "openai": "gpt-5.2",
-    "openrouter": "openrouter/anthropic/claude-opus-4-5",
+    "openrouter": "anthropic/claude-opus-4-5",  # Prefix added by get_litellm_model()
 }

@@ -726,8 +726,8 @@ class CreateTaskScreen(Screen):
             from vector_forge.tasks.expander import BehaviorExpander
             from vector_forge.llm import create_client
 
-            # Use expander model, or default
-            model = self._expander_config.model if self._expander_config else DEFAULT_MODEL
+            # Use expander model, or default (with provider prefix)
+            model = self._expander_config.get_litellm_model() if self._expander_config else DEFAULT_MODEL
             llm = create_client(model)
             expander = BehaviorExpander(llm)
             result = await expander.expand(text)
@@ -786,12 +786,12 @@ DOMAINS: {', '.join(result.domains[:6])}
         }
         aggregation = agg_map.get(self._aggregation, AggregationStrategy.TOP_K_AVERAGE)
 
-        # Get model names from configs
+        # Get model names from configs (with provider prefix for litellm)
         extractor_model = (
-            self._extractor_config.model if self._extractor_config else DEFAULT_MODEL
+            self._extractor_config.get_litellm_model() if self._extractor_config else DEFAULT_MODEL
         )
         judge_model = (
-            self._judge_config.model if self._judge_config else DEFAULT_MODEL
+            self._judge_config.get_litellm_model() if self._judge_config else DEFAULT_MODEL
         )
 
         # Build optimization config
@@ -852,7 +852,12 @@ DOMAINS: {', '.join(result.domains[:6])}
 
         try:
             config = self._build_config()
-            self.post_message(self.TaskCreated(config, text))
+            # Use LLM-generated short description if available, otherwise raw text
+            if self._expanded:
+                description = f"{self._expanded.name}: {self._expanded.description}"
+            else:
+                description = text
+            self.post_message(self.TaskCreated(config, description))
             self.app.pop_screen()
         except Exception as e:
             self._status(f"Error: {e}", "error")

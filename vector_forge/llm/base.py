@@ -66,14 +66,45 @@ class BaseLLMClient(EventEmitter, ABC):
         """Generate a completion with tool use."""
         ...
 
+    async def generate(
+        self,
+        messages: List[dict],
+        **kwargs: Any,
+    ) -> str:
+        """Generate a text response from dict messages.
+
+        Convenience method that wraps complete() for simpler use cases.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys.
+            **kwargs: Additional arguments (model, temperature, etc).
+
+        Returns:
+            Generated text content.
+        """
+        # Convert dicts to Message objects
+        msg_objects = [
+            Message(role=m["role"], content=m["content"])
+            for m in messages
+        ]
+        response = await self.complete(msg_objects, **kwargs)
+        return response.content or ""
+
     def _merge_kwargs(self, **kwargs: Any) -> dict:
-        """Merge provided kwargs with config defaults."""
+        """Merge provided kwargs with config defaults.
+
+        Filters out 'model' and 'api_base' since those are passed
+        explicitly to litellm.acompletion().
+        """
         merged = {
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
             **self.config.extra_params,
             **kwargs,
         }
+        # Remove keys that are passed explicitly to litellm
+        merged.pop("model", None)
+        merged.pop("api_base", None)
         return merged
 
     def _track_usage(self, usage: Optional[dict]) -> None:
