@@ -245,6 +245,14 @@ class UIStateSynchronizer:
                 "evaluation.completed": self._handle_evaluation_completed,
                 "state.iteration_started": self._handle_iteration_started,
                 "state.iteration_completed": self._handle_iteration_completed,
+                # Per-sample tracking events
+                "optimization.started": self._handle_optimization_started,
+                "optimization.progress": self._handle_optimization_progress,
+                "optimization.completed": self._handle_optimization_completed,
+                "contrast.pipeline_started": self._handle_contrast_pipeline_started,
+                "contrast.pair_generated": self._handle_contrast_pair_generated,
+                "contrast.pair_validated": self._handle_contrast_pair_validated,
+                "seed.assigned": self._handle_seed_assigned,
             }
 
             handler = handlers.get(event.event_type)
@@ -609,6 +617,268 @@ class UIStateSynchronizer:
             extraction.progress = 0.3 + (outer_progress * 0.6)  # 30-90% for iterations
 
         self._ui_state._notify()
+
+    # =========================================================================
+    # Per-Sample Tracking Handlers
+    # =========================================================================
+
+    def _handle_optimization_started(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle optimization.started event - creates a per-sample agent."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        sample_idx = payload.get("sample_idx", 0)
+        layer = payload.get("layer", 0)
+        num_datapoints = payload.get("num_datapoints", 0)
+        config = payload.get("config", {})
+
+        # Create a per-sample agent
+        agent = self._get_or_create_sample_agent(extraction, sample_idx, layer, config)
+        agent.status = AgentStatus.RUNNING
+        agent.started_at = event.timestamp.timestamp()
+
+        # Add initial message
+        agent.add_message(
+            MessageRole.SYSTEM,
+            f"Optimizing steering vector on layer {layer} with {num_datapoints} datapoints"
+        )
+
+        extraction.phase = Phase.OPTIMIZING
+        self._ui_state._notify()
+
+        self._ui_state.add_log(
+            source=f"sample_{sample_idx}",
+            message=f"Sample {sample_idx}: Started optimization (layer {layer})",
+            level="info",
+            extraction_id=session_id,
+        )
+
+    def _handle_optimization_progress(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle optimization.progress event - updates sample agent."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        sample_idx = payload.get("sample_idx", 0)
+        iteration = payload.get("iteration", 0)
+        loss = payload.get("loss", 0.0)
+
+        agent = self._get_sample_agent(extraction, sample_idx)
+        if agent:
+            agent.current_tool = f"iter {iteration} loss={loss:.4f}"
+            # Only notify every 10 iterations to reduce UI updates
+            if iteration % 10 == 0:
+                self._ui_state._notify()
+
+    def _handle_optimization_completed(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle optimization.completed event - marks sample agent complete."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        sample_idx = payload.get("sample_idx", 0)
+        success = payload.get("success", True)
+        final_loss = payload.get("final_loss", 0.0)
+        iterations = payload.get("iterations", 0)
+        duration = payload.get("duration_seconds", 0.0)
+        error = payload.get("error")
+
+        agent = self._get_sample_agent(extraction, sample_idx)
+        if agent:
+            agent.status = AgentStatus.COMPLETE if success else AgentStatus.ERROR
+            agent.completed_at = event.timestamp.timestamp()
+            agent.current_tool = None
+
+            if success:
+                agent.add_message(
+                    MessageRole.ASSISTANT,
+                    f"Optimization complete: loss={final_loss:.4f}, {iterations} iterations in {duration:.1f}s"
+                )
+            else:
+                agent.add_message(
+                    MessageRole.ASSISTANT,
+                    f"Optimization failed: {error or 'Unknown error'}"
+                )
+
+        self._ui_state._notify()
+
+        status_text = "completed" if success else "failed"
+        self._ui_state.add_log(
+            source=f"sample_{sample_idx}",
+            message=f"Sample {sample_idx}: {status_text} (loss={final_loss:.4f})",
+            level="info" if success else "error",
+            extraction_id=session_id,
+        )
+
+    def _handle_contrast_pipeline_started(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle contrast.pipeline_started event."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        num_samples = payload.get("num_samples", 0)
+
+        extraction.phase = Phase.GENERATING_DATAPOINTS
+        extraction.max_outer_iterations = num_samples
+
+        self._ui_state.add_log(
+            source="contrast",
+            message=f"Starting contrast generation for {num_samples} samples",
+            level="info",
+            extraction_id=session_id,
+        )
+
+        self._ui_state._notify()
+
+    def _handle_contrast_pair_generated(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle contrast.pair_generated event."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        sample_idx = payload.get("sample_idx", 0)
+
+        # Create or update sample agent to show contrast pair generation
+        agent = self._get_or_create_sample_agent(extraction, sample_idx)
+        agent.status = AgentStatus.RUNNING
+        agent.tool_calls_count += 1
+        agent.current_tool = "generating pairs"
+
+        # Only notify every 5 pairs to reduce UI churn
+        if agent.tool_calls_count % 5 == 0:
+            self._ui_state._notify()
+
+    def _handle_contrast_pair_validated(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle contrast.pair_validated event."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        is_valid = payload.get("is_valid", False)
+        contrast_quality = payload.get("contrast_quality", 0.0)
+
+        # Update datapoints metrics
+        if is_valid:
+            extraction.datapoints.total += 1
+            extraction.datapoints.keep += 1
+
+        # Notify sparingly
+        if extraction.datapoints.total % 5 == 0:
+            self._ui_state._notify()
+
+    def _handle_seed_assigned(self, session_id: str, event: EventEnvelope) -> None:
+        """Handle seed.assigned event - creates sample agent before optimization."""
+        extraction_id = self._session_to_extraction.get(session_id)
+        if not extraction_id:
+            return
+
+        extraction = self._ui_state.extractions.get(extraction_id)
+        if not extraction:
+            return
+
+        payload = event.payload
+        sample_idx = payload.get("sample_idx", 0)
+        num_seeds = len(payload.get("seed_ids", []))
+
+        # Create sample agent in waiting state
+        agent = self._get_or_create_sample_agent(extraction, sample_idx)
+        agent.status = AgentStatus.WAITING
+        agent.add_message(
+            MessageRole.SYSTEM,
+            f"Assigned {num_seeds} seeds for contrast pair generation"
+        )
+
+        self._ui_state._notify()
+
+    def _get_or_create_sample_agent(
+        self,
+        extraction: ExtractionUIState,
+        sample_idx: int,
+        layer: int = 0,
+        config: dict = None,
+    ) -> AgentUIState:
+        """Get or create a per-sample agent.
+
+        Args:
+            extraction: The extraction state.
+            sample_idx: The sample index (0-based).
+            layer: Target layer for this sample.
+            config: Optimization config for role description.
+
+        Returns:
+            AgentUIState for this sample.
+        """
+        agent_id = f"{extraction.id}_sample_{sample_idx}"
+
+        if agent_id in extraction.agents:
+            return extraction.agents[agent_id]
+
+        # Build role description from config
+        if config:
+            lr = config.get("lr", 0.01)
+            seed = config.get("seed", 0)
+            role = f"L={layer} lr={lr:.3f} seed={seed}"
+        else:
+            role = f"sample {sample_idx}"
+
+        agent = AgentUIState(
+            id=agent_id,
+            name=f"Sample {sample_idx + 1}",
+            role=role,
+            status=AgentStatus.IDLE,
+            started_at=time.time(),
+        )
+        extraction.add_agent(agent)
+
+        return agent
+
+    def _get_sample_agent(
+        self,
+        extraction: ExtractionUIState,
+        sample_idx: int,
+    ) -> AgentUIState | None:
+        """Get a sample agent if it exists.
+
+        Args:
+            extraction: The extraction state.
+            sample_idx: The sample index.
+
+        Returns:
+            AgentUIState or None if not found.
+        """
+        agent_id = f"{extraction.id}_sample_{sample_idx}"
+        return extraction.agents.get(agent_id)
 
     def _get_or_create_agent(
         self,

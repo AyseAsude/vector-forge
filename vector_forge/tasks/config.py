@@ -544,13 +544,13 @@ class TaskConfig(BaseModel):
     )
 
     # Parallelism control
-    # NOTE: Default is 1 to prevent GPU OOM. Each extraction needs memory for
+    # NOTE: Default is 2 to balance speed vs GPU memory. Each extraction needs memory for
     # gradients/activations during optimization. Increase only if you have enough VRAM.
     max_concurrent_extractions: int = Field(
-        default=1,
+        default=2,
         ge=1,
         le=32,
-        description="Maximum parallel extraction workers (default 1 for GPU memory safety)",
+        description="Maximum parallel extraction workers (default 2 for GPU memory safety)",
     )
 
     max_concurrent_evaluations: int = Field(
