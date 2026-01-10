@@ -7,6 +7,7 @@ from textual.screen import Screen
 from textual.widgets import Static, Input, Button, TextArea
 from textual.message import Message
 
+from vector_forge.constants import DEFAULT_MODEL
 from vector_forge.tasks.config import (
     TaskConfig,
     LayerStrategy,
@@ -653,8 +654,8 @@ class CreateTaskScreen(Screen):
             from vector_forge.tasks.expander import BehaviorExpander
             from vector_forge.llm import create_client
 
-            # Use extractor model for expansion, or default to claude-opus-4-5
-            model = self._extractor_config.model if self._extractor_config else "claude-opus-4-5"
+            # Use extractor model for expansion, or default
+            model = self._extractor_config.model if self._extractor_config else DEFAULT_MODEL
             llm = create_client(model)
             expander = BehaviorExpander(llm)
             result = await expander.expand(text)
@@ -715,10 +716,10 @@ DOMAINS: {', '.join(result.domains[:6])}
 
         # Get model names from configs
         extractor_model = (
-            self._extractor_config.model if self._extractor_config else "claude-opus-4-5"
+            self._extractor_config.model if self._extractor_config else DEFAULT_MODEL
         )
         judge_model = (
-            self._judge_config.model if self._judge_config else "claude-opus-4-5"
+            self._judge_config.model if self._judge_config else DEFAULT_MODEL
         )
 
         # Build optimization config

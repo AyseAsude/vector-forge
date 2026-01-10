@@ -14,6 +14,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from vector_forge.constants import DEFAULT_MODEL, DEFAULT_MODEL_NAME
+
 
 class Provider(str, Enum):
     """Supported LLM providers."""
@@ -26,44 +28,36 @@ class Provider(str, Enum):
     CUSTOM = "custom"
 
 
-# Common models for quick selection (January 2026)
+# Common models for quick selection
 COMMON_MODELS: Dict[Provider, List[str]] = {
     Provider.OPENAI: [
-        "gpt-5.2",
-        "gpt-5.2-pro",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "o3",
-        "o3-pro",
-        "o4-mini",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o1",
+        "o1-mini",
+        "o3-mini",
     ],
     Provider.ANTHROPIC: [
-        "claude-4.5-sonnet",
-        "claude-4.5-opus",
-        "claude-4-sonnet",
-        "claude-4-opus",
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-0",
+        "claude-haiku-3-5",
     ],
     Provider.OPENROUTER: [
-        "openrouter/anthropic/claude-4.5-sonnet",
-        "openrouter/anthropic/claude-4.5-opus",
-        "openrouter/openai/gpt-5.2",
-        "openrouter/openai/gpt-5.2-pro",
-        "openrouter/google/gemini-3-flash",
-        "openrouter/google/gemini-2.5-flash",
-        "openrouter/x-ai/grok-4.1-fast",
-        "openrouter/deepseek/deepseek-v3.2",
-        "openrouter/meta-llama/llama-4-maverick",
+        "openrouter/anthropic/claude-opus-4-5",
+        "openrouter/anthropic/claude-sonnet-4-5",
+        "openrouter/openai/gpt-4o",
+        "openrouter/google/gemini-2.0-flash",
+        "openrouter/deepseek/deepseek-r1",
     ],
     Provider.AZURE: [
-        "azure/gpt-5.2",
-        "azure/gpt-5.2-pro",
-        "azure/gpt-5-mini",
+        "azure/gpt-4o",
+        "azure/gpt-4o-mini",
     ],
     Provider.OLLAMA: [
-        "ollama/llama4",
-        "ollama/qwen3",
-        "ollama/deepseek-v3",
-        "ollama/mistral-large",
+        "ollama/llama3.3",
+        "ollama/qwen2.5",
+        "ollama/deepseek-r1",
     ],
 }
 
@@ -89,16 +83,16 @@ class ModelConfig(BaseModel):
 
     Example:
         >>> config = ModelConfig(
-        ...     id="my-gpt4",
-        ...     name="GPT-4o",
-        ...     provider=Provider.OPENAI,
-        ...     model="gpt-4o",
+        ...     id="my-claude",
+        ...     name="Claude Opus 4.5",
+        ...     provider=Provider.ANTHROPIC,
+        ...     model="claude-opus-4-5",
         ... )
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     name: str = Field(..., description="Display name for the model")
-    provider: Provider = Field(default=Provider.OPENAI)
+    provider: Provider = Field(default=Provider.ANTHROPIC)
     model: str = Field(..., description="LiteLLM model identifier")
 
     # Optional configuration
@@ -164,7 +158,7 @@ class ModelConfig(BaseModel):
                 Provider.CUSTOM: "Custom",
             }
             model_short = model.split("/")[-1].replace("-", " ").title()
-            name = f"{provider_names[provider]} {model_short}"
+            name = f"{provider_names.get(provider, 'Custom')} {model_short}"
 
         return cls(
             name=name,
@@ -225,9 +219,18 @@ class ModelConfigManager:
 
     Example:
         >>> manager = ModelConfigManager()
-        >>> manager.add(ModelConfig(name="My GPT", provider=Provider.OPENAI, model="gpt-4o"))
+        >>> manager.add(ModelConfig(name="My Claude", provider=Provider.ANTHROPIC, model="claude-opus-4-5"))
         >>> configs = manager.list_all()
     """
+
+    # Default model IDs that should be marked as builtin
+    _BUILTIN_IDS = {
+        "anthropic-opus",
+        "anthropic-sonnet",
+        "openai-gpt4o",
+        "openai-gpt4o-mini",
+        "openrouter-claude",
+    }
 
     def __init__(self, base_path: Optional[Path] = None) -> None:
         """Initialize the manager.
@@ -245,15 +248,6 @@ class ModelConfigManager:
     def _ensure_dir(self) -> None:
         """Ensure config directory exists."""
         self.base_path.mkdir(parents=True, exist_ok=True)
-
-    # Default model IDs that should be marked as builtin
-    _BUILTIN_IDS = {
-        "openai-gpt52",
-        "openai-gpt5-mini",
-        "anthropic-sonnet-4.5",
-        "anthropic-opus-4.5",
-        "openrouter-claude-4.5",
-    }
 
     def _load(self) -> ModelConfigStore:
         """Load store from disk."""
@@ -300,45 +294,49 @@ class ModelConfigManager:
         """Create default model configurations."""
         store = ModelConfigStore()
 
-        # Add default OpenAI models (builtin = can't be deleted)
+        # Default: Claude Opus 4.5 (primary)
         store.add(ModelConfig(
-            id="openai-gpt52",
-            name="GPT-5.2",
-            provider=Provider.OPENAI,
-            model="gpt-5.2",
+            id="anthropic-opus",
+            name=DEFAULT_MODEL_NAME,
+            provider=Provider.ANTHROPIC,
+            model=DEFAULT_MODEL,
             is_default=True,
             is_builtin=True,
         ))
+
+        # Claude Sonnet 4.5
         store.add(ModelConfig(
-            id="openai-gpt5-mini",
-            name="GPT-5 Mini",
+            id="anthropic-sonnet",
+            name="Claude Sonnet 4.5",
+            provider=Provider.ANTHROPIC,
+            model="claude-sonnet-4-5",
+            is_builtin=True,
+        ))
+
+        # OpenAI GPT-4o
+        store.add(ModelConfig(
+            id="openai-gpt4o",
+            name="GPT-4o",
             provider=Provider.OPENAI,
-            model="gpt-5-mini",
+            model="gpt-4o",
             is_builtin=True,
         ))
 
-        # Add default Anthropic models
+        # OpenAI GPT-4o Mini
         store.add(ModelConfig(
-            id="anthropic-sonnet-4.5",
-            name="Claude 4.5 Sonnet",
-            provider=Provider.ANTHROPIC,
-            model="claude-4.5-sonnet",
-            is_builtin=True,
-        ))
-        store.add(ModelConfig(
-            id="anthropic-opus-4.5",
-            name="Claude 4.5 Opus",
-            provider=Provider.ANTHROPIC,
-            model="claude-4.5-opus",
+            id="openai-gpt4o-mini",
+            name="GPT-4o Mini",
+            provider=Provider.OPENAI,
+            model="gpt-4o-mini",
             is_builtin=True,
         ))
 
-        # Add OpenRouter default
+        # OpenRouter Claude
         store.add(ModelConfig(
-            id="openrouter-claude-4.5",
-            name="Claude 4.5 Sonnet (OpenRouter)",
+            id="openrouter-claude",
+            name="Claude Opus 4.5 (OpenRouter)",
             provider=Provider.OPENROUTER,
-            model="openrouter/anthropic/claude-4.5-sonnet",
+            model="openrouter/anthropic/claude-opus-4-5",
             api_base="https://openrouter.ai/api/v1",
             is_builtin=True,
         ))

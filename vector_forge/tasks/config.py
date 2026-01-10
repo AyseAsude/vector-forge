@@ -13,6 +13,8 @@ from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from vector_forge.constants import DEFAULT_MODEL
+
 
 class ContrastQuality(str, Enum):
     """Contrast generation quality preset."""
@@ -583,17 +585,17 @@ class TaskConfig(BaseModel):
 
     # LLM settings
     extractor_model: str = Field(
-        default="claude-opus-4-5",
+        default=DEFAULT_MODEL,
         description="Model for datapoint generation",
     )
 
     judge_model: str = Field(
-        default="claude-opus-4-5",
+        default=DEFAULT_MODEL,
         description="Model for evaluation judging",
     )
 
     expander_model: str = Field(
-        default="claude-opus-4-5",
+        default=DEFAULT_MODEL,
         description="Model for behavior expansion",
     )
 
