@@ -357,10 +357,11 @@ class MessageRow(Static):
             try:
                 data = json.loads(content)
                 if isinstance(data, dict):
-                    # Extract reasoning/description fields for human-readable display
-                    for key in ('reasoning', 'description', 'explanation', 'summary', 'content'):
-                        if key in data and isinstance(data[key], str):
-                            return data[key]
+                    # For contrast pairs, show prompt summary
+                    if 'prompt' in data and ('positive_response' in data or 'dst_response' in data):
+                        prompt = data.get('prompt', '')[:150]
+                        return f"[Contrast Pair] {prompt}..."
+
                     # For scored responses, show a summary
                     if 'dst_behavior_score' in data or 'score' in data:
                         score = data.get('dst_behavior_score') or data.get('score', '?')
@@ -372,6 +373,17 @@ class MessageRow(Static):
                         if reasoning:
                             parts.append(reasoning)
                         return " | ".join(parts)
+
+                    # Extract readable text fields
+                    for key in ('reasoning', 'description', 'explanation', 'summary', 'content', 'prompt', 'scenario', 'text'):
+                        if key in data and isinstance(data[key], str):
+                            return data[key]
+
+                    # For arrays of items (scenarios, components, etc.), show count
+                    for key in ('scenarios', 'components', 'pairs', 'items'):
+                        if key in data and isinstance(data[key], list):
+                            return f"[{len(data[key])} {key}]"
+
             except (json.JSONDecodeError, TypeError):
                 pass
 
