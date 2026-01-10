@@ -252,6 +252,7 @@ class TaskRunner:
             evaluated_results,
             task.behavior,
             config,
+            sample_datasets,
         )
 
         final_result.started_at = started_at
@@ -583,8 +584,19 @@ class TaskRunner:
         results: List[SampleResult],
         behavior: ExpandedBehavior,
         config: TaskConfig,
+        sample_datasets: Dict[int, SampleDataset],
     ) -> TaskResult:
-        """Aggregate sample results into final task result."""
+        """Aggregate sample results into final task result.
+
+        Args:
+            results: List of sample results from extraction.
+            behavior: The expanded behavior specification.
+            config: Task configuration.
+            sample_datasets: Original datasets for reproducibility storage.
+
+        Returns:
+            TaskResult with final aggregated vector and full reproducibility data.
+        """
         valid_results = [r for r in results if r.is_valid]
 
         if not valid_results:
@@ -635,6 +647,12 @@ class TaskRunner:
             final_score = sum(r.overall_score for r in top_results) / top_k
             ensemble_components = [r.sample.sample_id for r in top_results]
 
+        elif strategy == AggregationStrategy.STRATEGY_GROUPED:
+            # Group results by layer strategy, average within groups, then combine
+            final_vector, final_layer, final_score, ensemble_components = (
+                self._strategy_grouped_aggregation(sorted_results, top_k)
+            )
+
         else:
             # Default to best single
             final_vector = sorted_results[0].vector
@@ -644,6 +662,9 @@ class TaskRunner:
 
         # Find recommended strength from best result
         recommended_strength = sorted_results[0].recommended_strength
+
+        # Serialize contrast data for reproducibility
+        contrast_data = self._serialize_sample_datasets(sample_datasets)
 
         return TaskResult(
             behavior=behavior,
@@ -661,6 +682,8 @@ class TaskRunner:
                 "num_layers": self._num_layers,
                 "hidden_dim": self._hidden_dim,
             },
+            task_config=config,
+            contrast_data=contrast_data,
         )
 
     def _average_vectors(self, vectors: List[torch.Tensor]) -> torch.Tensor:
@@ -701,6 +724,129 @@ class TaskRunner:
             principal = -principal
 
         return principal / principal.norm()
+
+    def _strategy_grouped_aggregation(
+        self,
+        sorted_results: List[SampleResult],
+        top_k: int,
+    ) -> tuple[torch.Tensor, int, float, List[str]]:
+        """Aggregate results by grouping by layer strategy first.
+
+        Groups results by their layer strategy, averages within each group,
+        then combines the group averages.
+
+        Args:
+            sorted_results: Results sorted by score (descending).
+            top_k: Number of top results to consider.
+
+        Returns:
+            Tuple of (final_vector, final_layer, final_score, ensemble_components).
+        """
+        from collections import defaultdict
+
+        # Group by layer strategy
+        strategy_groups: Dict[LayerStrategy, List[SampleResult]] = defaultdict(list)
+        for result in sorted_results[:top_k]:
+            strategy = result.sample.config.layer_strategy
+            strategy_groups[strategy].append(result)
+
+        if not strategy_groups:
+            # Fallback to best single
+            best = sorted_results[0]
+            return best.vector, best.layer, best.overall_score, [best.sample.sample_id]
+
+        # Average within each group
+        group_vectors: List[torch.Tensor] = []
+        group_scores: List[float] = []
+        ensemble_components: List[str] = []
+
+        for strategy, group_results in strategy_groups.items():
+            if not group_results:
+                continue
+
+            # Average vectors in this group
+            vectors = [r.vector for r in group_results]
+            group_avg = self._average_vectors(vectors)
+            group_vectors.append(group_avg)
+
+            # Average score for this group
+            avg_score = sum(r.overall_score for r in group_results) / len(group_results)
+            group_scores.append(avg_score)
+
+            # Track components
+            ensemble_components.extend([r.sample.sample_id for r in group_results])
+
+        # Combine group averages (weighted by group score)
+        if len(group_vectors) == 1:
+            final_vector = group_vectors[0]
+        else:
+            final_vector = self._weighted_average_vectors(group_vectors, group_scores)
+
+        # Use the layer from the best result
+        final_layer = sorted_results[0].layer
+        final_score = sum(group_scores) / len(group_scores)
+
+        return final_vector, final_layer, final_score, ensemble_components
+
+    def _serialize_sample_datasets(
+        self,
+        sample_datasets: Dict[int, SampleDataset],
+    ) -> Dict[str, Any]:
+        """Serialize sample datasets for storage.
+
+        Converts SampleDatasets to a JSON-serializable format for full
+        reproducibility.
+
+        Args:
+            sample_datasets: Dictionary mapping sample index to dataset.
+
+        Returns:
+            JSON-serializable dictionary with all contrast data.
+        """
+        serializer = DatapointSerializer()
+
+        serialized = {
+            "num_samples": len(sample_datasets),
+            "samples": {},
+        }
+
+        for sample_idx, dataset in sample_datasets.items():
+            # Serialize valid pairs with full metadata
+            pairs_data = []
+            for pair in dataset.valid_pairs:
+                pair_dict = {
+                    "prompt": pair.prompt,
+                    "dst": pair.dst,
+                    "src": pair.src,
+                    "is_valid": pair.is_valid,
+                    "attempts": pair.attempts,
+                }
+                # Add seed info if available
+                if pair.seed:
+                    pair_dict["seed"] = {
+                        "scenario": pair.seed.scenario,
+                        "context": pair.seed.context,
+                        "quality_score": pair.seed.quality_score,
+                    }
+                # Add validation info if available
+                if pair.validation:
+                    pair_dict["validation"] = {
+                        "dst_behavior_score": pair.validation.dst_behavior_score,
+                        "src_behavior_score": pair.validation.src_behavior_score,
+                        "semantic_distance": pair.validation.semantic_distance,
+                        "contrast_quality": pair.validation.contrast_quality,
+                    }
+                pairs_data.append(pair_dict)
+
+            serialized["samples"][str(sample_idx)] = {
+                "sample_id": dataset.sample_id,
+                "num_pairs": len(dataset.all_pairs),
+                "num_valid": len(dataset.valid_pairs),
+                "avg_quality": dataset.avg_contrast_quality,
+                "pairs": pairs_data,
+            }
+
+        return serialized
 
     def _report_progress(
         self,
@@ -800,6 +946,42 @@ def reaggregate_results(
         if (principal @ mean) < 0:
             principal = -principal
         return principal / principal.norm()
+
+    elif strategy == AggregationStrategy.STRATEGY_GROUPED:
+        from collections import defaultdict
+
+        # Group by layer strategy
+        strategy_groups: Dict[LayerStrategy, List[SampleResult]] = defaultdict(list)
+        for result in top_results:
+            layer_strategy = result.sample.config.layer_strategy
+            strategy_groups[layer_strategy].append(result)
+
+        if not strategy_groups:
+            return vectors[0]
+
+        # Average within each group, then combine
+        group_vectors: List[torch.Tensor] = []
+        group_scores: List[float] = []
+
+        for layer_strategy, group_results in strategy_groups.items():
+            if not group_results:
+                continue
+            group_vecs = [r.vector for r in group_results]
+            stacked = torch.stack(group_vecs)
+            group_avg = stacked.mean(dim=0)
+            group_avg = group_avg / group_avg.norm()
+            group_vectors.append(group_avg)
+            group_scores.append(sum(r.overall_score for r in group_results) / len(group_results))
+
+        if len(group_vectors) == 1:
+            return group_vectors[0]
+
+        # Weighted average of group vectors
+        total_weight = sum(group_scores)
+        result = torch.zeros_like(group_vectors[0])
+        for vec, weight in zip(group_vectors, group_scores):
+            result += (weight / total_weight) * vec
+        return result / result.norm()
 
     else:
         return vectors[0]

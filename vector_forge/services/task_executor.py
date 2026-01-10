@@ -28,6 +28,7 @@ from vector_forge.services.session import SessionService
 from vector_forge.tasks.config import TaskConfig
 from vector_forge.tasks.task import ExtractionTask, TaskResult
 from vector_forge.tasks.runner import TaskRunner, RunnerProgress
+from vector_forge.contrast.protocols import SampleDataset
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,7 @@ class TaskExecutor:
         self,
         session_id: str,
         task: ExtractionTask,
+        sample_datasets: Dict[int, SampleDataset],
         model_backend: Any,
         llm_client: Any,
         tool_registry: Optional[Any] = None,
@@ -207,6 +209,7 @@ class TaskExecutor:
         Args:
             session_id: Session to record events to.
             task: The extraction task to run.
+            sample_datasets: Pre-generated datasets for each sample (from ContrastPipeline).
             model_backend: Backend for model inference.
             llm_client: Client for LLM API calls.
             tool_registry: Optional tool registry.
@@ -271,8 +274,8 @@ class TaskExecutor:
         runner.on_progress(on_runner_progress)
 
         try:
-            # Run the task
-            result = await runner.run(task)
+            # Run the task with sample datasets
+            result = await runner.run(task, sample_datasets)
 
             # Emit vector created event
             if result.final_vector is not None:
@@ -338,6 +341,7 @@ class TaskExecutor:
         self,
         behavior_name: str,
         behavior_description: str,
+        sample_datasets: Dict[int, SampleDataset],
         config: TaskConfig,
         model_backend: Any,
         llm_client: Any,
@@ -349,6 +353,7 @@ class TaskExecutor:
         Args:
             behavior_name: Name of behavior.
             behavior_description: Full description.
+            sample_datasets: Pre-generated datasets for each sample (from ContrastPipeline).
             config: Task configuration.
             model_backend: Backend for inference.
             llm_client: LLM client.
@@ -374,10 +379,11 @@ class TaskExecutor:
 
         task = ExtractionTask.from_behavior(behavior, config)
 
-        # Execute
+        # Execute with sample datasets
         result = await self.execute(
             session_id=session_id,
             task=task,
+            sample_datasets=sample_datasets,
             model_backend=model_backend,
             llm_client=llm_client,
         )

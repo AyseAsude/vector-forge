@@ -267,7 +267,7 @@ class DetailsPanel(Vertical):
         layer = f"L{ext.current_layer}" if ext.current_layer else "—"
         score = f"{ext.evaluation.overall:.2f}" if ext.evaluation.overall > 0 else "—"
         self.mount(Static(
-            f"[$accent]{ext.phase.value.UPPER()}[/]  │  "
+            f"[$accent]{ext.phase.value.upper()}[/]  │  "
             f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}",
             classes="stats"
         ))
