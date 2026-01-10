@@ -357,7 +357,7 @@ class ExtractionRunner:
                 logger.info("Using accelerate for automatic device mapping")
                 model = AutoModelForCausalLM.from_pretrained(
                     model_id,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                     device_map="auto",
                 )
             elif torch.cuda.is_available():
@@ -365,7 +365,7 @@ class ExtractionRunner:
                 logger.info("Loading model to GPU (no accelerate)")
                 model = AutoModelForCausalLM.from_pretrained(
                     model_id,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
                 model = model.cuda()
             else:
@@ -373,7 +373,7 @@ class ExtractionRunner:
                 logger.info("Loading model to CPU")
                 model = AutoModelForCausalLM.from_pretrained(
                     model_id,
-                    torch_dtype=torch.float32,
+                    dtype=torch.float32,
                 )
 
             return HuggingFaceBackend(model=model, tokenizer=tokenizer)
