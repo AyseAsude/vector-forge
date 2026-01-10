@@ -14,11 +14,12 @@ Key optimization: Uses batched judging to reduce LLM calls.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Protocol, Tuple
+from typing import List, Dict, Any, Optional, Protocol, Tuple, Union
 import asyncio
 import logging
 
 import torch
+from steering_vectors import VectorSteering
 
 from vector_forge.tasks.config import EvaluationConfig
 from vector_forge.tasks.expander import ExpandedBehavior
@@ -33,21 +34,24 @@ logger = logging.getLogger(__name__)
 
 
 class ModelBackend(Protocol):
-    """Protocol for model backend operations."""
+    """Protocol for model backend operations.
 
-    def generate(self, prompt: str, max_new_tokens: int = 100) -> str:
+    Compatible with steering_vectors.HuggingFaceBackend.
+    """
+
+    def generate(self, prompt: str, max_new_tokens: int = 100, **kwargs) -> str:
         """Generate text from prompt."""
         ...
 
     def generate_with_steering(
         self,
         prompt: str,
-        steering_vector: torch.Tensor,
-        layer: int,
+        steering_mode: Any,  # SteeringMode from steering_vectors
+        layers: Union[int, List[int]],
         strength: float,
-        max_new_tokens: int = 100,
+        **kwargs,
     ) -> str:
-        """Generate text with steering vector applied."""
+        """Generate text with steering applied."""
         ...
 
 
@@ -221,6 +225,48 @@ class VectorEvaluator:
             temperature=0.3,
         )
 
+    def _generate_steered(
+        self,
+        prompt: str,
+        vector: torch.Tensor,
+        layer: int,
+        strength: float,
+        max_new_tokens: int = 100,
+    ) -> str:
+        """Generate text with steering vector applied.
+
+        Wraps the raw tensor in a VectorSteering object and calls
+        the backend's generate_with_steering with correct parameters.
+
+        Args:
+            prompt: Input prompt.
+            vector: Steering vector tensor.
+            layer: Layer to apply steering.
+            strength: Steering strength multiplier.
+            max_new_tokens: Maximum tokens to generate.
+
+        Returns:
+            Generated text.
+        """
+        # Create and initialize steering mode
+        steering = VectorSteering()
+        steering.init_parameters(
+            hidden_dim=vector.shape[0],
+            device=vector.device,
+            dtype=vector.dtype,
+        )
+        steering._vector.data = vector.clone()
+
+        # Call backend with correct signature
+        return self._backend.generate_with_steering(
+            prompt,
+            steering_mode=steering,
+            layers=layer,
+            strength=strength,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+        )
+
     async def evaluate(
         self,
         vector: torch.Tensor,
@@ -317,7 +363,7 @@ class VectorEvaluator:
                 for gen_idx in range(self._config.behavior_generations_per_prompt):
                     async with semaphore:
                         output = await asyncio.to_thread(
-                            self._backend.generate_with_steering,
+                            self._generate_steered,
                             prompt,
                             vector,
                             layer,
@@ -401,7 +447,7 @@ class VectorEvaluator:
             async with semaphore:
                 # Generate steered output
                 steered = await asyncio.to_thread(
-                    self._backend.generate_with_steering,
+                    self._generate_steered,
                     prompt,
                     vector,
                     layer,
@@ -450,7 +496,7 @@ class VectorEvaluator:
             for strength in self._config.strength_levels:
                 async with semaphore:
                     output = await asyncio.to_thread(
-                        self._backend.generate_with_steering,
+                        self._generate_steered,
                         prompt,
                         vector,
                         layer,
@@ -511,7 +557,7 @@ class VectorEvaluator:
                     50,
                 )
                 steered = await asyncio.to_thread(
-                    self._backend.generate_with_steering,
+                    self._generate_steered,
                     prompt,
                     vector,
                     layer,
@@ -565,7 +611,7 @@ class VectorEvaluator:
         async def evaluate_one(prompt: str) -> float:
             async with semaphore:
                 output = await asyncio.to_thread(
-                    self._backend.generate_with_steering,
+                    self._generate_steered,
                     prompt,
                     vector,
                     layer,
