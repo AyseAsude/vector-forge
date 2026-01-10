@@ -6,17 +6,30 @@ Provides multi-dimensional evaluation of steering vector quality across:
 - Output coherence
 - Capability preservation
 - Generalization
+
+Key optimization: Uses batched judging to reduce LLM calls.
+- Behavior/Coherence: Batched by prompt (all outputs for same prompt in one call)
+- Specificity/Generalization: Individual calls (each needs unique context)
+- Capability: No LLM calls (string matching)
 """
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Protocol, Tuple
 import asyncio
-import time
+import logging
 
 import torch
 
 from vector_forge.tasks.config import EvaluationConfig
 from vector_forge.tasks.expander import ExpandedBehavior
+from vector_forge.tasks.batched_judge import (
+    BatchedJudge,
+    ByPromptBatchingStrategy,
+    SpecificityJudge,
+    OutputToJudge,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ModelBackend(Protocol):
@@ -163,6 +176,13 @@ class VectorEvaluator:
     Runs parallel evaluation across multiple dimensions to produce
     a thorough assessment of vector quality.
 
+    Uses batched judging to minimize LLM calls:
+    - Behavior: 50 prompts → 50 calls (12 outputs per prompt)
+    - Coherence: 30 prompts → 30 calls (4 outputs per prompt)
+    - Specificity: 50 prompts → 50 calls (context-sensitive)
+    - Generalization: 30 prompts → 30 calls (context-sensitive)
+    - Capability: 0 calls (string matching)
+
     Example:
         >>> evaluator = VectorEvaluator(backend, judge_llm, config)
         >>> result = await evaluator.evaluate(vector, layer, behavior)
@@ -184,6 +204,25 @@ class VectorEvaluator:
         self._backend = model_backend
         self._judge = judge_llm
         self._config = config
+
+        # Initialize batched judges
+        self._behavior_judge = BatchedJudge(
+            judge_llm,
+            ByPromptBatchingStrategy(),
+            temperature=0.3,
+            max_tokens=500,
+        )
+        self._coherence_judge = BatchedJudge(
+            judge_llm,
+            ByPromptBatchingStrategy(),
+            temperature=0.3,
+            max_tokens=400,
+        )
+        self._specificity_judge = SpecificityJudge(
+            judge_llm,
+            temperature=0.3,
+            max_tokens=200,
+        )
 
     async def evaluate(
         self,
@@ -264,39 +303,69 @@ class VectorEvaluator:
         behavior: ExpandedBehavior,
         semaphore: asyncio.Semaphore,
     ) -> Tuple[DimensionScore, Dict[float, float]]:
-        """Evaluate behavior induction strength."""
+        """Evaluate behavior induction strength using batched judging.
+
+        Batching strategy: All outputs for the same prompt are judged together.
+        This reduces LLM calls from 600 to 50 (for 50 prompts).
+        """
         prompts = self._generate_behavior_prompts(behavior)
+        prompts = prompts[: self._config.behavior_prompts]
+
+        # Phase 1: Generate all outputs (parallel, uses local model)
+        outputs_by_prompt: Dict[str, List[OutputToJudge]] = {}
+
+        async def generate_outputs_for_prompt(prompt: str) -> List[OutputToJudge]:
+            outputs = []
+            for strength in self._config.strength_levels:
+                for gen_idx in range(self._config.behavior_generations_per_prompt):
+                    async with semaphore:
+                        output = await asyncio.to_thread(
+                            self._backend.generate_with_steering,
+                            prompt,
+                            vector,
+                            layer,
+                            strength,
+                        )
+                        outputs.append(OutputToJudge(
+                            output=output,
+                            strength=strength,
+                            generation_index=gen_idx,
+                            prompt=prompt,
+                        ))
+            return outputs
+
+        # Generate all outputs in parallel
+        generation_tasks = [generate_outputs_for_prompt(p) for p in prompts]
+        all_prompt_outputs = await asyncio.gather(*generation_tasks)
+
+        for prompt, outputs in zip(prompts, all_prompt_outputs):
+            outputs_by_prompt[prompt] = outputs
+
+        # Phase 2: Batch judge all outputs (one LLM call per prompt)
+        all_outputs = []
+        for prompt in prompts:
+            all_outputs.extend(outputs_by_prompt[prompt])
+
+        logger.info(
+            f"Behavior eval: {len(prompts)} prompts, {len(all_outputs)} outputs, "
+            f"batching to {len(prompts)} judge calls"
+        )
+
+        criteria = behavior.evaluation_criteria if behavior.evaluation_criteria else []
+        results = await self._behavior_judge.judge_behavior_batch(
+            all_outputs,
+            behavior.name,
+            behavior.detailed_definition,
+            criteria,
+        )
+
+        # Phase 3: Organize scores by strength
         strength_scores: Dict[float, List[float]] = {
             s: [] for s in self._config.strength_levels
         }
 
-        async def evaluate_one(prompt: str, strength: float) -> float:
-            async with semaphore:
-                output = await asyncio.to_thread(
-                    self._backend.generate_with_steering,
-                    prompt,
-                    vector,
-                    layer,
-                    strength,
-                )
-                score = await self._judge_behavior(output, behavior)
-                return score
-
-        # Create all tasks
-        tasks = []
-        task_info = []
-        for prompt in prompts[: self._config.behavior_prompts]:
-            for strength in self._config.strength_levels:
-                for _ in range(self._config.behavior_generations_per_prompt):
-                    tasks.append(evaluate_one(prompt, strength))
-                    task_info.append(strength)
-
-        # Run all evaluations
-        scores = await asyncio.gather(*tasks)
-
-        # Organize by strength
-        for score, strength in zip(scores, task_info):
-            strength_scores[strength].append(score)
+        for output, result in zip(all_outputs, results):
+            strength_scores[output.strength].append(result.score)
 
         # Compute average per strength level
         calibration = {
@@ -311,7 +380,7 @@ class VectorEvaluator:
             DimensionScore(
                 dimension="behavior",
                 score=main_score,
-                details={"per_strength": calibration},
+                details={"per_strength": calibration, "num_outputs": len(all_outputs)},
             ),
             calibration,
         )
@@ -323,19 +392,17 @@ class VectorEvaluator:
         behavior: ExpandedBehavior,
         semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
-        """Evaluate specificity (avoiding side effects)."""
+        """Evaluate specificity (avoiding side effects).
+
+        NOT batched: Each prompt-output pair needs unique context to determine
+        if the behavior inappropriately appears on unrelated prompts.
+        """
         prompts = self._generate_neutral_prompts()
-        scores = []
+        prompts = prompts[: self._config.specificity_prompts]
 
         async def evaluate_one(prompt: str) -> float:
             async with semaphore:
-                # Generate baseline
-                baseline = await asyncio.to_thread(
-                    self._backend.generate,
-                    prompt,
-                )
-
-                # Generate steered
+                # Generate steered output
                 steered = await asyncio.to_thread(
                     self._backend.generate_with_steering,
                     prompt,
@@ -344,15 +411,18 @@ class VectorEvaluator:
                     1.0,
                 )
 
-                score = await self._judge_specificity(
-                    prompt, steered, behavior
+                # Judge specificity (individual call)
+                result = await self._specificity_judge.judge_specificity(
+                    prompt, steered, behavior.name
                 )
-                return score
+                return result.score
 
-        tasks = [
-            evaluate_one(p) for p in prompts[: self._config.specificity_prompts]
-        ]
+        tasks = [evaluate_one(p) for p in prompts]
         scores = await asyncio.gather(*tasks)
+
+        logger.info(
+            f"Specificity eval: {len(prompts)} prompts, {len(prompts)} judge calls (no batching)"
+        )
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
 
@@ -369,28 +439,54 @@ class VectorEvaluator:
         behavior: ExpandedBehavior,
         semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
-        """Evaluate output coherence."""
+        """Evaluate output coherence using batched judging.
+
+        Batching strategy: All outputs for the same prompt are judged together.
+        This reduces LLM calls from 120 to 30 (for 30 prompts).
+        """
         prompts = self._generate_coherence_prompts()
-        scores = []
+        prompts = prompts[: self._config.coherence_prompts]
 
-        async def evaluate_one(prompt: str, strength: float) -> float:
-            async with semaphore:
-                output = await asyncio.to_thread(
-                    self._backend.generate_with_steering,
-                    prompt,
-                    vector,
-                    layer,
-                    strength,
-                    200,  # Longer output for coherence check
-                )
-                return await self._judge_coherence(output)
-
-        tasks = []
-        for prompt in prompts[: self._config.coherence_prompts]:
+        # Phase 1: Generate all outputs (parallel, uses local model)
+        async def generate_outputs_for_prompt(prompt: str) -> List[OutputToJudge]:
+            outputs = []
             for strength in self._config.strength_levels:
-                tasks.append(evaluate_one(prompt, strength))
+                async with semaphore:
+                    output = await asyncio.to_thread(
+                        self._backend.generate_with_steering,
+                        prompt,
+                        vector,
+                        layer,
+                        strength,
+                        200,  # Longer output for coherence check
+                    )
+                    outputs.append(OutputToJudge(
+                        output=output,
+                        strength=strength,
+                        generation_index=0,
+                        prompt=prompt,
+                    ))
+            return outputs
 
-        scores = await asyncio.gather(*tasks)
+        # Generate all outputs in parallel
+        generation_tasks = [generate_outputs_for_prompt(p) for p in prompts]
+        all_prompt_outputs = await asyncio.gather(*generation_tasks)
+
+        # Flatten all outputs
+        all_outputs = []
+        for outputs in all_prompt_outputs:
+            all_outputs.extend(outputs)
+
+        logger.info(
+            f"Coherence eval: {len(prompts)} prompts, {len(all_outputs)} outputs, "
+            f"batching to {len(prompts)} judge calls"
+        )
+
+        # Phase 2: Batch judge all outputs (one LLM call per prompt)
+        results = await self._coherence_judge.judge_coherence_batch(all_outputs)
+
+        # Compute average score
+        scores = [r.score for r in results]
         avg_score = sum(scores) / len(scores) if scores else 0.0
 
         return DimensionScore(
