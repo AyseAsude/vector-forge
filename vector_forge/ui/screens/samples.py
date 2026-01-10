@@ -363,11 +363,10 @@ class MessageRow(Static):
         # Build message content
         lines = []
 
-        # Header line: time  ●  ROLE
+        # Header line: time  [ROLE]  - modern bracket style
         lines.append(
             f"[$foreground-disabled]{msg.time_str}[/]  "
-            f"[{color}]●[/]  "
-            f"[{color}]{msg.role.value.upper()}[/]"
+            f"[{color} bold]{msg.role.value.upper()}[/]"
         )
 
         # Content (truncated for display)
@@ -377,7 +376,7 @@ class MessageRow(Static):
             content_display = content.replace("\n", " ")
             if len(content_display) > 200:
                 content_display = content_display[:197] + "..."
-            lines.append(f"    {content_display}")
+            lines.append(f"  {content_display}")
 
         # Tool calls
         for tc in msg.tool_calls:
@@ -389,7 +388,7 @@ class MessageRow(Static):
             }
             tc_color = tc_colors.get(tc.status, "$foreground-muted")
             duration = f" ({tc.duration_ms}ms)" if tc.duration_ms else ""
-            lines.append(f"    [{tc_color}]▸ {tc.name}[/]{duration}")
+            lines.append(f"  [{tc_color}]▸ {tc.name}[/]{duration}")
 
         return "\n".join(lines)
 
