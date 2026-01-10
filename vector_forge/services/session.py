@@ -360,6 +360,24 @@ class SessionService:
 
         return self._storage.delete_session(session_id)
 
+    def hide_session(self, session_id: str) -> bool:
+        """Hide a session (won't appear in listings).
+
+        The session data is preserved. Remove the .hidden file
+        from the session directory to unhide it.
+
+        Args:
+            session_id: The session to hide.
+
+        Returns:
+            True if hidden, False if not found.
+        """
+        # Remove from active tracking
+        if session_id in self._active_sessions:
+            del self._active_sessions[session_id]
+
+        return self._storage.hide_session(session_id)
+
     def emit_event(
         self,
         session_id: str,

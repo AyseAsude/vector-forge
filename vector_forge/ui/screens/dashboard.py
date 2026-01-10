@@ -3,7 +3,7 @@
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
+from textual.screen import Screen, ModalScreen
 from textual.widgets import Static, Button
 from textual.message import Message
 
@@ -15,6 +15,7 @@ from vector_forge.ui.state import (
 )
 from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
+from vector_forge.ui.widgets.model_card import DeleteButton
 
 
 class ProgressBar(Static):
@@ -85,13 +86,28 @@ class TaskCard(Static):
         margin-bottom: 1;
     }
 
-    TaskCard .meta {
+    TaskCard .meta-row {
         height: 1;
+    }
+
+    TaskCard .meta {
+        width: 1fr;
         color: $foreground-muted;
+    }
+
+    TaskCard DeleteButton {
+        dock: right;
     }
     """
 
     class Selected(Message):
+        def __init__(self, extraction_id: str) -> None:
+            super().__init__()
+            self.extraction_id = extraction_id
+
+    class DeleteRequested(Message):
+        """Emitted when delete is requested for this task."""
+
         def __init__(self, extraction_id: str) -> None:
             super().__init__()
             self.extraction_id = extraction_id
@@ -105,7 +121,14 @@ class TaskCard(Static):
             yield Static(classes="name")
             yield Static(classes="time")
         yield ProgressBar(classes="progress")
-        yield Static(classes="meta")
+        with Horizontal(classes="meta-row"):
+            yield Static(classes="meta")
+            yield DeleteButton()
+
+    def on_delete_button_clicked(self, event: DeleteButton.Clicked) -> None:
+        """Handle delete button click."""
+        event.stop()
+        self.post_message(self.DeleteRequested(self.extraction.id))
 
     def on_mount(self) -> None:
         self._update_display()
@@ -312,6 +335,100 @@ class DetailsPanel(Vertical):
             activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="log-entry"))
 
 
+class ConfirmHideTaskScreen(ModalScreen[bool]):
+    """Modal confirmation dialog for hiding a task."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("enter", "confirm", "Confirm"),
+    ]
+
+    DEFAULT_CSS = """
+    ConfirmHideTaskScreen {
+        align: center middle;
+    }
+
+    ConfirmHideTaskScreen #dialog {
+        width: 50;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    ConfirmHideTaskScreen #title {
+        height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ConfirmHideTaskScreen #message {
+        height: auto;
+        color: $foreground-muted;
+        margin-bottom: 1;
+    }
+
+    ConfirmHideTaskScreen #buttons {
+        height: 3;
+    }
+
+    ConfirmHideTaskScreen #btn-cancel {
+        width: 1fr;
+        height: 3;
+        margin-right: 1;
+        background: $boost;
+        color: $foreground;
+        border: none;
+    }
+
+    ConfirmHideTaskScreen #btn-cancel:hover {
+        background: $boost 80%;
+    }
+
+    ConfirmHideTaskScreen #btn-confirm {
+        width: 1fr;
+        height: 3;
+        background: $error;
+        color: $background;
+        border: none;
+        text-style: bold;
+    }
+
+    ConfirmHideTaskScreen #btn-confirm:hover {
+        background: $error 80%;
+    }
+    """
+
+    def __init__(self, task_name: str, extraction_id: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._task_name = task_name
+        self._extraction_id = extraction_id
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("Hide Task?", id="title")
+            yield Static(
+                f"Hide [bold]{self._task_name}[/]?\n"
+                "The data will be preserved. Delete the .hidden file\n"
+                "in the session folder to restore it.",
+                id="message"
+            )
+            with Horizontal(id="buttons"):
+                yield Button("Cancel", id="btn-cancel")
+                yield Button("Hide", id="btn-confirm")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-cancel":
+            self.dismiss(False)
+        elif event.button.id == "btn-confirm":
+            self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+
 class DashboardScreen(Screen):
     """Main dashboard with task list and details panel."""
 
@@ -483,6 +600,42 @@ class DashboardScreen(Screen):
         if state.selected_extraction:
             state.selected_extraction.select_agent(event.agent_id)
         self.app.switch_screen("samples")
+
+    def on_task_card_delete_requested(self, event: TaskCard.DeleteRequested) -> None:
+        """Handle delete button click on a task card."""
+        state = get_state()
+        extraction = state.extractions.get(event.extraction_id)
+        if extraction:
+            task_name = extraction.behavior_name
+
+            def on_confirm(confirmed: bool) -> None:
+                if confirmed:
+                    self._hide_task(event.extraction_id)
+
+            self.app.push_screen(
+                ConfirmHideTaskScreen(task_name, event.extraction_id),
+                on_confirm
+            )
+
+    def _hide_task(self, extraction_id: str) -> None:
+        """Hide a task from the list."""
+        from vector_forge.services.session import SessionService
+
+        state = get_state()
+
+        # Get session service from app
+        session_service = getattr(self.app, "_session_service", None)
+        if session_service is None:
+            session_service = SessionService()
+
+        # Hide the session
+        session_service.hide_session(extraction_id)
+
+        # Remove from UI state
+        state.remove_extraction(extraction_id)
+
+        # Sync UI
+        self._sync()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new-btn":

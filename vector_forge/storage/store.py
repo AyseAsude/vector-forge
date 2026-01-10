@@ -455,6 +455,10 @@ class StorageManager:
             if entry.name.startswith("."):
                 continue
 
+            # Skip sessions with .hidden marker file
+            if (entry / ".hidden").exists():
+                continue
+
             # Read metadata.json
             metadata_path = entry / "metadata.json"
             if not metadata_path.exists():
@@ -516,6 +520,56 @@ class StorageManager:
 
         shutil.rmtree(session_path)
         return True
+
+    def hide_session(self, session_id: str) -> bool:
+        """Hide a session by creating a .hidden marker file.
+
+        The session data is preserved but won't appear in list_sessions().
+        Remove the .hidden file to unhide the session.
+
+        Args:
+            session_id: Session to hide.
+
+        Returns:
+            True if hidden, False if not found.
+        """
+        session_path = self.base_path / session_id
+        if not session_path.exists():
+            return False
+
+        hidden_marker = session_path / ".hidden"
+        hidden_marker.touch()
+        return True
+
+    def unhide_session(self, session_id: str) -> bool:
+        """Unhide a session by removing the .hidden marker file.
+
+        Args:
+            session_id: Session to unhide.
+
+        Returns:
+            True if unhidden, False if not found or not hidden.
+        """
+        session_path = self.base_path / session_id
+        hidden_marker = session_path / ".hidden"
+
+        if not hidden_marker.exists():
+            return False
+
+        hidden_marker.unlink()
+        return True
+
+    def is_session_hidden(self, session_id: str) -> bool:
+        """Check if a session is hidden.
+
+        Args:
+            session_id: Session to check.
+
+        Returns:
+            True if hidden, False otherwise.
+        """
+        session_path = self.base_path / session_id
+        return (session_path / ".hidden").exists()
 
     def _generate_session_id(self, behavior: str) -> str:
         """Generate unique session ID.
