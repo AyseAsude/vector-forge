@@ -136,7 +136,7 @@ class BatchedJudge:
         llm_client: JudgeLLM,
         batching_strategy: BatchingStrategy,
         temperature: float = 0.3,
-        max_tokens: int = 500,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the batched judge.
 
@@ -144,7 +144,7 @@ class BatchedJudge:
             llm_client: LLM client for generating judgments.
             batching_strategy: Strategy for grouping outputs.
             temperature: LLM temperature for consistency.
-            max_tokens: Max tokens for judge response.
+            max_tokens: Max tokens for judge response (None = provider default).
         """
         self._llm = llm_client
         self._strategy = batching_strategy
@@ -353,7 +353,7 @@ class SpecificityJudge:
         self,
         llm_client: JudgeLLM,
         temperature: float = 0.3,
-        max_tokens: int = 200,
+        max_tokens: Optional[int] = None,
     ):
         self._llm = llm_client
         self._temperature = temperature

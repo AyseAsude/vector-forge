@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from vector_forge.contrast.protocols import (
     ContrastValidatorProtocol,
@@ -113,7 +113,7 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         max_src_score: float = 3.0,
         min_contrast_quality: float = 6.0,
         temperature: float = 0.3,
-        max_tokens: int = 500,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the LLM validator.
 
@@ -123,7 +123,7 @@ class LLMContrastValidator(ContrastValidatorProtocol):
             max_src_score: Maximum score for src to pass.
             min_contrast_quality: Minimum contrast quality to pass.
             temperature: Generation temperature (lower = more consistent).
-            max_tokens: Maximum response tokens.
+            max_tokens: Maximum response tokens (None = provider default).
         """
         self._llm = llm_client
         self._min_dst = min_dst_score

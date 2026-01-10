@@ -49,7 +49,7 @@ class LLMConfig(BaseModel):
 
     model: str = Field(default=DEFAULT_MODEL, description="Model identifier (litellm format)")
     temperature: float = Field(default=0.7, ge=0, le=2)
-    max_tokens: int = Field(default=4096, gt=0)
+    max_tokens: Optional[int] = Field(default=None, gt=0, description="Max tokens (None = provider default)")
     api_base: Optional[str] = Field(default=None, description="Custom API endpoint")
     api_key: Optional[str] = Field(default=None, description="API key (overrides env)")
     extra_params: Dict[str, Any] = Field(default_factory=dict)

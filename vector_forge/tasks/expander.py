@@ -156,7 +156,6 @@ class BehaviorExpander:
             messages,
             model=self._model,
             temperature=0.7,
-            max_tokens=4096,
         )
 
         return self._parse_response(response, description)

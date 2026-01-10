@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from vector_forge.contrast.protocols import (
     BehaviorAnalyzerProtocol,
@@ -92,14 +92,14 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
         self,
         llm_client: BaseLLMClient,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the behavior analyzer.
 
         Args:
             llm_client: LLM client for analysis.
             temperature: Generation temperature.
-            max_tokens: Maximum tokens for response.
+            max_tokens: Maximum tokens for response (None = provider default).
         """
         self._llm = llm_client
         self._temperature = temperature

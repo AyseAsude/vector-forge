@@ -98,10 +98,15 @@ class BaseLLMClient(EventEmitter, ABC):
         """
         merged = {
             "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
             **self.config.extra_params,
             **kwargs,
         }
+        # Only include max_tokens if explicitly set (not None)
+        if self.config.max_tokens is not None:
+            merged.setdefault("max_tokens", self.config.max_tokens)
+        # Remove max_tokens if it was explicitly set to None in kwargs
+        if merged.get("max_tokens") is None:
+            merged.pop("max_tokens", None)
         # Remove keys that are passed explicitly to litellm
         merged.pop("model", None)
         merged.pop("api_base", None)

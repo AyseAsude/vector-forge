@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from vector_forge.contrast.protocols import (
     PairRegeneratorProtocol,
@@ -120,14 +120,14 @@ class ContrastRegenerator(PairRegeneratorProtocol):
         self,
         llm_client: BaseLLMClient,
         temperature: float = 0.8,
-        max_tokens: int = 1500,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the regenerator.
 
         Args:
             llm_client: LLM client for regeneration.
             temperature: Generation temperature.
-            max_tokens: Maximum response tokens.
+            max_tokens: Maximum response tokens (None = provider default).
         """
         self._llm = llm_client
         self._temperature = temperature

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from vector_forge.contrast.protocols import (
     PairGeneratorProtocol,
@@ -110,14 +110,14 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         self,
         llm_client: BaseLLMClient,
         temperature: float = 0.7,
-        max_tokens: int = 1500,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the pair generator.
 
         Args:
             llm_client: LLM client for generation.
             temperature: Generation temperature.
-            max_tokens: Maximum response tokens.
+            max_tokens: Maximum response tokens (None = provider default).
         """
         self._llm = llm_client
         self._temperature = temperature

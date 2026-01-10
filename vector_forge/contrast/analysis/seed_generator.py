@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from vector_forge.contrast.protocols import (
     SeedGeneratorProtocol,
@@ -144,7 +144,7 @@ class SeedGenerator(SeedGeneratorProtocol):
         llm_client: BaseLLMClient,
         min_quality_score: float = 6.0,
         temperature: float = 0.8,
-        max_tokens: int = 32000,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the seed generator.
 
@@ -152,7 +152,7 @@ class SeedGenerator(SeedGeneratorProtocol):
             llm_client: LLM client for generation.
             min_quality_score: Minimum score to keep a seed.
             temperature: Generation temperature.
-            max_tokens: Maximum tokens for response.
+            max_tokens: Maximum tokens for response (None = provider default).
         """
         self._llm = llm_client
         self._min_quality = min_quality_score

@@ -23,7 +23,7 @@ class TestLLMConfig:
         config = LLMConfig()
         assert config.model == DEFAULT_MODEL
         assert config.temperature == 0.7
-        assert config.max_tokens == 4096
+        assert config.max_tokens is None  # None = provider default
         assert config.api_base is None
         assert config.api_key is None
         assert config.extra_params == {}

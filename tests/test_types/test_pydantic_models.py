@@ -81,8 +81,13 @@ class TestLLMConfigTypes:
         config = LLMConfig(max_tokens=1000)
         assert config.max_tokens == 1000
 
+    def test_max_tokens_accepts_none(self):
+        """Test max_tokens accepts None (provider default)."""
+        config = LLMConfig(max_tokens=None)
+        assert config.max_tokens is None
+
     def test_max_tokens_constraint_gt_0(self):
-        """Test max_tokens must be > 0."""
+        """Test max_tokens must be > 0 when specified."""
         with pytest.raises(ValidationError):
             LLMConfig(max_tokens=0)
         with pytest.raises(ValidationError):

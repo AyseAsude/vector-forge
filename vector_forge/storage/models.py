@@ -81,7 +81,7 @@ class ModelConfig(BaseModel):
 
     # Generation defaults
     temperature: float = Field(default=0.7, ge=0, le=2)
-    max_tokens: int = Field(default=4096, gt=0)
+    max_tokens: Optional[int] = Field(default=None, gt=0, description="Max tokens (None = provider default)")
 
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

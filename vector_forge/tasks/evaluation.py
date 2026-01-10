@@ -205,23 +205,20 @@ class VectorEvaluator:
         self._judge = judge_llm
         self._config = config
 
-        # Initialize batched judges
+        # Initialize batched judges (max_tokens=None lets provider use its default)
         self._behavior_judge = BatchedJudge(
             judge_llm,
             ByPromptBatchingStrategy(),
             temperature=0.3,
-            max_tokens=500,
         )
         self._coherence_judge = BatchedJudge(
             judge_llm,
             ByPromptBatchingStrategy(),
             temperature=0.3,
-            max_tokens=400,
         )
         self._specificity_judge = SpecificityJudge(
             judge_llm,
             temperature=0.3,
-            max_tokens=200,
         )
 
     async def evaluate(
@@ -630,7 +627,6 @@ class VectorEvaluator:
         response = await self._judge.generate(
             [{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=200,
         )
 
         return self._extract_score(response)
@@ -642,7 +638,6 @@ class VectorEvaluator:
         response = await self._judge.generate(
             [{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=200,
         )
 
         return self._extract_score(response)
@@ -663,7 +658,6 @@ class VectorEvaluator:
         response = await self._judge.generate(
             [{"role": "user", "content": judge_prompt}],
             temperature=0.3,
-            max_tokens=200,
         )
 
         return self._extract_score(response)
