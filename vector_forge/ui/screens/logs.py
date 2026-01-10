@@ -68,8 +68,9 @@ class LogDetailModal(ModalScreen):
 
     LogDetailModal #modal-content {
         height: 1fr;
-        padding: 0 2 1 2;
+        padding: 1 0 1 2;
         background: $background;
+        scrollbar-gutter: stable;
     }
 
     LogDetailModal .section-header {

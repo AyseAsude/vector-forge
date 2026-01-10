@@ -76,8 +76,9 @@ class MessageDetailModal(ModalScreen):
 
     MessageDetailModal #modal-content {
         height: 1fr;
-        padding: 1 2;
+        padding: 1 0 1 2;
         background: $background;
+        scrollbar-gutter: stable;
     }
 
     MessageDetailModal .section-header {
