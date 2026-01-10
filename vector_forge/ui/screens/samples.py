@@ -410,6 +410,7 @@ class ConversationPanel(Vertical):
     ConversationPanel .panel-header {
         height: auto;
         padding: 1 2;
+        background: $panel;
     }
 
     ConversationPanel .title-row {
