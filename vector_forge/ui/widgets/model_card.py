@@ -182,11 +182,6 @@ class ModelCardCompact(Static):
         height: auto;
         padding: 1 2;
         background: $surface;
-        margin-bottom: 1;
-    }
-
-    ModelCardCompact:last-child {
-        margin-bottom: 0;
     }
 
     ModelCardCompact:hover {
