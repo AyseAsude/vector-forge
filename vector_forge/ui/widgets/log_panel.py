@@ -51,7 +51,8 @@ class LogEntryDisplay(Widget):
     def compose(self) -> ComposeResult:
         yield Static(self.entry.time_str, classes="log-time")
         yield Static(self.entry.source[:9], classes="log-source")
-        yield Static(self.entry.message, classes="log-msg")
+        # Disable markup to prevent Rich from interpreting brackets in log messages
+        yield Static(self.entry.message, classes="log-msg", markup=False)
 
     def on_mount(self) -> None:
         if self.entry.level == "warning":

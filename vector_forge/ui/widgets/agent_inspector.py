@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, Vertical
 from textual.reactive import reactive
@@ -75,20 +76,20 @@ class ToolCallDisplay(Widget):
         header = self.query_one("#tool-header", Static)
         header.update(f"[{color}]{icon}[/] [$secondary]{tc.name}[/]{duration_str}")
 
-        # Arguments (truncated)
+        # Arguments (truncated, escaped to prevent markup interpretation)
         args_widget = self.query_one("#tool-args", Static)
         args = tc.arguments
         if len(args) > 100:
             args = args[:97] + "..."
-        args_widget.update(args)
+        args_widget.update(escape_markup(args))
 
-        # Result (if available, truncated)
+        # Result (if available, truncated, escaped to prevent markup interpretation)
         result_widget = self.query_one("#tool-result", Static)
         if tc.result:
             result = tc.result
             if len(result) > 100:
                 result = result[:97] + "..."
-            result_widget.update(f"→ {result}")
+            result_widget.update(f"→ {escape_markup(result)}")
         else:
             result_widget.update("")
 
@@ -167,12 +168,12 @@ class MessageDisplay(Widget):
             f"[{color} bold]{label}[/] [$foreground-disabled]{msg.time_str}[/]"
         )
 
-        # Content
+        # Content (escaped to prevent markup interpretation)
         content_widget = self.query_one("#msg-content", Static)
         content = msg.content
         if len(content) > 500:
             content = content[:497] + "..."
-        content_widget.update(f"[$foreground]{content}[/]")
+        content_widget.update(f"[$foreground]{escape_markup(content)}[/]")
 
         # Tool calls
         tools_container = self.query_one("#msg-tools", Vertical)

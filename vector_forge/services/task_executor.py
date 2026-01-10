@@ -492,11 +492,11 @@ class TaskExecutor:
 
             # Emit evaluation completed
             eval_event = EvaluationCompletedEvent(
-                eval_type="final",
+                evaluation_id=f"eval_final_{session_id[:8]}",
                 scores={
                     "overall": result.final_score,
-                    "valid_samples": result.valid_results_count,
-                    "total_samples": len(result.sample_results),
+                    "valid_samples": float(result.valid_results_count),
+                    "total_samples": float(len(result.sample_results)),
                 },
                 recommended_strength=result.recommended_strength,
                 verdict="completed",

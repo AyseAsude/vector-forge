@@ -1,5 +1,6 @@
 """Dashboard screen - split view with tasks and details."""
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -327,8 +328,10 @@ class DetailsPanel(Vertical):
         logs = get_state().get_filtered_logs(extraction_id=ext.id)[-5:]
         if logs:
             for log in reversed(logs):
+                # Escape log message to prevent Rich markup interpretation of brackets
+                safe_message = escape_markup(log.message)
                 activity_list.mount(Static(
-                    f"[$foreground-muted]{log.time_str}[/] {log.message}",
+                    f"[$foreground-muted]{log.time_str}[/] {safe_message}",
                     classes="log-entry"
                 ))
         else:
