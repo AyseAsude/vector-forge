@@ -18,9 +18,11 @@ from vector_forge.ui.state import (
 from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 from vector_forge.ui.messages import (
-    AgentUpdated,
-    AgentMessageAdded,
-    RefreshTime,
+    AgentSpawned,
+    AgentStatusChanged,
+    AgentMessageReceived,
+    AgentSelected,
+    TimeTick,
 )
 
 
@@ -564,14 +566,15 @@ class SamplesScreen(Screen):
         yield TmuxBar(active_screen="samples")
 
     def on_mount(self) -> None:
+        """Initial projection from current state."""
         self._sync()
 
     # ─────────────────────────────────────────────────────────────────
-    # Message handlers - pure event-driven updates, no polling
+    # Event Handlers - Targeted Updates
     # ─────────────────────────────────────────────────────────────────
 
-    def on_refresh_time(self, message: RefreshTime) -> None:
-        """Handle time refresh - update elapsed time displays only."""
+    def on_time_tick(self, event: TimeTick) -> None:
+        """Handle time tick - update elapsed time displays only."""
         state = get_state()
         extraction = state.selected_extraction
         if extraction and extraction.status == ExtractionStatus.RUNNING:
@@ -597,25 +600,39 @@ class SamplesScreen(Screen):
 
         self.query_one(TmuxBar).refresh_info()
 
-    def on_agent_updated(self, message: AgentUpdated) -> None:
-        """Handle agent state change - update worker card."""
+    def on_agent_spawned(self, event: AgentSpawned) -> None:
+        """Handle agent spawn - add new worker card."""
         state = get_state()
         extraction = state.selected_extraction
-        if extraction and extraction.id == message.extraction_id:
+        if extraction and extraction.id == event.task_id:
             workers_list = self.query_one("#workers-list", WorkersList)
             workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
 
-    def on_agent_message_added(self, message: AgentMessageAdded) -> None:
+    def on_agent_status_changed(self, event: AgentStatusChanged) -> None:
+        """Handle agent status change - update worker card."""
+        state = get_state()
+        extraction = state.selected_extraction
+        if extraction and extraction.id == event.task_id:
+            workers_list = self.query_one("#workers-list", WorkersList)
+            workers_list.set_workers(extraction.agents, extraction.selected_agent_id)
+
+    def on_agent_message_received(self, event: AgentMessageReceived) -> None:
         """Handle new message in agent conversation."""
         state = get_state()
         extraction = state.selected_extraction
-        if extraction and extraction.id == message.extraction_id:
+        if extraction and extraction.id == event.task_id:
             conversation = self.query_one("#conversation", ConversationPanel)
-            if conversation._current_agent_id == message.agent_id:
-                # Incrementally add the new message
-                agent = extraction.agents.get(message.agent_id)
+            if conversation._current_agent_id == event.agent_id:
+                agent = extraction.agents.get(event.agent_id)
                 if agent:
                     conversation.show(agent)
+
+    def on_agent_selected(self, event: AgentSelected) -> None:
+        """Handle agent selection change."""
+        state = get_state()
+        extraction = state.selected_extraction
+        if extraction and extraction.id == event.task_id:
+            self._sync()
 
     def _sync(self) -> None:
         state = get_state()

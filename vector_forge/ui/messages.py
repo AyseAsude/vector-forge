@@ -1,92 +1,187 @@
-"""Thread-safe messages for streaming UI updates.
+"""Event types for the UI event-sourcing architecture.
 
-These messages can be posted from any thread using post_message()
-and will be handled in the main Textual event loop.
+Events represent things that HAPPENED (past tense). They flow:
+    Background Thread → App (handler) → State (update) → Screen (projection)
+
+All events can be safely posted from any thread via post_message().
 """
 
-from dataclasses import dataclass
-from typing import Optional, Any
+from dataclasses import dataclass, field
+from typing import Optional
 
 from textual.message import Message
 
 
-class StreamMessage(Message):
-    """Base class for all streaming update messages."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Base Event
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class UIEvent(Message):
+    """Base class for all UI events."""
     pass
 
 
-@dataclass
-class LogAdded(StreamMessage):
-    """A new log entry was added."""
-    timestamp: float
-    source: str
-    message: str
-    level: str = "info"
-    extraction_id: Optional[str] = None
-    agent_id: Optional[str] = None
+# ─────────────────────────────────────────────────────────────────────────────
+# Task Lifecycle Events
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
-class ProgressUpdated(StreamMessage):
-    """Extraction progress was updated."""
-    extraction_id: str
+class TaskCreated(UIEvent):
+    """A new task/extraction was created."""
+    task_id: str
+    name: str
+    description: str = ""
+
+
+@dataclass
+class TaskProgressChanged(UIEvent):
+    """Task progress or phase changed."""
+    task_id: str
     progress: float
     phase: str
     message: str = ""
 
 
 @dataclass
-class AgentUpdated(StreamMessage):
-    """An agent's state changed."""
-    extraction_id: str
+class TaskStatusChanged(UIEvent):
+    """Task status changed (running, paused, completed, failed)."""
+    task_id: str
+    status: str
+    completed_at: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class TaskRemoved(UIEvent):
+    """A task was removed/hidden."""
+    task_id: str
+
+
+@dataclass
+class TaskSelected(UIEvent):
+    """User selected a different task."""
+    task_id: Optional[str]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent Lifecycle Events
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class AgentSpawned(UIEvent):
+    """A new agent was spawned for a task."""
+    task_id: str
+    agent_id: str
+    name: str
+    role: str = ""
+
+
+@dataclass
+class AgentStatusChanged(UIEvent):
+    """Agent status changed."""
+    task_id: str
     agent_id: str
     status: str
     current_tool: Optional[str] = None
+
+
+@dataclass
+class AgentProgressChanged(UIEvent):
+    """Agent progress changed (turns, tool calls)."""
+    task_id: str
+    agent_id: str
     turns: int = 0
     tool_calls_count: int = 0
 
 
 @dataclass
-class AgentMessageAdded(StreamMessage):
+class AgentMessageReceived(UIEvent):
     """A new message was added to an agent's conversation."""
-    extraction_id: str
+    task_id: str
     agent_id: str
     role: str
     content: str
-    tool_calls: list = None
-
-    def __post_init__(self):
-        if self.tool_calls is None:
-            self.tool_calls = []
+    tool_calls: list = field(default_factory=list)
 
 
 @dataclass
-class ExtractionStatusChanged(StreamMessage):
-    """Extraction status changed (started, completed, failed)."""
-    extraction_id: str
-    status: str
-    completed_at: Optional[float] = None
+class AgentSelected(UIEvent):
+    """User selected a different agent."""
+    task_id: str
+    agent_id: Optional[str]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Log Events
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
-class SelectionChanged(StreamMessage):
-    """User selection changed."""
-    extraction_id: Optional[str] = None
+class LogEmitted(UIEvent):
+    """A log entry was emitted."""
+    timestamp: float
+    source: str
+    message: str
+    level: str = "info"
+    task_id: Optional[str] = None
     agent_id: Optional[str] = None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Metrics Events
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @dataclass
-class MetricsUpdated(StreamMessage):
-    """Evaluation or datapoint metrics updated."""
-    extraction_id: str
-    metric_type: str  # "datapoints" or "evaluation"
-    data: dict = None
+class DatapointMetricsChanged(UIEvent):
+    """Datapoint metrics were updated."""
+    task_id: str
+    total: int = 0
+    keep: int = 0
+    review: int = 0
+    remove: int = 0
+    diversity: float = 0.0
+    clusters: int = 0
 
-    def __post_init__(self):
-        if self.data is None:
-            self.data = {}
+
+@dataclass
+class EvaluationMetricsChanged(UIEvent):
+    """Evaluation metrics were updated."""
+    task_id: str
+    behavior: float = 0.0
+    coherence: float = 0.0
+    specificity: float = 0.0
+    overall: float = 0.0
+    best_layer: Optional[int] = None
+    best_strength: float = 0.0
+    verdict: Optional[str] = None
 
 
-class RefreshTime(StreamMessage):
-    """Signal to refresh time displays only (lightweight)."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Timer Events
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TimeTick(UIEvent):
+    """Periodic tick for updating elapsed time displays.
+
+    This is the ONLY timer-based event. All other updates are event-driven.
+    """
+    pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# State Sync Event (for initial screen mount)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class StateSync(UIEvent):
+    """Request to sync screen with current state.
+
+    Used when a screen is mounted and needs to render from current state.
+    NOT used for incremental updates - those use specific events.
+    """
     pass

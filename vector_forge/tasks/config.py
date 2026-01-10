@@ -563,13 +563,14 @@ class TaskConfig(BaseModel):
     )
 
     # Parallelism control
-    # NOTE: Smart concurrency auto-adjusts based on GPU memory at runtime.
-    # This value is the maximum - actual concurrency may be lower if GPU memory is limited.
+    # NOTE: Default is 1 for GPU safety. Concurrent extractions share the model but
+    # run parallel forward passes, which can cause OOM. Batched optimization provides
+    # speed within each extraction. Increase only if you have verified it works.
     max_concurrent_extractions: int = Field(
-        default=8,
+        default=1,
         ge=1,
         le=32,
-        description="Maximum parallel extraction workers (auto-adjusted based on GPU memory)",
+        description="Maximum parallel extraction workers (default 1 for GPU safety)",
     )
 
     max_concurrent_evaluations: int = Field(
@@ -643,7 +644,7 @@ class TaskConfig(BaseModel):
             optimization=OptimizationConfig.fast(),
             contrast=ContrastConfig.fast(),
             datapoints_per_sample=25,
-            max_concurrent_extractions=4,
+            max_concurrent_extractions=1,
             evaluation=EvaluationConfig.fast(),
             top_k=2,
         )
@@ -655,7 +656,7 @@ class TaskConfig(BaseModel):
             optimization=OptimizationConfig.standard(),
             contrast=ContrastConfig.standard(),
             datapoints_per_sample=50,
-            max_concurrent_extractions=8,
+            max_concurrent_extractions=1,
         )
 
     @classmethod
@@ -673,7 +674,7 @@ class TaskConfig(BaseModel):
             optimization=OptimizationConfig.thorough(),
             contrast=ContrastConfig.thorough(),
             datapoints_per_sample=80,
-            max_concurrent_extractions=16,
+            max_concurrent_extractions=1,
             max_concurrent_evaluations=32,
             evaluation=EvaluationConfig.thorough(),
             top_k=8,

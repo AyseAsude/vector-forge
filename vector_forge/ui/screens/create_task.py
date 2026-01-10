@@ -511,7 +511,7 @@ class CreateTaskScreen(Screen):
                 # Row 3: Parallelism
                 with Horizontal(classes="params-row"):
                     with ParamSection("PARALLELISM"):
-                        yield ParamRow("Extractions", "inp-extractions", "8")
+                        yield ParamRow("Extractions", "inp-extractions", "1")
                         yield ParamRow("Evaluations", "inp-evaluations", "16")
                         yield ParamRow("Generations", "inp-generations", "16", "LLM API calls")
                         yield ParamRow("Top K", "inp-topk", "5")
@@ -871,7 +871,7 @@ DOMAINS: {', '.join(result.domains[:6])}
             optimization=optimization_config,
             contrast=contrast_config,
             datapoints_per_sample=int(self.query_one("#inp-datapoints", Input).value or "50"),
-            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "8"),
+            max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "1"),
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),

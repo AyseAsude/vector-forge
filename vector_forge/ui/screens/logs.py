@@ -9,7 +9,7 @@ from textual.widgets import Static, Input
 
 from vector_forge.ui.state import LogEntry, get_state
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
-from vector_forge.ui.messages import LogAdded, RefreshTime
+from vector_forge.ui.messages import LogEmitted, TimeTick
 
 
 class LogDetailModal(ModalScreen):
@@ -497,18 +497,19 @@ class LogsScreen(Screen):
         yield TmuxBar(active_screen="logs")
 
     def on_mount(self) -> None:
+        """Initial projection from current state."""
         self._sync()
 
     # ─────────────────────────────────────────────────────────────────
-    # Message handlers - pure event-driven updates
+    # Event Handlers - Targeted Updates
     # ─────────────────────────────────────────────────────────────────
 
-    def on_log_added(self, message: LogAdded) -> None:
+    def on_log_emitted(self, event: LogEmitted) -> None:
         """Handle new log entry - incrementally update."""
         self._sync()
 
-    def on_refresh_time(self, message: RefreshTime) -> None:
-        """Handle time refresh."""
+    def on_time_tick(self, event: TimeTick) -> None:
+        """Handle time tick."""
         self.query_one(TmuxBar).refresh_info()
 
     def _get_unique_sources(self) -> list[str]:
