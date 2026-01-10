@@ -117,6 +117,7 @@ class ModelConfig(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: Optional[datetime] = None
     is_default: bool = False
+    is_builtin: bool = False  # True for default models, can't be deleted
 
     def get_api_key(self) -> Optional[str]:
         """Get API key from config or environment."""
@@ -245,6 +246,15 @@ class ModelConfigManager:
         """Ensure config directory exists."""
         self.base_path.mkdir(parents=True, exist_ok=True)
 
+    # Default model IDs that should be marked as builtin
+    _BUILTIN_IDS = {
+        "openai-gpt52",
+        "openai-gpt5-mini",
+        "anthropic-sonnet-4.5",
+        "anthropic-opus-4.5",
+        "openrouter-claude-4.5",
+    }
+
     def _load(self) -> ModelConfigStore:
         """Load store from disk."""
         if self._store is not None:
@@ -255,6 +265,8 @@ class ModelConfigManager:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 self._store = ModelConfigStore.model_validate(data)
+                # Migration: ensure builtin models are marked correctly
+                self._migrate_builtin_flags()
             except (json.JSONDecodeError, Exception):
                 # Start fresh on error
                 self._store = self._create_defaults()
@@ -262,6 +274,16 @@ class ModelConfigManager:
             self._store = self._create_defaults()
 
         return self._store
+
+    def _migrate_builtin_flags(self) -> None:
+        """Ensure default models have is_builtin=True."""
+        changed = False
+        for config in self._store.configs:
+            if config.id in self._BUILTIN_IDS and not config.is_builtin:
+                config.is_builtin = True
+                changed = True
+        if changed:
+            self._save()
 
     def _save(self) -> None:
         """Save store to disk."""
@@ -278,19 +300,21 @@ class ModelConfigManager:
         """Create default model configurations."""
         store = ModelConfigStore()
 
-        # Add default OpenAI models
+        # Add default OpenAI models (builtin = can't be deleted)
         store.add(ModelConfig(
             id="openai-gpt52",
             name="GPT-5.2",
             provider=Provider.OPENAI,
             model="gpt-5.2",
             is_default=True,
+            is_builtin=True,
         ))
         store.add(ModelConfig(
             id="openai-gpt5-mini",
             name="GPT-5 Mini",
             provider=Provider.OPENAI,
             model="gpt-5-mini",
+            is_builtin=True,
         ))
 
         # Add default Anthropic models
@@ -299,12 +323,14 @@ class ModelConfigManager:
             name="Claude 4.5 Sonnet",
             provider=Provider.ANTHROPIC,
             model="claude-4.5-sonnet",
+            is_builtin=True,
         ))
         store.add(ModelConfig(
             id="anthropic-opus-4.5",
             name="Claude 4.5 Opus",
             provider=Provider.ANTHROPIC,
             model="claude-4.5-opus",
+            is_builtin=True,
         ))
 
         # Add OpenRouter default
@@ -314,9 +340,14 @@ class ModelConfigManager:
             provider=Provider.OPENROUTER,
             model="openrouter/anthropic/claude-4.5-sonnet",
             api_base="https://openrouter.ai/api/v1",
+            is_builtin=True,
         ))
 
         return store
+
+    def reload(self) -> None:
+        """Clear cache and reload from disk."""
+        self._store = None
 
     def list_all(self) -> List[ModelConfig]:
         """List all saved model configs."""

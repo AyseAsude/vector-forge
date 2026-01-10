@@ -170,11 +170,38 @@ class ModelCard(Static):
         )
 
 
+class DeleteButton(Static):
+    """Clickable delete button for model cards."""
+
+    DEFAULT_CSS = """
+    DeleteButton {
+        width: auto;
+        height: 1;
+    }
+
+    DeleteButton:hover {
+        background: #fb4934 30%;
+    }
+    """
+
+    class Clicked(Message):
+        """Emitted when delete button is clicked."""
+        pass
+
+    def __init__(self, **kwargs) -> None:
+        # Use Rich markup with theme color and escaped brackets
+        super().__init__(f"[{COLORS.error}]\\[x][/]", **kwargs)
+
+    def on_click(self, event) -> None:
+        event.stop()
+        self.post_message(self.Clicked())
+
+
 class ModelCardCompact(Static):
     """Compact model card for selection lists.
 
     Used in the model selection modal to display selectable options.
-    Matches TaskCard style from dashboard.
+    Custom models show [x] delete button on bottom right.
     """
 
     DEFAULT_CSS = """
@@ -212,10 +239,19 @@ class ModelCardCompact(Static):
         width: auto;
     }
 
-    ModelCardCompact .model-id {
+    ModelCardCompact .detail-row {
         height: 1;
+        width: 100%;
+    }
+
+    ModelCardCompact .model-id {
+        width: 1fr;
         padding-left: 2;
         color: $text-muted;
+    }
+
+    ModelCardCompact DeleteButton {
+        dock: right;
     }
     """
 
@@ -223,6 +259,13 @@ class ModelCardCompact(Static):
 
     class Selected(Message):
         """Emitted when this card is selected."""
+
+        def __init__(self, config: ModelConfig) -> None:
+            super().__init__()
+            self.config = config
+
+    class DeleteRequested(Message):
+        """Emitted when delete is requested for this card."""
 
         def __init__(self, config: ModelConfig) -> None:
             super().__init__()
@@ -243,18 +286,30 @@ class ModelCardCompact(Static):
             yield Static(classes="icon")
             yield Static(classes="name")
             yield Static(classes="provider")
-        yield Static(classes="model-id")
+        with Horizontal(classes="detail-row"):
+            yield Static(classes="model-id")
+            # Only show delete for non-builtin models
+            if not self._config.is_builtin:
+                yield DeleteButton()
 
     def on_mount(self) -> None:
         self._update_display()
         self.set_class(self._is_selected, "-selected")
 
-    def on_click(self) -> None:
+    def on_delete_button_clicked(self, event: DeleteButton.Clicked) -> None:
+        """Handle delete button click."""
+        event.stop()
+        self.post_message(self.DeleteRequested(self._config))
+
+    def on_click(self, event) -> None:
+        # Left-click selects (delete button handles its own clicks)
         self.post_message(self.Selected(self._config))
 
     def on_key(self, event) -> None:
         if event.key in ("enter", "space"):
             self.post_message(self.Selected(self._config))
+        elif event.key == "delete" and not self._config.is_builtin:
+            self.post_message(self.DeleteRequested(self._config))
 
     def set_selected(self, selected: bool) -> None:
         """Set selection state."""

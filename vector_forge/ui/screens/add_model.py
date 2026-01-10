@@ -2,7 +2,7 @@
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static, Button, Input, Select
 from textual.message import Message
@@ -11,7 +11,6 @@ from vector_forge.storage.models import (
     ModelConfig,
     ModelConfigManager,
     Provider,
-    COMMON_MODELS,
 )
 from vector_forge.ui.theme import COLORS
 from vector_forge.ui.widgets.model_card import PROVIDER_INFO
@@ -32,6 +31,7 @@ class AddModelScreen(ModalScreen):
     AddModelScreen #dialog {
         width: 60;
         height: auto;
+        max-height: 90%;
         background: $surface;
         padding: 1 2;
     }
@@ -52,41 +52,53 @@ class AddModelScreen(ModalScreen):
         color: $text-dim;
     }
 
-    /* Form */
+    /* Form content - scrollable */
+    AddModelScreen #form-content {
+        height: auto;
+        max-height: 30;
+    }
+
+    /* Form rows */
     AddModelScreen .form-row {
-        height: 3;
+        height: 1;
         margin-bottom: 1;
     }
 
     AddModelScreen .form-label {
-        width: 10;
-        height: 3;
-        content-align: left middle;
+        width: 12;
         color: $text-muted;
     }
 
-    AddModelScreen .form-input {
-        width: 1fr;
-    }
-
+    /* Input styling - matches ParamRow pattern */
     AddModelScreen Input {
-        background: $background;
+        width: 1fr;
+        height: 1;
+        background: $surface-hl;
         border: none;
-        height: 3;
+        padding: 0 1;
     }
 
     AddModelScreen Input:focus {
-        background: $surface-hl;
+        background: $bg;
     }
 
+    /* Select widget - clean style without borders */
     AddModelScreen Select {
-        background: $background;
+        width: 1fr;
+        height: 1;
+        background: $surface-hl;
         border: none;
-        height: 3;
     }
 
-    AddModelScreen Select:focus {
+    AddModelScreen Select > SelectCurrent {
         background: $surface-hl;
+        border: none;
+        padding: 0 1;
+    }
+
+    AddModelScreen Select:focus > SelectCurrent {
+        background: $bg;
+        border: none;
     }
 
     /* Buttons */
@@ -113,6 +125,10 @@ class AddModelScreen(ModalScreen):
         background: $primary 20%;
     }
 
+    AddModelScreen #btn-cancel:focus {
+        background: $surface-hl;
+    }
+
     AddModelScreen #btn-save {
         width: auto;
         min-width: 12;
@@ -125,6 +141,11 @@ class AddModelScreen(ModalScreen):
 
     AddModelScreen #btn-save:hover {
         background: $success 80%;
+    }
+
+    AddModelScreen #btn-save:focus {
+        background: $success;
+        text-style: bold;
     }
     """
 
@@ -147,37 +168,39 @@ class AddModelScreen(ModalScreen):
                 yield Static("ADD NEW MODEL", id="title")
                 yield Static(f"[{COLORS.text_dim}]ESC[/]", id="close-hint")
 
-            # Form
-            with Horizontal(classes="form-row"):
-                yield Static("Provider", classes="form-label")
-                yield Select(
-                    [(p.value.title(), p.value) for p in Provider if p != Provider.CUSTOM],
-                    value=Provider.OPENAI.value,
-                    id="sel-provider",
-                    classes="form-input",
-                )
+            # Form content - scrollable for small screens
+            with VerticalScroll(id="form-content"):
+                # Provider dropdown - no "Select" prompt, always has value
+                with Horizontal(classes="form-row"):
+                    yield Static("Provider", classes="form-label")
+                    yield Select(
+                        [(p.value.title(), p.value) for p in Provider if p != Provider.CUSTOM],
+                        value=Provider.OPENAI.value,
+                        allow_blank=False,
+                        id="sel-provider",
+                    )
 
-            with Horizontal(classes="form-row"):
-                yield Static("Model", classes="form-label")
-                yield Select(
-                    [(m, m) for m in COMMON_MODELS.get(Provider.OPENAI, [])],
-                    id="sel-model",
-                    classes="form-input",
-                )
+                # Model - text input
+                with Horizontal(classes="form-row"):
+                    yield Static("Model", classes="form-label")
+                    yield Input(placeholder="e.g. gpt-4o, claude-3-opus", id="inp-model")
 
-            with Horizontal(classes="form-row"):
-                yield Static("Name", classes="form-label")
-                yield Input(placeholder="Display name (optional)", id="inp-name", classes="form-input")
+                # Display name
+                with Horizontal(classes="form-row"):
+                    yield Static("Name", classes="form-label")
+                    yield Input(placeholder="Display name (optional)", id="inp-name")
 
-            with Horizontal(classes="form-row"):
-                yield Static("API Base", classes="form-label")
-                yield Input(placeholder="Custom endpoint (optional)", id="inp-api-base", classes="form-input")
+                # API Base
+                with Horizontal(classes="form-row"):
+                    yield Static("API Base", classes="form-label")
+                    yield Input(placeholder="Custom endpoint (optional)", id="inp-api-base")
 
-            with Horizontal(classes="form-row"):
-                yield Static("API Key", classes="form-label")
-                yield Input(placeholder="Uses env var if empty", id="inp-api-key", password=True, classes="form-input")
+                # API Key
+                with Horizontal(classes="form-row"):
+                    yield Static("API Key", classes="form-label")
+                    yield Input(placeholder="Uses env var if empty", id="inp-api-key", password=True)
 
-            # Buttons
+            # Buttons - always visible outside scroll
             with Horizontal(id="buttons"):
                 yield Static("", id="spacer")
                 yield Button("Cancel", id="btn-cancel")
@@ -191,46 +214,34 @@ class AddModelScreen(ModalScreen):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sel-provider":
-            self._on_provider_changed(event.value)
-
-    def _on_provider_changed(self, provider_value: str) -> None:
-        """Update model list when provider changes."""
-        try:
-            provider = Provider(provider_value)
-        except ValueError:
-            return
-
-        self._selected_provider = provider
-        models = COMMON_MODELS.get(provider, [])
-
-        model_select = self.query_one("#sel-model", Select)
-        model_select.set_options([(m, m) for m in models])
-
-        if models:
-            model_select.value = models[0]
+            try:
+                self._selected_provider = Provider(event.value)
+            except ValueError:
+                pass
 
     def _save_model(self) -> None:
         """Save the new model configuration."""
-        model_select = self.query_one("#sel-model", Select)
+        model_input = self.query_one("#inp-model", Input)
         name_input = self.query_one("#inp-name", Input)
         api_base_input = self.query_one("#inp-api-base", Input)
         api_key_input = self.query_one("#inp-api-key", Input)
 
-        model = model_select.value
+        model = model_input.value.strip()
         if not model:
+            self.notify("Model name is required", severity="error")
             return
 
         # Generate name if not provided
         name = name_input.value.strip()
         if not name:
             provider_name, _ = PROVIDER_INFO.get(self._selected_provider, ("", ""))
-            model_short = str(model).split("/")[-1]
+            model_short = model.split("/")[-1]
             name = f"{provider_name} {model_short}"
 
         config = ModelConfig(
             name=name,
             provider=self._selected_provider,
-            model=str(model),
+            model=model,
             api_base=api_base_input.value.strip() or None,
             api_key=api_key_input.value.strip() or None,
         )

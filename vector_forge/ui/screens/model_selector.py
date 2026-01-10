@@ -31,7 +31,7 @@ class ModelSelectorScreen(ModalScreen):
     ModelSelectorScreen #dialog {
         width: 60;
         height: auto;
-        max-height: 80%;
+        max-height: 85%;
         background: $surface;
         padding: 1 2;
     }
@@ -64,7 +64,7 @@ class ModelSelectorScreen(ModalScreen):
     ModelSelectorScreen #models-scroll {
         height: auto;
         min-height: 4;
-        max-height: 20;
+        max-height: 16;
         margin-bottom: 1;
         scrollbar-gutter: stable;
     }
@@ -75,7 +75,7 @@ class ModelSelectorScreen(ModalScreen):
         color: $text-muted;
     }
 
-    /* Buttons */
+    /* Buttons - taller for better visibility */
     ModelSelectorScreen #buttons {
         height: 3;
     }
@@ -83,14 +83,19 @@ class ModelSelectorScreen(ModalScreen):
     ModelSelectorScreen #btn-add {
         width: 1fr;
         height: 3;
-        background: $background;
-        color: $text-muted;
+        background: $accent;
+        color: $background;
         border: none;
+        text-style: bold;
     }
 
     ModelSelectorScreen #btn-add:hover {
-        background: $surface-hl;
-        color: $text;
+        background: $accent 80%;
+    }
+
+    ModelSelectorScreen #btn-add:focus {
+        background: $accent;
+        text-style: bold;
     }
 
     ModelSelectorScreen #btn-cancel {
@@ -98,14 +103,17 @@ class ModelSelectorScreen(ModalScreen):
         min-width: 10;
         height: 3;
         background: $surface-hl;
-        color: $text-muted;
+        color: $text;
         border: none;
         margin-left: 1;
     }
 
     ModelSelectorScreen #btn-cancel:hover {
         background: $primary 20%;
-        color: $text;
+    }
+
+    ModelSelectorScreen #btn-cancel:focus {
+        background: $surface-hl;
     }
     """
 
@@ -140,9 +148,9 @@ class ModelSelectorScreen(ModalScreen):
             yield Static("SAVED MODELS", classes="section-title")
             yield VerticalScroll(id="models-scroll")
 
-            # Buttons
+            # Buttons - plain text, no Rich markup
             with Horizontal(id="buttons"):
-                yield Button(f"[{COLORS.text_dim}]+[/] Add New", id="btn-add")
+                yield Button("+ Add New", id="btn-add")
                 yield Button("Cancel", id="btn-cancel")
 
     def on_mount(self) -> None:
@@ -177,6 +185,16 @@ class ModelSelectorScreen(ModalScreen):
         self._manager.update_last_used(event.config.id)
         self.dismiss(self.ModelSelected(self.field_name, event.config))
 
+    def on_model_card_compact_delete_requested(self, event: ModelCardCompact.DeleteRequested) -> None:
+        """Handle model deletion request."""
+        if event.config.is_builtin:
+            self.notify("Cannot delete built-in models", severity="warning")
+            return
+
+        self._manager.remove(event.config.id)
+        self.notify(f"Deleted {event.config.name}", severity="information")
+        self._populate_models()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
             self.dismiss(None)
@@ -186,7 +204,8 @@ class ModelSelectorScreen(ModalScreen):
     def _on_model_added(self, result: AddModelScreen.ModelAdded | None) -> None:
         """Handle model added from AddModelScreen."""
         if result is not None:
-            # Refresh the list to show the new model
+            # Reload from disk and refresh the list
+            self._manager.reload()
             self._populate_models()
 
     def action_cancel(self) -> None:
