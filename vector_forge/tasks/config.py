@@ -1,12 +1,17 @@
 """Configuration models for the task-based extraction system.
 
 Provides comprehensive configuration for parallel extraction tasks, including
-sample generation parameters, evaluation settings, and aggregation strategies.
+optimization parameters, contrast generation, evaluation settings, and aggregation strategies.
+
+Architecture follows SOLID principles:
+- Single Responsibility: Each config class handles one concern
+- Open/Closed: Presets extend base configs without modification
+- Interface Segregation: Separate configs for separate concerns
 """
 
 from enum import Enum
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ContrastQuality(str, Enum):
@@ -35,6 +40,133 @@ class AggregationStrategy(str, Enum):
     WEIGHTED_AVERAGE = "weighted_average"
     PCA_PRINCIPAL = "pca_principal"
     STRATEGY_GROUPED = "strategy_grouped"
+
+
+# ============================================================================
+# Optimization Configuration (NEW - for steering-vectors library)
+# ============================================================================
+
+
+class OptimizationConfig(BaseModel):
+    """Configuration for steering vector optimization.
+
+    Controls the gradient-based optimization process that directly
+    optimizes log-probabilities of target completions.
+
+    Example:
+        >>> config = OptimizationConfig(lr=0.1, max_iters=50)
+        >>> # For faster iteration:
+        >>> fast_config = OptimizationConfig.fast()
+    """
+
+    # Core optimization parameters
+    lr: float = Field(
+        default=0.1,
+        gt=0,
+        le=1.0,
+        description="Adam learning rate",
+    )
+
+    max_iters: int = Field(
+        default=50,
+        gt=0,
+        le=500,
+        description="Maximum optimization steps",
+    )
+
+    # Temperature control
+    coldness: float = Field(
+        default=0.7,
+        gt=0,
+        le=2.0,
+        description="Inverse temperature for softmax (higher = sharper)",
+    )
+
+    # Regularization via norm constraints
+    starting_norm: float = Field(
+        default=1.0,
+        gt=0,
+        description="Initial L2 norm of steering vector",
+    )
+
+    max_norm: Optional[float] = Field(
+        default=2.0,
+        gt=0,
+        description="Clip vector norm after each step (None = no clipping)",
+    )
+
+    # Loss computation
+    normalize_by_length: bool = Field(
+        default=True,
+        description="Divide loss by completion length for fair comparison",
+    )
+
+    use_one_minus: bool = Field(
+        default=True,
+        description="Use log(1-p) for suppression (vs -log(p))",
+    )
+
+    # Early stopping
+    target_loss: Optional[float] = Field(
+        default=None,
+        description="Stop when loss <= this value",
+    )
+
+    convergence_eps: float = Field(
+        default=1e-5,
+        gt=0,
+        description="Stop when loss change < eps",
+    )
+
+    convergence_patience: int = Field(
+        default=3,
+        ge=1,
+        description="Consecutive steps below eps before stopping",
+    )
+
+    @classmethod
+    def fast(cls) -> "OptimizationConfig":
+        """Fast configuration for testing."""
+        return cls(
+            lr=0.15,
+            max_iters=30,
+            max_norm=3.0,
+            normalize_by_length=True,
+        )
+
+    @classmethod
+    def standard(cls) -> "OptimizationConfig":
+        """Standard configuration for normal use."""
+        return cls()
+
+    @classmethod
+    def thorough(cls) -> "OptimizationConfig":
+        """Thorough configuration for production quality."""
+        return cls(
+            lr=0.08,
+            max_iters=100,
+            max_norm=1.5,
+            starting_norm=0.5,
+            convergence_eps=1e-6,
+            convergence_patience=5,
+        )
+
+    def to_steering_config(self) -> dict:
+        """Convert to steering-vectors OptimizationConfig kwargs."""
+        return {
+            "lr": self.lr,
+            "max_iters": self.max_iters,
+            "coldness": self.coldness,
+            "starting_norm": self.starting_norm,
+            "max_norm": self.max_norm,
+            "normalize_by_length": self.normalize_by_length,
+            "use_one_minus": self.use_one_minus,
+        }
+
+
+# ============================================================================
+# Contrast Generation Configuration
+# ============================================================================
 
 
 class ContrastConfig(BaseModel):
@@ -176,6 +308,11 @@ class ContrastConfig(BaseModel):
         return cls.standard()
 
 
+# ============================================================================
+# Sample Configuration
+# ============================================================================
+
+
 class SampleConfig(BaseModel):
     """Configuration for a single extraction sample.
 
@@ -196,45 +333,41 @@ class SampleConfig(BaseModel):
         description="Specific layers to target when using FIXED strategy",
     )
 
-    temperature: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=2.0,
-        description="LLM temperature for datapoint generation",
-    )
-
-    num_datapoints: int = Field(
-        default=50,
-        ge=5,
-        le=500,
-        description="Number of contrast pairs to generate",
-    )
-
-    optimization_iterations: int = Field(
-        default=50,
-        ge=10,
-        le=500,
-        description="Maximum iterations for vector optimization",
-    )
-
-    learning_rate: float = Field(
-        default=0.1,
-        gt=0.0,
+    # Optimization settings (per-sample overrides)
+    lr: Optional[float] = Field(
+        default=None,
+        gt=0,
         le=1.0,
-        description="Learning rate for optimization",
+        description="Override learning rate for this sample",
     )
 
-    use_mean_centering: bool = Field(
-        default=True,
-        description="Apply mean-centering to reduce global activation bias",
+    max_iters: Optional[int] = Field(
+        default=None,
+        gt=0,
+        le=500,
+        description="Override max iterations for this sample",
     )
 
+    # Data settings
     bootstrap_ratio: float = Field(
         default=1.0,
         ge=0.5,
         le=1.0,
         description="Fraction of datapoints to use (for bootstrap diversity)",
     )
+
+    def get_lr(self, default: float) -> float:
+        """Get learning rate with fallback to default."""
+        return self.lr if self.lr is not None else default
+
+    def get_max_iters(self, default: int) -> int:
+        """Get max iterations with fallback to default."""
+        return self.max_iters if self.max_iters is not None else default
+
+
+# ============================================================================
+# Evaluation Configuration
+# ============================================================================
 
 
 class EvaluationConfig(BaseModel):
@@ -348,17 +481,23 @@ class EvaluationConfig(BaseModel):
         )
 
 
+# ============================================================================
+# Master Task Configuration
+# ============================================================================
+
+
 class TaskConfig(BaseModel):
     """Master configuration for an extraction task.
 
-    Combines sample generation, evaluation, and aggregation settings
+    Combines sample generation, optimization, evaluation, and aggregation settings
     into a comprehensive task specification.
 
     Example:
         >>> config = TaskConfig(
         ...     num_samples=16,
-        ...     max_concurrent=8,
-        ...     evaluation=EvaluationConfig.standard(),
+        ...     max_concurrent_extractions=8,
+        ...     optimization=OptimizationConfig.standard(),
+        ...     contrast=ContrastConfig.standard(),
         ... )
     """
 
@@ -382,28 +521,24 @@ class TaskConfig(BaseModel):
         description="Layer selection strategies to explore",
     )
 
-    temperatures: List[float] = Field(
-        default_factory=lambda: [0.5, 0.7, 1.0],
-        description="Temperature values to try",
+    # Optimization settings (NEW - replaces legacy CAA)
+    optimization: OptimizationConfig = Field(
+        default_factory=OptimizationConfig,
+        description="Steering vector optimization configuration",
     )
 
-    datapoint_counts: List[int] = Field(
-        default_factory=lambda: [30, 50, 100],
-        description="Different datapoint counts to try",
-    )
-
-    # Contrast pair generation (new pipeline)
+    # Contrast pair generation
     contrast: ContrastConfig = Field(
         default_factory=ContrastConfig,
         description="Contrast pair generation configuration",
     )
 
-    # Legacy field (deprecated, use contrast.pairs_per_sample instead)
-    contrast_pair_count: int = Field(
-        default=100,
-        ge=20,
-        le=500,
-        description="[DEPRECATED] Use contrast config instead",
+    # Datapoints per sample (explicit control)
+    datapoints_per_sample: int = Field(
+        default=50,
+        ge=10,
+        le=200,
+        description="Number of contrast pairs used per sample for optimization",
     )
 
     # Parallelism control
@@ -448,19 +583,26 @@ class TaskConfig(BaseModel):
 
     # LLM settings
     extractor_model: str = Field(
-        default="gpt-5.2",
+        default="claude-opus-4-5",
         description="Model for datapoint generation",
     )
 
     judge_model: str = Field(
-        default="gpt-5.2",
+        default="claude-opus-4-5",
         description="Model for evaluation judging",
     )
 
     expander_model: str = Field(
-        default="gpt-5.2",
+        default="claude-opus-4-5",
         description="Model for behavior expansion",
     )
+
+    @model_validator(mode="after")
+    def validate_top_k(self) -> "TaskConfig":
+        """Ensure top_k doesn't exceed num_samples."""
+        if self.top_k > self.num_samples:
+            self.top_k = self.num_samples
+        return self
 
     @classmethod
     def quick(cls) -> "TaskConfig":
@@ -469,10 +611,9 @@ class TaskConfig(BaseModel):
             num_samples=4,
             num_seeds=2,
             layer_strategies=[LayerStrategy.AUTO],
-            temperatures=[0.7],
-            datapoint_counts=[30],
+            optimization=OptimizationConfig.fast(),
             contrast=ContrastConfig.fast(),
-            contrast_pair_count=25,  # 20 core + 5 unique
+            datapoints_per_sample=25,
             max_concurrent_extractions=4,
             evaluation=EvaluationConfig.fast(),
             top_k=2,
@@ -482,8 +623,9 @@ class TaskConfig(BaseModel):
     def standard(cls) -> "TaskConfig":
         """Standard configuration for normal use."""
         return cls(
+            optimization=OptimizationConfig.standard(),
             contrast=ContrastConfig.standard(),
-            contrast_pair_count=50,  # 40 core + 10 unique
+            datapoints_per_sample=50,
         )
 
     @classmethod
@@ -498,10 +640,9 @@ class TaskConfig(BaseModel):
                 LayerStrategy.MIDDLE,
                 LayerStrategy.LATE,
             ],
-            temperatures=[0.3, 0.5, 0.7, 1.0],
-            datapoint_counts=[50, 100, 150],
+            optimization=OptimizationConfig.thorough(),
             contrast=ContrastConfig.thorough(),
-            contrast_pair_count=65,  # 50 core + 15 unique
+            datapoints_per_sample=80,
             max_concurrent_extractions=16,
             max_concurrent_evaluations=32,
             evaluation=EvaluationConfig.thorough(),

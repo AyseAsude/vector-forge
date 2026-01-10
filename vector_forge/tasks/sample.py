@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Iterator
 from itertools import product
 import hashlib
+import random
 
 from vector_forge.tasks.config import (
     TaskConfig,
@@ -49,11 +50,9 @@ class ExtractionSample:
         parts = [
             f"seed{self.config.seed}",
             self.config.layer_strategy.value,
-            f"t{self.config.temperature}",
-            f"n{self.config.num_datapoints}",
         ]
-        if self.config.use_mean_centering:
-            parts.append("mc")
+        if self.config.lr is not None:
+            parts.append(f"lr{self.config.lr}")
         if self.config.bootstrap_ratio < 1.0:
             parts.append(f"bs{int(self.config.bootstrap_ratio * 100)}")
         return "_".join(parts)
@@ -115,16 +114,15 @@ class SampleGenerator:
     """Generates diverse extraction samples from task configuration.
 
     Creates a set of samples that systematically explore the hyperparameter
-    space, similar to how Petri generates diverse audit instructions.
-
-    Supports multiple generation strategies:
+    space. Supports multiple generation strategies:
     - Full grid: Cartesian product of all parameters
     - Smart sampling: Latin hypercube for good coverage with fewer samples
     - Focused: Variations around a base configuration
+    - Seeded: Single strategy with multiple random seeds
 
     Example:
         >>> generator = SampleGenerator(task_config)
-        >>> samples = generator.generate_grid(behavior)
+        >>> samples = generator.generate_smart(behavior)
         >>> print(f"Generated {len(samples)} samples")
     """
 
@@ -137,13 +135,11 @@ class SampleGenerator:
         self._config = config
 
     def generate_grid(self, behavior: ExpandedBehavior) -> SampleSet:
-        """Generate samples using full grid search over parameters.
+        """Generate samples using grid search over parameters.
 
         Creates one sample for each combination of:
         - Seeds (0 to num_seeds-1)
         - Layer strategies
-        - Temperatures
-        - Datapoint counts
 
         Args:
             behavior: The expanded behavior to extract.
@@ -155,16 +151,11 @@ class SampleGenerator:
 
         seeds = range(self._config.num_seeds)
         strategies = self._config.layer_strategies
-        temps = self._config.temperatures
-        counts = self._config.datapoint_counts
 
-        for seed, strategy, temp, count in product(seeds, strategies, temps, counts):
+        for seed, strategy in product(seeds, strategies):
             config = SampleConfig(
                 seed=seed,
                 layer_strategy=strategy,
-                temperature=temp,
-                num_datapoints=count,
-                use_mean_centering=True,
             )
 
             sample = ExtractionSample(
@@ -204,38 +195,27 @@ class SampleGenerator:
         try:
             from scipy.stats import qmc
 
-            sampler = qmc.LatinHypercube(d=4)
+            sampler = qmc.LatinHypercube(d=2)  # seed, strategy
             points = sampler.random(n=n)
         except ImportError:
             # Fallback to simple random sampling
-            import random
-
-            points = [[random.random() for _ in range(4)] for _ in range(n)]
+            points = [[random.random() for _ in range(2)] for _ in range(n)]
 
         samples = []
         seeds = list(range(self._config.num_seeds))
         strategies = self._config.layer_strategies
-        temps = self._config.temperatures
-        counts = self._config.datapoint_counts
 
         for point in points:
             seed_idx = int(point[0] * len(seeds))
             strat_idx = int(point[1] * len(strategies))
-            temp_idx = int(point[2] * len(temps))
-            count_idx = int(point[3] * len(counts))
 
             # Clamp indices to valid range
             seed_idx = min(seed_idx, len(seeds) - 1)
             strat_idx = min(strat_idx, len(strategies) - 1)
-            temp_idx = min(temp_idx, len(temps) - 1)
-            count_idx = min(count_idx, len(counts) - 1)
 
             config = SampleConfig(
                 seed=seeds[seed_idx],
                 layer_strategy=strategies[strat_idx],
-                temperature=temps[temp_idx],
-                num_datapoints=counts[count_idx],
-                use_mean_centering=True,
             )
 
             sample = ExtractionSample(
@@ -280,17 +260,15 @@ class SampleGenerator:
             config=base_config,
         ))
 
-        # Generate variations by changing one parameter at a time
+        # Generate variations by changing seed
         for i in range(n_variations - 1):
             new_config = SampleConfig(
                 seed=base_config.seed + i + 1,
                 layer_strategy=base_config.layer_strategy,
-                temperature=base_config.temperature,
-                num_datapoints=base_config.num_datapoints,
-                optimization_iterations=base_config.optimization_iterations,
-                learning_rate=base_config.learning_rate,
-                use_mean_centering=base_config.use_mean_centering,
-                bootstrap_ratio=max(0.5, base_config.bootstrap_ratio - 0.1 * (i % 3)),
+                target_layers=base_config.target_layers,
+                lr=base_config.lr,
+                max_iters=base_config.max_iters,
+                bootstrap_ratio=max(0.5, base_config.bootstrap_ratio - 0.05 * (i % 4)),
             )
 
             sample = ExtractionSample(
@@ -333,9 +311,6 @@ class SampleGenerator:
             config = SampleConfig(
                 seed=seed,
                 layer_strategy=strategy,
-                temperature=0.7,
-                num_datapoints=50,
-                use_mean_centering=True,
             )
 
             sample = ExtractionSample(
@@ -350,6 +325,46 @@ class SampleGenerator:
                 "generation_method": "seeded",
                 "behavior_name": behavior.name,
                 "strategy": strategy.value,
+                "n_seeds": n_seeds,
+            },
+        )
+
+    def generate_layer_sweep(
+        self,
+        behavior: ExpandedBehavior,
+        n_seeds: int = 3,
+    ) -> SampleSet:
+        """Generate samples that sweep across different layer strategies.
+
+        Each seed is paired with each layer strategy.
+
+        Args:
+            behavior: The expanded behavior to extract.
+            n_seeds: Number of seeds per strategy.
+
+        Returns:
+            SampleSet covering all strategy-seed combinations.
+        """
+        samples = []
+
+        for strategy in self._config.layer_strategies:
+            for seed in range(n_seeds):
+                config = SampleConfig(
+                    seed=seed,
+                    layer_strategy=strategy,
+                )
+                sample = ExtractionSample(
+                    behavior=behavior,
+                    config=config,
+                )
+                samples.append(sample)
+
+        return SampleSet(
+            samples=samples,
+            metadata={
+                "generation_method": "layer_sweep",
+                "behavior_name": behavior.name,
+                "strategies": [s.value for s in self._config.layer_strategies],
                 "n_seeds": n_seeds,
             },
         )

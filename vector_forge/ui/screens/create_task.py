@@ -13,6 +13,7 @@ from vector_forge.tasks.config import (
     AggregationStrategy,
     ContrastQuality,
     ContrastConfig,
+    OptimizationConfig,
 )
 from vector_forge.storage.models import ModelConfig, ModelConfigManager
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
@@ -407,27 +408,26 @@ class CreateTaskScreen(Screen):
             # Parameters section
             yield Static("PARAMETERS", classes="main-section")
             with Vertical(id="params-container"):
-                # Row 1: Sampling & Contrast
+                # Row 1: Sampling & Optimization
                 with Horizontal(classes="params-row"):
                     with ParamSection("SAMPLING"):
                         yield ParamRow("Samples", "inp-samples", "16")
                         yield ParamRow("Seeds", "inp-seeds", "4")
-                        yield ParamRow("Temperatures", "inp-temps", "0.5, 0.7, 1.0", "comma separated")
-                        yield ParamRow("Datapoints", "inp-datapoints", "30, 50, 100", "comma separated")
+                        yield ParamRow("Datapoints", "inp-datapoints", "50", "per sample")
 
+                    with ParamSection("OPTIMIZATION"):
+                        yield ParamRow("Learning Rate", "inp-lr", "0.1")
+                        yield ParamRow("Max Iters", "inp-max-iters", "50")
+                        yield ParamRow("Coldness", "inp-coldness", "0.7", "softmax temp")
+                        yield ParamRow("Max Norm", "inp-max-norm", "2.0", "regularization")
+
+                # Row 2: Contrast & Validation
+                with Horizontal(classes="params-row"):
                     with ParamSection("CONTRAST"):
                         yield ParamRow("Core Pool", "inp-core-pool", "80", "shared pairs")
                         yield ParamRow("Core/Sample", "inp-core-per-sample", "40")
                         yield ParamRow("Unique/Sample", "inp-unique-per-sample", "10")
                         yield ParamRow("Max Regen", "inp-max-regen", "2", "retry attempts")
-
-                # Row 2: Parallelism & Validation
-                with Horizontal(classes="params-row"):
-                    with ParamSection("PARALLELISM"):
-                        yield ParamRow("Extractions", "inp-extractions", "8")
-                        yield ParamRow("Evaluations", "inp-evaluations", "16")
-                        yield ParamRow("Generations", "inp-generations", "5", "contrast gen")
-                        yield ParamRow("Top K", "inp-topk", "5")
 
                     with ParamSection("VALIDATION"):
                         yield ParamRow("Min Quality", "inp-min-quality", "6.0", "contrast score")
@@ -435,7 +435,15 @@ class CreateTaskScreen(Screen):
                         yield ParamRow("Max SRC", "inp-max-src", "3.0", "behavior score")
                         yield ParamRow("Min Distance", "inp-min-dist", "0.3", "semantic")
 
-                # Row 3: Strategy options
+                # Row 3: Parallelism
+                with Horizontal(classes="params-row"):
+                    with ParamSection("PARALLELISM"):
+                        yield ParamRow("Extractions", "inp-extractions", "8")
+                        yield ParamRow("Evaluations", "inp-evaluations", "16")
+                        yield ParamRow("Generations", "inp-generations", "5", "contrast gen")
+                        yield ParamRow("Top K", "inp-topk", "5")
+
+                # Strategy options
                 with Horizontal(classes="option-row"):
                     yield Static("Layer", classes="option-label")
                     with Horizontal(classes="option-pills"):
@@ -459,7 +467,7 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("contrast", "standard", "Standard", selected=True, id="contrast-standard")
                         yield OptionPill("contrast", "thorough", "Thorough", id="contrast-thorough")
 
-                # Row 3: Models (clickable cards)
+                # Row 4: Models (clickable cards)
                 yield Static("MODELS", classes="main-section")
                 with Horizontal(classes="params-row"):
                     yield ModelCard(
@@ -543,8 +551,14 @@ class CreateTaskScreen(Screen):
         # Update sampling fields
         self.query_one("#inp-samples", Input).value = str(cfg.num_samples)
         self.query_one("#inp-seeds", Input).value = str(cfg.num_seeds)
-        self.query_one("#inp-temps", Input).value = ", ".join(str(t) for t in cfg.temperatures)
-        self.query_one("#inp-datapoints", Input).value = ", ".join(str(d) for d in cfg.datapoint_counts)
+        self.query_one("#inp-datapoints", Input).value = str(cfg.datapoints_per_sample)
+
+        # Update optimization fields
+        opt = cfg.optimization
+        self.query_one("#inp-lr", Input).value = str(opt.lr)
+        self.query_one("#inp-max-iters", Input).value = str(opt.max_iters)
+        self.query_one("#inp-coldness", Input).value = str(opt.coldness)
+        self.query_one("#inp-max-norm", Input).value = str(opt.max_norm or "")
 
         # Update parallelism fields
         self.query_one("#inp-extractions", Input).value = str(cfg.max_concurrent_extractions)
@@ -639,8 +653,8 @@ class CreateTaskScreen(Screen):
             from vector_forge.tasks.expander import BehaviorExpander
             from vector_forge.llm import create_client
 
-            # Use extractor model for expansion, or default to gpt-5.2
-            model = self._extractor_config.model if self._extractor_config else "gpt-5.2"
+            # Use extractor model for expansion, or default to claude-opus-4-5
+            model = self._extractor_config.model if self._extractor_config else "claude-opus-4-5"
             llm = create_client(model)
             expander = BehaviorExpander(llm)
             result = await expander.expand(text)
@@ -678,17 +692,7 @@ DOMAINS: {', '.join(result.domains[:6])}
         color = colors.get(level, "$foreground-muted")
         self.query_one("#status", Static).update(f"[{color}]{msg}[/]")
 
-    def _parse_list(self, value: str, cast=float) -> list:
-        """Parse comma-separated values into a list."""
-        if not value.strip():
-            return []
-        return [cast(x.strip()) for x in value.split(",") if x.strip()]
-
     def _build_config(self) -> TaskConfig:
-        # Parse temperatures and datapoints
-        temps = self._parse_list(self.query_one("#inp-temps", Input).value, float)
-        datapoints = self._parse_list(self.query_one("#inp-datapoints", Input).value, int)
-
         # Map layer strategy
         layer_map = {
             "auto": LayerStrategy.AUTO,
@@ -711,20 +715,26 @@ DOMAINS: {', '.join(result.domains[:6])}
 
         # Get model names from configs
         extractor_model = (
-            self._extractor_config.model if self._extractor_config else "gpt-5.2"
+            self._extractor_config.model if self._extractor_config else "claude-opus-4-5"
         )
         judge_model = (
-            self._judge_config.model if self._judge_config else "gpt-5.2"
+            self._judge_config.model if self._judge_config else "claude-opus-4-5"
         )
 
-        # Build contrast config from fields
-        core_per_sample = int(self.query_one("#inp-core-per-sample", Input).value or "40")
-        unique_per_sample = int(self.query_one("#inp-unique-per-sample", Input).value or "10")
+        # Build optimization config
+        max_norm_str = self.query_one("#inp-max-norm", Input).value.strip()
+        optimization_config = OptimizationConfig(
+            lr=float(self.query_one("#inp-lr", Input).value or "0.1"),
+            max_iters=int(self.query_one("#inp-max-iters", Input).value or "50"),
+            coldness=float(self.query_one("#inp-coldness", Input).value or "0.7"),
+            max_norm=float(max_norm_str) if max_norm_str else None,
+        )
 
+        # Build contrast config
         contrast_config = ContrastConfig(
             core_pool_size=int(self.query_one("#inp-core-pool", Input).value or "80"),
-            core_seeds_per_sample=core_per_sample,
-            unique_seeds_per_sample=unique_per_sample,
+            core_seeds_per_sample=int(self.query_one("#inp-core-per-sample", Input).value or "40"),
+            unique_seeds_per_sample=int(self.query_one("#inp-unique-per-sample", Input).value or "10"),
             max_regeneration_attempts=int(self.query_one("#inp-max-regen", Input).value or "2"),
             max_concurrent_generations=int(self.query_one("#inp-generations", Input).value or "5"),
             min_contrast_quality=float(self.query_one("#inp-min-quality", Input).value or "6.0"),
@@ -737,10 +747,9 @@ DOMAINS: {', '.join(result.domains[:6])}
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
             layer_strategies=[layer_strategy],
-            temperatures=temps or [0.7],
-            datapoint_counts=datapoints or [50],
+            optimization=optimization_config,
             contrast=contrast_config,
-            contrast_pair_count=core_per_sample + unique_per_sample,  # Legacy field
+            datapoints_per_sample=int(self.query_one("#inp-datapoints", Input).value or "50"),
             max_concurrent_extractions=int(self.query_one("#inp-extractions", Input).value or "8"),
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,

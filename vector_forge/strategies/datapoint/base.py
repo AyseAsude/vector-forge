@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Any
 
-from steering_vectors import SteeringVectorTrainingSample as TrainingDatapoint
+from steering_vectors import TrainingDatapoint
 
 from vector_forge.core.behavior import BehaviorSpec
 from vector_forge.core.protocols import LLMClient

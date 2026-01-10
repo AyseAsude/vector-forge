@@ -35,7 +35,12 @@ dependencies = [
     "scikit-learn>=1.6.0",
     "python-dotenv>=1.0.0",
     "textual>=7.0.0",
+    "transformers>=4.40.0",
+    "steering-vectors",
 ]
+
+[tool.uv.sources]
+steering-vectors = { path = "../steering-vectors", editable = true }
 
 [project.optional-dependencies]
 dev = [

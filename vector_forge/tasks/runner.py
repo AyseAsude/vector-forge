@@ -1,28 +1,62 @@
 """Parallel task runner for extraction tasks.
 
-Executes extraction tasks with configurable parallelism, managing
-concurrent extractions and evaluations efficiently.
+Executes extraction tasks with configurable parallelism, using the
+optimization-based steering vector approach from steering-vectors library.
+
+Architecture:
+- Uses SteeringOptimizer for gradient-based vector extraction
+- Supports multiple layer strategies with dynamic layer detection
+- Full reproducibility via comprehensive result tracking
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Protocol
 import asyncio
 import time
 import logging
+import random
 
 import torch
+from transformers import PreTrainedModel, PreTrainedTokenizer
 
-from vector_forge.tasks.config import TaskConfig, AggregationStrategy
+from steering_vectors import (
+    SteeringOptimizer,
+    VectorSteering,
+    HuggingFaceBackend,
+    TrainingDatapoint,
+)
+from steering_vectors.core.config import OptimizationConfig as SVOptimizationConfig
+from steering_vectors.optimization.callbacks import (
+    HistoryCallback,
+    ConvergenceCallback,
+    EarlyStoppingCallback,
+)
+
+from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
 from vector_forge.tasks.sample import ExtractionSample
 from vector_forge.tasks.task import ExtractionTask, TaskResult, SampleResult
-from vector_forge.tasks.evaluation import VectorEvaluator, EvaluationResult
+from vector_forge.tasks.evaluation import VectorEvaluator
 from vector_forge.tasks.expander import ExpandedBehavior
+from vector_forge.tasks.adapter import (
+    ContrastToTrainingAdapter,
+    OptimizationResultData,
+    DatapointSerializer,
+)
+from vector_forge.contrast.protocols import ValidatedPair, SampleDataset
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# Protocols
+# ============================================================================
+
+
 class ModelBackend(Protocol):
     """Protocol for model backend operations."""
+
+    model: PreTrainedModel
+    tokenizer: PreTrainedTokenizer
 
     def generate(self, prompt: str, max_new_tokens: int = 100) -> str:
         ...
@@ -45,19 +79,9 @@ class LLMClient(Protocol):
         ...
 
 
-class Extractor(Protocol):
-    """Protocol for vector extraction."""
-
-    async def extract(
-        self,
-        behavior: ExpandedBehavior,
-        config: Any,
-    ) -> Optional[torch.Tensor]:
-        ...
-
-    @property
-    def recommended_layer(self) -> int:
-        ...
+# ============================================================================
+# Progress Tracking
+# ============================================================================
 
 
 @dataclass
@@ -85,15 +109,58 @@ class RunnerProgress:
         return self.completed_evaluations / self.total_samples
 
 
+# ============================================================================
+# Optimization Result Container
+# ============================================================================
+
+
+@dataclass
+class ExtractionResult:
+    """Result from a single vector extraction.
+
+    Contains all information needed for reproducibility and analysis.
+    """
+
+    vector: Optional[torch.Tensor]
+    layer: int
+    final_loss: float = 0.0
+    iterations: int = 0
+    loss_history: List[float] = field(default_factory=list)
+    datapoints_used: int = 0
+    config_used: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+
+    @property
+    def is_valid(self) -> bool:
+        return self.vector is not None and self.error is None
+
+    def to_result_data(self) -> OptimizationResultData:
+        """Convert to serializable format."""
+        return OptimizationResultData(
+            vector_shape=tuple(self.vector.shape) if self.vector is not None else (),
+            layer=self.layer,
+            final_loss=self.final_loss,
+            iterations=self.iterations,
+            loss_history=self.loss_history,
+            config=self.config_used,
+            metadata={"datapoints_used": self.datapoints_used},
+        )
+
+
+# ============================================================================
+# Task Runner
+# ============================================================================
+
+
 class TaskRunner:
     """Parallel execution engine for extraction tasks.
 
-    Manages concurrent execution of extraction samples with configurable
-    parallelism. Coordinates extraction, evaluation, and aggregation phases.
+    Uses the optimization-based approach from steering-vectors library
+    for high-quality steering vector extraction.
 
     Example:
         >>> runner = TaskRunner(backend, llm, max_concurrent=8)
-        >>> result = await runner.run(task)
+        >>> result = await runner.run(task, sample_datasets)
         >>> print(f"Best score: {result.final_score}")
     """
 
@@ -101,42 +168,62 @@ class TaskRunner:
         self,
         model_backend: ModelBackend,
         llm_client: LLMClient,
-        extractor_factory: Optional[Callable] = None,
         max_concurrent_extractions: int = 8,
         max_concurrent_evaluations: int = 16,
     ) -> None:
         """Initialize the task runner.
 
         Args:
-            model_backend: Backend for model inference.
+            model_backend: Backend for model inference (must have model/tokenizer).
             llm_client: Client for LLM API calls.
-            extractor_factory: Factory for creating extractors.
             max_concurrent_extractions: Max parallel extraction workers.
             max_concurrent_evaluations: Max parallel evaluation generations.
         """
         self._backend = model_backend
         self._llm = llm_client
-        self._extractor_factory = extractor_factory
         self._max_extractions = max_concurrent_extractions
         self._max_evaluations = max_concurrent_evaluations
         self._progress_callback: Optional[Callable[[RunnerProgress], None]] = None
 
-    def on_progress(self, callback: Callable[[RunnerProgress], None]) -> None:
-        """Register a progress callback.
+        # Create steering-vectors backend
+        self._sv_backend = HuggingFaceBackend(
+            model=model_backend.model,
+            tokenizer=model_backend.tokenizer,
+        )
 
-        Args:
-            callback: Function called with progress updates.
-        """
+        # Cache model info
+        self._num_layers = self._sv_backend.get_num_layers()
+        self._hidden_dim = self._sv_backend.get_hidden_dim()
+
+        logger.info(
+            f"TaskRunner initialized: {self._num_layers} layers, "
+            f"hidden_dim={self._hidden_dim}"
+        )
+
+    def on_progress(self, callback: Callable[[RunnerProgress], None]) -> None:
+        """Register a progress callback."""
         self._progress_callback = callback
 
-    async def run(self, task: ExtractionTask) -> TaskResult:
-        """Execute an extraction task.
+    @property
+    def num_layers(self) -> int:
+        """Number of layers in the model."""
+        return self._num_layers
 
-        Runs all samples in parallel, evaluates results, and aggregates
-        into final output.
+    @property
+    def hidden_dim(self) -> int:
+        """Hidden dimension of the model."""
+        return self._hidden_dim
+
+    async def run(
+        self,
+        task: ExtractionTask,
+        sample_datasets: Dict[int, SampleDataset],
+    ) -> TaskResult:
+        """Execute an extraction task with provided datasets.
 
         Args:
             task: The extraction task to run.
+            sample_datasets: Pre-generated datasets for each sample.
 
         Returns:
             Aggregated task result with final vector.
@@ -149,7 +236,9 @@ class TaskRunner:
         )
 
         # Phase 1: Parallel extraction
-        extraction_results = await self._run_extractions(task)
+        extraction_results = await self._run_extractions(
+            task, sample_datasets
+        )
 
         # Phase 2: Parallel evaluation
         evaluated_results = await self._run_evaluations(
@@ -175,36 +264,92 @@ class TaskRunner:
 
         return final_result
 
+    async def run_single_extraction(
+        self,
+        sample: ExtractionSample,
+        datapoints: List[TrainingDatapoint],
+        config: TaskConfig,
+    ) -> ExtractionResult:
+        """Run extraction for a single sample.
+
+        Exposed for testing and custom workflows.
+
+        Args:
+            sample: The extraction sample configuration.
+            datapoints: Training datapoints for optimization.
+            config: Task configuration.
+
+        Returns:
+            ExtractionResult with vector and metadata.
+        """
+        return await self._extract_vector(sample, datapoints, config)
+
     async def _run_extractions(
         self,
         task: ExtractionTask,
+        sample_datasets: Dict[int, SampleDataset],
     ) -> List[SampleResult]:
-        """Run all extractions in parallel.
-
-        Args:
-            task: The extraction task.
-
-        Returns:
-            List of sample results (may include failures).
-        """
+        """Run all extractions in parallel."""
         semaphore = asyncio.Semaphore(self._max_extractions)
         results: List[SampleResult] = []
         completed = 0
         started_at = time.time()
 
-        async def extract_one(sample: ExtractionSample) -> SampleResult:
+        # Convert datasets to datapoints
+        adapter = ContrastToTrainingAdapter()
+
+        async def extract_one(
+            sample: ExtractionSample,
+            sample_idx: int,
+        ) -> SampleResult:
             nonlocal completed
             async with semaphore:
                 start_time = time.time()
+
+                # Get dataset for this sample
+                dataset = sample_datasets.get(sample_idx)
+                if dataset is None:
+                    logger.warning(f"No dataset for sample {sample_idx}")
+                    return SampleResult(
+                        sample=sample,
+                        vector=None,
+                        layer=0,
+                        metadata={"error": "No dataset"},
+                        extraction_time_seconds=0,
+                    )
+
+                # Convert to training datapoints with bootstrap
+                datapoints = adapter.convert_with_bootstrap(
+                    dataset.valid_pairs,
+                    ratio=sample.config.bootstrap_ratio,
+                    seed=sample.config.seed,
+                )
+
+                # Limit to configured datapoints_per_sample
+                if len(datapoints) > task.config.datapoints_per_sample:
+                    random.seed(sample.config.seed)
+                    datapoints = random.sample(
+                        datapoints, task.config.datapoints_per_sample
+                    )
+
                 try:
-                    vector, layer = await self._extract_vector(sample)
+                    extraction = await self._extract_vector(
+                        sample, datapoints, task.config
+                    )
                     extraction_time = time.time() - start_time
 
                     result = SampleResult(
                         sample=sample,
-                        vector=vector,
-                        layer=layer,
+                        vector=extraction.vector,
+                        layer=extraction.layer,
                         extraction_time_seconds=extraction_time,
+                        metadata={
+                            "final_loss": extraction.final_loss,
+                            "iterations": extraction.iterations,
+                            "loss_history": extraction.loss_history,
+                            "datapoints_used": extraction.datapoints_used,
+                            "config": extraction.config_used,
+                        },
                     )
                 except Exception as e:
                     logger.warning(f"Extraction failed for {sample.sample_id}: {e}")
@@ -229,169 +374,155 @@ class TaskRunner:
                 return result
 
         # Run all extractions
-        tasks = [extract_one(sample) for sample in task.samples]
+        tasks = [
+            extract_one(sample, idx)
+            for idx, sample in enumerate(task.samples)
+        ]
         results = await asyncio.gather(*tasks)
 
         valid_count = sum(1 for r in results if r.is_valid)
         logger.info(f"Extraction complete: {valid_count}/{len(results)} successful")
 
-        return results
+        return list(results)
 
     async def _extract_vector(
         self,
         sample: ExtractionSample,
-    ) -> tuple[Optional[torch.Tensor], int]:
-        """Extract a steering vector for one sample.
+        datapoints: List[TrainingDatapoint],
+        config: TaskConfig,
+    ) -> ExtractionResult:
+        """Extract a steering vector using optimization.
 
         Args:
             sample: The extraction sample configuration.
+            datapoints: Training datapoints.
+            config: Task configuration.
 
         Returns:
-            Tuple of (vector, layer) or (None, 0) on failure.
+            ExtractionResult with vector and metadata.
         """
+        if not datapoints:
+            return ExtractionResult(
+                vector=None,
+                layer=0,
+                error="No datapoints provided",
+            )
+
         # Set random seed for reproducibility
-        torch.manual_seed(sample.config.seed * 42)
+        torch.manual_seed(sample.config.seed)
 
-        if self._extractor_factory is not None:
-            extractor = self._extractor_factory(
-                llm_client=self._llm,
-                model_backend=self._backend,
-                behavior=sample.behavior.to_behavior_spec(),
-                config=sample.config,
-            )
-            vector = await extractor.extract(
-                sample.behavior,
-                sample.config,
-            )
-            layer = extractor.recommended_layer
-            return vector, layer
+        # Determine target layer
+        layer = self._get_target_layer(sample)
 
-        # Fallback: use basic extraction
-        return await self._basic_extract(sample)
-
-    async def _basic_extract(
-        self,
-        sample: ExtractionSample,
-    ) -> tuple[Optional[torch.Tensor], int]:
-        """Basic extraction using steering_vectors library.
-
-        Args:
-            sample: The extraction sample.
-
-        Returns:
-            Tuple of (vector, layer).
-        """
-        # Import here to avoid circular dependency
-        from steering_vectors import train_steering_vector
-
-        # Generate contrast pairs using LLM
-        pairs = await self._generate_contrast_pairs(sample)
-
-        if not pairs:
-            return None, 0
-
-        # Determine layers based on strategy
-        layers = self._get_target_layers(sample)
-
-        # Train steering vector
-        try:
-            sv = train_steering_vector(
-                self._backend.model,
-                self._backend.tokenizer,
-                pairs,
-                layers=layers,
-            )
-            # Get vector for middle layer
-            mid_layer = layers[len(layers) // 2]
-            vector = sv.layer_activations[mid_layer]
-            return vector, mid_layer
-        except Exception as e:
-            logger.error(f"Steering vector training failed: {e}")
-            return None, 0
-
-    async def _generate_contrast_pairs(
-        self,
-        sample: ExtractionSample,
-    ) -> List[tuple[str, str]]:
-        """Generate contrast pairs for extraction.
-
-        Args:
-            sample: The extraction sample.
-
-        Returns:
-            List of (positive, negative) text pairs.
-        """
-        behavior = sample.behavior
-
-        prompt = f"""Generate {sample.config.num_datapoints} contrast pairs for steering vector extraction.
-
-BEHAVIOR: {behavior.name}
-DEFINITION: {behavior.detailed_definition}
-
-CONTRAST GUIDANCE: {behavior.contrast_guidance}
-
-DOMAINS TO COVER: {', '.join(behavior.domains[:5])}
-
-For each pair, provide:
-1. A POSITIVE example that exhibits the behavior
-2. A NEGATIVE example that does NOT exhibit the behavior
-3. Both should be responses to the same implied prompt
-
-Format as JSON array:
-[{{"positive": "...", "negative": "..."}}, ...]"""
-
-        response = await self._llm.generate(
-            [{"role": "user", "content": prompt}],
-            temperature=sample.config.temperature,
-            max_tokens=4096,
+        # Build optimization config
+        opt_config = config.optimization
+        sv_config = SVOptimizationConfig(
+            lr=sample.config.get_lr(opt_config.lr),
+            max_iters=sample.config.get_max_iters(opt_config.max_iters),
+            coldness=opt_config.coldness,
+            starting_norm=opt_config.starting_norm,
+            max_norm=opt_config.max_norm,
+            normalize_by_length=opt_config.normalize_by_length,
+            use_one_minus=opt_config.use_one_minus,
         )
 
-        return self._parse_pairs(response)
+        # Set up callbacks for tracking
+        history_callback = HistoryCallback(record_vectors=False)
+        callbacks = [history_callback]
 
-    def _parse_pairs(self, response: str) -> List[tuple[str, str]]:
-        """Parse contrast pairs from LLM response."""
-        import json
+        if opt_config.target_loss is not None:
+            callbacks.append(EarlyStoppingCallback(
+                target_loss=opt_config.target_loss,
+                patience=1,
+            ))
 
-        pairs = []
-        try:
-            start = response.find("[")
-            end = response.rfind("]") + 1
-            if start >= 0 and end > start:
-                data = json.loads(response[start:end])
-                for item in data:
-                    if "positive" in item and "negative" in item:
-                        pairs.append((item["positive"], item["negative"]))
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse contrast pairs JSON")
+        callbacks.append(ConvergenceCallback(
+            eps=opt_config.convergence_eps,
+            patience=opt_config.convergence_patience,
+        ))
 
-        return pairs
+        # Create optimizer
+        steering = VectorSteering()
+        optimizer = SteeringOptimizer(
+            backend=self._sv_backend,
+            steering_mode=steering,
+            config=sv_config,
+            callbacks=callbacks,
+        )
 
-    def _get_target_layers(self, sample: ExtractionSample) -> List[int]:
-        """Determine target layers based on sample configuration."""
-        from vector_forge.tasks.config import LayerStrategy
+        # Run optimization (synchronous, wrap in executor for async)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: optimizer.optimize(datapoints, layer=layer),
+        )
 
-        # Estimate model layers (would be better to get from model)
-        total_layers = 32
+        return ExtractionResult(
+            vector=result.vector,
+            layer=layer,
+            final_loss=result.final_loss,
+            iterations=result.iterations,
+            loss_history=history_callback.losses,
+            datapoints_used=len(datapoints),
+            config_used={
+                "lr": sv_config.lr,
+                "max_iters": sv_config.max_iters,
+                "coldness": sv_config.coldness,
+                "starting_norm": sv_config.starting_norm,
+                "max_norm": sv_config.max_norm,
+                "layer": layer,
+                "seed": sample.config.seed,
+            },
+        )
 
+    def _get_target_layer(self, sample: ExtractionSample) -> int:
+        """Determine target layer based on sample configuration."""
         if sample.config.target_layers:
-            return sample.config.target_layers
+            # Use middle of specified layers
+            layers = sample.config.target_layers
+            return layers[len(layers) // 2]
 
         strategy = sample.config.layer_strategy
+        total = self._num_layers
 
         if strategy == LayerStrategy.AUTO:
-            # Middle layers
-            mid = total_layers // 2
-            return list(range(mid - 2, mid + 3))
+            # Middle layer (commonly effective)
+            return total // 2
         elif strategy == LayerStrategy.SWEEP:
-            # Wide sweep
-            return list(range(8, total_layers - 4, 2))
+            # Sample across middle range
+            # Use seed to pick one from the sweep
+            random.seed(sample.config.seed)
+            sweep_start = total // 4
+            sweep_end = 3 * total // 4
+            return random.randint(sweep_start, sweep_end)
         elif strategy == LayerStrategy.MIDDLE:
-            mid = total_layers // 2
+            return total // 2
+        elif strategy == LayerStrategy.LATE:
+            return 3 * total // 4
+        else:
+            return total // 2
+
+    def get_target_layers_for_strategy(
+        self,
+        strategy: LayerStrategy,
+    ) -> List[int]:
+        """Get all target layers for a strategy (for UI display)."""
+        total = self._num_layers
+
+        if strategy == LayerStrategy.AUTO:
+            mid = total // 2
+            return [mid - 1, mid, mid + 1]
+        elif strategy == LayerStrategy.SWEEP:
+            start = total // 4
+            end = 3 * total // 4
+            return list(range(start, end, 2))
+        elif strategy == LayerStrategy.MIDDLE:
+            mid = total // 2
             return [mid - 1, mid, mid + 1]
         elif strategy == LayerStrategy.LATE:
-            return list(range(total_layers - 8, total_layers - 2))
+            return list(range(3 * total // 4, total - 2))
         else:
-            return [total_layers // 2]
+            return [total // 2]
 
     async def _run_evaluations(
         self,
@@ -399,16 +530,7 @@ Format as JSON array:
         behavior: ExpandedBehavior,
         config: TaskConfig,
     ) -> List[SampleResult]:
-        """Run evaluations on all valid extraction results.
-
-        Args:
-            results: Extraction results to evaluate.
-            behavior: Behavior specification.
-            config: Task configuration.
-
-        Returns:
-            Results with evaluation scores filled in.
-        """
+        """Run evaluations on all valid extraction results."""
         valid_results = [r for r in results if r.is_valid]
 
         if not valid_results:
@@ -451,7 +573,6 @@ Format as JSON array:
                 started=started_at,
             )
 
-        # Run all evaluations
         await asyncio.gather(*[evaluate_one(r) for r in valid_results])
 
         logger.info(f"Evaluation complete for {len(valid_results)} vectors")
@@ -463,16 +584,7 @@ Format as JSON array:
         behavior: ExpandedBehavior,
         config: TaskConfig,
     ) -> TaskResult:
-        """Aggregate sample results into final task result.
-
-        Args:
-            results: All sample results.
-            behavior: Behavior specification.
-            config: Task configuration.
-
-        Returns:
-            Aggregated task result.
-        """
+        """Aggregate sample results into final task result."""
         valid_results = [r for r in results if r.is_valid]
 
         if not valid_results:
@@ -546,6 +658,8 @@ Format as JSON array:
                 "valid_count": len(valid_results),
                 "total_count": len(results),
                 "top_k": top_k,
+                "num_layers": self._num_layers,
+                "hidden_dim": self._hidden_dim,
             },
         )
 
@@ -622,3 +736,70 @@ Format as JSON array:
         )
 
         self._progress_callback(progress)
+
+
+# ============================================================================
+# Re-aggregation Support
+# ============================================================================
+
+
+def reaggregate_results(
+    sample_results: List[SampleResult],
+    strategy: AggregationStrategy,
+    top_k: int = 5,
+) -> torch.Tensor:
+    """Re-aggregate sample results with a different strategy.
+
+    Enables post-hoc experimentation with aggregation without re-running
+    the full pipeline.
+
+    Args:
+        sample_results: List of sample results with vectors.
+        strategy: Aggregation strategy to use.
+        top_k: Number of top results to use.
+
+    Returns:
+        Aggregated vector.
+    """
+    valid_results = [r for r in sample_results if r.is_valid]
+    if not valid_results:
+        raise ValueError("No valid results to aggregate")
+
+    sorted_results = sorted(
+        valid_results,
+        key=lambda r: r.overall_score,
+        reverse=True,
+    )
+
+    top_k = min(top_k, len(sorted_results))
+    top_results = sorted_results[:top_k]
+    vectors = [r.vector for r in top_results]
+
+    if strategy == AggregationStrategy.BEST_SINGLE:
+        return vectors[0]
+
+    elif strategy == AggregationStrategy.TOP_K_AVERAGE:
+        stacked = torch.stack(vectors)
+        avg = stacked.mean(dim=0)
+        return avg / avg.norm()
+
+    elif strategy == AggregationStrategy.WEIGHTED_AVERAGE:
+        weights = [r.overall_score for r in top_results]
+        total_weight = sum(weights)
+        result = torch.zeros_like(vectors[0])
+        for vec, weight in zip(vectors, weights):
+            result += (weight / total_weight) * vec
+        return result / result.norm()
+
+    elif strategy == AggregationStrategy.PCA_PRINCIPAL:
+        stacked = torch.stack(vectors)
+        mean = stacked.mean(dim=0)
+        centered = stacked - mean
+        _, _, vh = torch.linalg.svd(centered, full_matrices=False)
+        principal = vh[0]
+        if (principal @ mean) < 0:
+            principal = -principal
+        return principal / principal.norm()
+
+    else:
+        return vectors[0]

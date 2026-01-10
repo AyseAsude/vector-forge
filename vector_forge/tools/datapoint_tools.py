@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from steering_vectors import SteeringVectorTrainingSample as TrainingDatapoint
+from steering_vectors import TrainingDatapoint
 
 from vector_forge.core.protocols import ToolResult
 from vector_forge.core.state import ExtractionState
