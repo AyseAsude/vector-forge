@@ -24,7 +24,6 @@ from vector_forge.core.results import (
     Citation,
     StrengthAnalysis,
 )
-from vector_forge.core.state import ExtractionState
 from vector_forge.core.events import Event, EventType
 from vector_forge.core.protocols import (
     Message,
@@ -34,8 +33,6 @@ from vector_forge.core.protocols import (
     ToolResult,
 )
 from vector_forge.llm.mock_client import MockLLMClient
-from vector_forge.tools.registry import ToolRegistry
-from vector_forge.tools.base import BaseTool
 
 
 # =============================================================================
@@ -112,29 +109,6 @@ def diversity_config() -> DiversityConfig:
         use_mmr_selection=True,
         mmr_lambda=0.5,
     )
-
-
-# =============================================================================
-# State Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def empty_state() -> ExtractionState:
-    """Create an empty extraction state."""
-    return ExtractionState()
-
-
-@pytest.fixture
-def state_with_vectors() -> ExtractionState:
-    """Create a state with some vectors populated."""
-    state = ExtractionState()
-    state.vectors[10] = torch.randn(768)
-    state.vectors[15] = torch.randn(768)
-    state.best_layer = 15
-    state.best_strength = 1.5
-    state.best_score = 0.85
-    return state
 
 
 # =============================================================================
@@ -328,75 +302,6 @@ def small_vectors() -> List[torch.Tensor]:
     """Create small vectors for quick tests."""
     torch.manual_seed(42)
     return [torch.randn(64) for _ in range(3)]
-
-
-# =============================================================================
-# Tool Fixtures
-# =============================================================================
-
-
-class SimpleTool(BaseTool):
-    """A simple tool for testing."""
-
-    @property
-    def name(self) -> str:
-        return "simple_tool"
-
-    @property
-    def description(self) -> str:
-        return "A simple test tool"
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "value": {"type": "string"},
-            },
-            "required": ["value"],
-        }
-
-    async def _execute(self, value: str) -> str:
-        return f"Processed: {value}"
-
-
-class FailingTool(BaseTool):
-    """A tool that always fails for testing error handling."""
-
-    @property
-    def name(self) -> str:
-        return "failing_tool"
-
-    @property
-    def description(self) -> str:
-        return "A tool that always fails"
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {"type": "object", "properties": {}}
-
-    async def _execute(self) -> str:
-        raise ValueError("Intentional failure")
-
-
-@pytest.fixture
-def simple_tool() -> SimpleTool:
-    """Create a simple tool for testing."""
-    return SimpleTool()
-
-
-@pytest.fixture
-def failing_tool() -> FailingTool:
-    """Create a failing tool for testing."""
-    return FailingTool()
-
-
-@pytest.fixture
-def tool_registry(simple_tool: SimpleTool) -> ToolRegistry:
-    """Create a tool registry with one tool registered."""
-    registry = ToolRegistry()
-    registry.register(simple_tool)
-    return registry
 
 
 # =============================================================================

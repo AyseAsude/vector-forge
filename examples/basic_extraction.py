@@ -2,130 +2,150 @@
 Basic example of using Vector Forge to extract a steering vector.
 
 This example demonstrates the core workflow:
-1. Load a model
-2. Define a behavior
-3. Configure the pipeline
-4. Run extraction
-5. Use the result
+1. Configure the extraction task
+2. Run the extraction pipeline
+3. Use the resulting steering vector
 """
 
 import asyncio
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from steering_vectors import HuggingFaceBackend, VectorSteering
+from pathlib import Path
 
-from vector_forge import BehaviorSpec, PipelineConfig, EvaluationBudget
-from vector_forge.core.config import LLMConfig
-from vector_forge.pipeline import ExtractionPipeline
-from vector_forge.core.events import Event, EventType
+import torch
+from steering_vectors import VectorSteering
+
+from vector_forge.tasks.config import TaskConfig
+from vector_forge.services.session import SessionService
+from vector_forge.services.task_executor import TaskExecutor
+from vector_forge.services.extraction_runner import ExtractionRunner, ExtractionProgress
 
 
 async def main():
     # =========================================================================
-    # 1. Load your model
+    # 1. Configure the extraction
     # =========================================================================
-    print("Loading model...")
-    model_name = "meta-llama/Llama-3.1-8B-Instruct"
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        dtype=torch.bfloat16,
-        device_map="auto",
+    # Behavior description - this is what the pipeline will extract
+    behavior_description = """
+    Sycophancy: The tendency to agree with the user even when they are
+    factually incorrect, prioritizing validation over accuracy. This includes
+    excessive praise, avoiding disagreement, and confirming incorrect statements.
+    """
+    behavior_name = "sycophancy"
+
+    # Target model for steering vector extraction
+    target_model = "meta-llama/Llama-3.1-8B-Instruct"
+
+    # Create configuration (use .quick() for faster testing, .standard() for production)
+    config = TaskConfig.quick()
+    config = config.model_copy(update={
+        "target_model": target_model,
+        "num_samples": 8,  # Number of parallel extraction attempts
+    })
+
+    # =========================================================================
+    # 2. Set up services and run extraction
+    # =========================================================================
+
+    # Create session service (stores all extraction data)
+    session_service = SessionService()
+
+    # Create executor and runner
+    task_executor = TaskExecutor(session_service)
+    extraction_runner = ExtractionRunner(session_service, task_executor)
+
+    # Progress callback
+    def on_progress(progress: ExtractionProgress) -> None:
+        pct = progress.progress * 100
+        print(f"[{pct:5.1f}%] {progress.phase}: {progress.message}")
+        if progress.error:
+            print(f"        Error: {progress.error}")
+
+    extraction_runner.on_progress(on_progress)
+
+    # Create session
+    session_id = session_service.create_session(
+        behavior=behavior_name,
+        config=config.model_dump(),
+    )
+    print(f"Created session: {session_id}")
+
+    # Run extraction
+    print(f"\nStarting extraction for: {behavior_name}\n")
+
+    result = await extraction_runner.run_extraction(
+        session_id=session_id,
+        behavior_name=behavior_name,
+        behavior_description=behavior_description,
+        config=config,
     )
 
-    # Create the backend that Vector Forge will use
-    backend = HuggingFaceBackend(model, tokenizer)
+    if result is None:
+        print("Extraction failed!")
+        return
 
     # =========================================================================
-    # 2. Define the behavior you want to extract
+    # 3. Display results and save
     # =========================================================================
-    behavior = BehaviorSpec(
-        name="sycophancy",
-        description="Agreeing with the user even when they are factually incorrect",
-        positive_examples=[
-            "You're absolutely right!",
-            "Yes, exactly! I completely agree.",
-            "That's a great point, you're correct!",
-        ],
-        negative_examples=[
-            "Actually, that's not quite correct.",
-            "I need to respectfully disagree.",
-            "Let me explain why that's not accurate.",
-        ],
-        prompt_domains=["science", "math", "history", "personal opinions"],
-    )
 
-    # =========================================================================
-    # 3. Configure the pipeline
-    # =========================================================================
-    config = PipelineConfig(
-        # LLM for the agents (extractor and judge)
-        extractor_llm=LLMConfig(model="gpt-4o", temperature=0.7),
-        judge_llm=LLMConfig(model="gpt-4o", temperature=0.3),
-
-        # How many training datapoints to generate
-        num_prompts=10,
-
-        # Iteration limits
-        max_outer_iterations=2,  # Judge-driven refinements
-        max_inner_iterations=5,  # Extractor iterations
-
-        # Evaluation budget (use "fast" for quick testing)
-        evaluation_budget=EvaluationBudget.fast(),
-
-        # Quality threshold for acceptance
-        quality_threshold=0.7,
-    )
-
-    # =========================================================================
-    # 4. Run the extraction pipeline
-    # =========================================================================
-    pipeline = ExtractionPipeline(model_backend=backend, config=config)
-
-    # Optional: Subscribe to events for progress tracking
-    def on_event(event: Event):
-        if event.type == EventType.OUTER_ITERATION_STARTED:
-            print(f"\n=== Outer Iteration {event.data.get('iteration', 0) + 1} ===")
-        elif event.type == EventType.AGENT_TOOL_CALL:
-            print(f"  Tool: {event.data.get('tool')}")
-        elif event.type == EventType.JUDGE_VERDICT:
-            print(f"  Judge verdict: {event.data.get('verdict')} "
-                  f"(score: {event.data.get('score', 0):.2f})")
-
-    pipeline.on("*", on_event)
-
-    print("\nStarting extraction...")
-    result = await pipeline.extract(behavior)
-
-    # =========================================================================
-    # 5. Use the result
-    # =========================================================================
     print("\n" + "=" * 50)
     print("EXTRACTION COMPLETE")
     print("=" * 50)
-    print(f"Recommended layer: {result.recommended_layer}")
-    print(f"Recommended strength: {result.recommended_strength:.2f}")
-    print(f"Final score: {result.evaluation.scores.overall:.2f}")
-    print(f"Verdict: {result.evaluation.verdict.value}")
+    print(f"Layer: {result.final_layer}")
+    print(f"Score: {result.final_score:.2f}")
+    print(f"Valid samples: {sum(1 for s in result.sample_results if s.is_valid)}/{len(result.sample_results)}")
 
-    # Save the vector
-    result.save("./sycophancy_vector")
-    print("\nSaved to: ./sycophancy_vector.pt and ./sycophancy_vector.json")
+    # Save vector and metadata
+    output_path = Path(f"./{behavior_name}_vector")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Test the vector
+    torch.save(result.final_vector, output_path.with_suffix(".pt"))
+    print(f"\nSaved vector to: {output_path.with_suffix('.pt')}")
+
+    import json
+    metadata = {
+        "behavior": behavior_name,
+        "description": behavior_description.strip(),
+        "model": target_model,
+        "layer": result.final_layer,
+        "score": result.final_score,
+        "session_id": session_id,
+    }
+    with open(output_path.with_suffix(".json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Saved metadata to: {output_path.with_suffix('.json')}")
+
+    # Mark session complete
+    session_service.complete_session(session_id, success=True)
+
+    # =========================================================================
+    # 4. Test the vector (optional - requires model loaded)
+    # =========================================================================
+
     print("\n" + "=" * 50)
     print("TESTING THE VECTOR")
     print("=" * 50)
 
+    # Load model for testing
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from steering_vectors import HuggingFaceBackend
+
+    print("Loading model for testing...")
+    tokenizer = AutoTokenizer.from_pretrained(target_model)
+    model = AutoModelForCausalLM.from_pretrained(
+        target_model,
+        dtype=torch.bfloat16,
+        device_map="auto",
+    )
+    backend = HuggingFaceBackend(model, tokenizer)
+
     # Set up steering
     steering = VectorSteering()
     steering.init_parameters(
-        hidden_dim=result.vector.shape[0],
-        device=result.vector.device,
-        dtype=result.vector.dtype,
+        hidden_dim=result.final_vector.shape[0],
+        device=result.final_vector.device,
+        dtype=result.final_vector.dtype,
     )
-    steering._vector.data = result.vector.clone()
+    steering.set_vector(result.final_vector)
 
     test_prompt = "I think the Earth is flat. Am I right?"
 
@@ -140,8 +160,8 @@ async def main():
     steered = backend.generate_with_steering(
         test_prompt,
         steering_mode=steering,
-        layers=result.recommended_layer,
-        strength=result.recommended_strength,
+        layers=result.final_layer,
+        strength=1.0,  # Use strength=1.0 as starting point
         max_new_tokens=100,
     )
     print(steered)

@@ -471,6 +471,20 @@ class TaskRunner:
                             "config": extraction.config_used,
                         },
                     )
+
+                    # Save vector to session store immediately after extraction
+                    if self._emitter is not None and extraction.vector is not None:
+                        vector_ref = self._emitter.save_sample_vector(
+                            vector=extraction.vector,
+                            sample_idx=sample_idx,
+                            layer=extraction.layer,
+                            final_loss=extraction.final_loss,
+                            iterations=extraction.iterations,
+                            config=extraction.config_used,
+                        )
+                        if vector_ref:
+                            result.metadata["vector_ref"] = vector_ref
+
                 except Exception as e:
                     logger.warning(f"Extraction failed for {sample.sample_id}: {e}")
                     result = SampleResult(

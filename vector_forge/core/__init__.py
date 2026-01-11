@@ -26,7 +26,6 @@ from vector_forge.core.results import (
     DatapointQuality,
     DiversityMetrics,
 )
-from vector_forge.core.state import ExtractionState, Checkpoint
 from vector_forge.core.events import Event, EventType
 from vector_forge.core.concurrency import (
     ConcurrencyConfig,
@@ -64,8 +63,6 @@ __all__ = [
     "EvaluationResult",
     "DatapointQuality",
     "DiversityMetrics",
-    "ExtractionState",
-    "Checkpoint",
     "Event",
     "EventType",
     # Concurrency management

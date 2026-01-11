@@ -6,9 +6,14 @@ principle - components depend on the EventEmitter protocol, not concrete storage
 """
 
 import uuid
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
 
 from vector_forge.storage.events import (
+    # Vector events
+    VectorCreatedEvent,
     # Contrast events
     BehaviorAnalyzedEvent,
     ContrastPipelineStartedEvent,
@@ -386,6 +391,72 @@ class EventEmitter:
         )
 
     # =========================================================================
+    # Vector Persistence
+    # =========================================================================
+
+    def save_sample_vector(
+        self,
+        vector: "torch.Tensor",
+        sample_idx: int,
+        layer: int,
+        final_loss: float = 0.0,
+        iterations: int = 0,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Save a sample vector to storage and emit VectorCreatedEvent.
+
+        This persists the extracted vector to the session's vectors directory
+        and emits an event for traceability.
+
+        Args:
+            vector: The extracted steering vector tensor.
+            sample_idx: Index of the sample this vector was extracted from.
+            layer: Layer index the vector targets.
+            final_loss: Final optimization loss (0.0 for CAA).
+            iterations: Number of optimization iterations (1 for CAA).
+            config: Optional extraction config used.
+
+        Returns:
+            Reference path to saved vector, or None if save failed.
+        """
+        if vector is None:
+            return None
+
+        try:
+            # Save vector to store
+            vector_ref = self._store.save_vector(vector, layer)
+
+            # Generate vector ID
+            vector_id = f"sample_{sample_idx:02d}_L{layer}"
+
+            # Emit event
+            event = VectorCreatedEvent(
+                vector_id=vector_id,
+                layer=layer,
+                vector_ref=vector_ref,
+                shape=list(vector.shape),
+                dtype=str(vector.dtype),
+                norm=vector.norm().item(),
+                optimization_metrics={
+                    "sample_idx": sample_idx,
+                    "final_loss": final_loss,
+                    "iterations": iterations,
+                    "config": config or {},
+                },
+            )
+            self.emit(event, source="extractor")
+
+            return vector_ref
+
+        except Exception as e:
+            # Log but don't fail the extraction
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Failed to save sample vector {sample_idx}: {e}"
+            )
+            return None
+
+    # =========================================================================
     # Datapoint Events
     # =========================================================================
 
@@ -608,6 +679,18 @@ class NullEventEmitter:
     def emit(self, event: Any, source: str = "") -> None:
         """No-op emit."""
         pass
+
+    def save_sample_vector(
+        self,
+        vector: "torch.Tensor",
+        sample_idx: int,
+        layer: int,
+        final_loss: float = 0.0,
+        iterations: int = 0,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """No-op save - returns None."""
+        return None
 
     def __getattr__(self, name: str):
         """Return no-op for any emit_* method."""

@@ -6,11 +6,11 @@ Autonomous pipeline for extracting clean steering vectors from LLMs.
 
 Vector Forge automates the process of finding high-quality steering vectors:
 
-1. **Diverse Datapoint Generation** - LLM generates varied training prompts and contrastive completions
-2. **Multi-Layer Optimization** - Searches across layers to find the best injection point
-3. **Quality Evaluation** - LLM judge scores behavior strength, coherence, and specificity
-4. **Iterative Refinement** - Judge feedback drives improvement until quality threshold met
-5. **Noise Reduction** - Averaging or PCA to remove training noise
+1. **Behavior Expansion** - LLM analyzes behavior description and expands it into evaluation criteria
+2. **Contrast Pair Generation** - Generates diverse training data with validated contrast quality
+3. **Parallel Multi-Sample Extraction** - Runs multiple extraction attempts with varied configurations
+4. **Tournament Evaluation** - Progressive elimination of weak candidates with LLM judge scoring
+5. **Smart Aggregation** - Combines top results for robust final vector
 
 ## Installation
 
@@ -28,12 +28,21 @@ pip install -e .
 
 ## Quick Start
 
+### Terminal UI
+
+The recommended way to use Vector Forge is through the terminal UI:
+
+```bash
+vector-forge ui
+```
+
 ### Command Line
 
 ```bash
 vector-forge extract "sycophancy - agreeing with users even when wrong" \
     --model meta-llama/Llama-3.1-8B-Instruct \
     --llm gpt-4o \
+    --samples 16 \
     --output ./sycophancy_vector
 ```
 
@@ -41,29 +50,43 @@ vector-forge extract "sycophancy - agreeing with users even when wrong" \
 
 ```python
 import asyncio
-from steering_vectors import HuggingFaceBackend
-from vector_forge import BehaviorSpec, PipelineConfig
-from vector_forge.pipeline import ExtractionPipeline
+from vector_forge.tasks.config import TaskConfig
+from vector_forge.services.session import SessionService
+from vector_forge.services.task_executor import TaskExecutor
+from vector_forge.services.extraction_runner import ExtractionRunner
 
 async def main():
-    # Load your model
-    backend = HuggingFaceBackend(model, tokenizer)
+    # Configure extraction
+    config = TaskConfig.standard()
+    config = config.model_copy(update={
+        "target_model": "meta-llama/Llama-3.1-8B-Instruct",
+        "num_samples": 16,
+    })
 
-    # Define the behavior
-    behavior = BehaviorSpec(
-        name="sycophancy",
-        description="Agreeing with the user even when they are wrong",
-        positive_examples=["You're absolutely right!"],
-        negative_examples=["Actually, that's incorrect."],
+    # Set up services
+    session_service = SessionService()
+    task_executor = TaskExecutor(session_service)
+    runner = ExtractionRunner(session_service, task_executor)
+
+    # Create session and run extraction
+    session_id = session_service.create_session(
+        behavior="sycophancy",
+        config=config.model_dump(),
     )
 
-    # Run extraction
-    pipeline = ExtractionPipeline(backend, PipelineConfig())
-    result = await pipeline.extract(behavior)
+    result = await runner.run_extraction(
+        session_id=session_id,
+        behavior_name="sycophancy",
+        behavior_description="Agreeing with users even when they are wrong",
+        config=config,
+    )
 
-    # Use the vector
-    print(f"Best layer: {result.recommended_layer}")
-    result.save("./my_vector")
+    # Use the result
+    print(f"Layer: {result.final_layer}, Score: {result.final_score:.2f}")
+
+    # Save (vectors are also automatically saved to session storage)
+    import torch
+    torch.save(result.final_vector, "./sycophancy_vector.pt")
 
 asyncio.run(main())
 ```
@@ -71,28 +94,44 @@ asyncio.run(main())
 ## Configuration
 
 ```python
-from vector_forge import PipelineConfig, EvaluationBudget
-from vector_forge.core.config import LLMConfig
+from vector_forge.tasks.config import (
+    TaskConfig,
+    ContrastConfig,
+    EvaluationConfig,
+    ExtractionMethod,
+)
 
-config = PipelineConfig(
-    # LLM for agents (supports any litellm model)
-    extractor_llm=LLMConfig(model="gpt-4o"),
-    judge_llm=LLMConfig(model="claude-3-opus-20240229"),
+# Quick configuration for testing
+config = TaskConfig.quick()
 
-    # Training data
-    num_prompts=20,
+# Standard configuration for production
+config = TaskConfig.standard()
 
-    # Iteration control
-    max_outer_iterations=3,  # Judge-driven refinements
-    max_inner_iterations=5,  # Extractor iterations
-    quality_threshold=0.7,
+# Custom configuration
+config = TaskConfig(
+    # Target model
+    target_model="meta-llama/Llama-3.1-8B-Instruct",
 
-    # Evaluation budget
-    evaluation_budget=EvaluationBudget.standard(),
+    # Extraction settings
+    num_samples=16,  # Parallel extraction attempts
+    extraction_method=ExtractionMethod.CAA,  # CAA or GRADIENT
 
-    # Noise reduction
-    noise_reduction="averaging",  # or "pca", "none"
-    num_seeds_for_noise=3,
+    # LLM models for agents
+    extractor_model="gpt-4o",
+    judge_model="gpt-4o",
+    expander_model="gpt-4o",
+
+    # Contrast pair generation
+    contrast=ContrastConfig(
+        core_pool_size=80,
+        min_contrast_quality=6.0,
+    ),
+
+    # Evaluation settings
+    evaluation=EvaluationConfig(
+        behavior_prompts=50,
+        behavior_generations_per_prompt=3,
+    ),
 )
 ```
 
@@ -100,62 +139,93 @@ config = PipelineConfig(
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         BehaviorSpec                             │
-│                  "Make model sycophantic"                        │
+│                    Behavior Description                          │
+│              "Make model more sycophantic"                       │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
                                   ▼
-┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
-│ OUTER LOOP (Judge-driven)                                       │
-│                                                                  │
-│   ┌───────────────────────────────────────────────────────────┐ │
-│   │ INNER LOOP (Extractor Agent)                              │ │
-│   │                                                           │ │
-│   │  Generate → Optimize → Quick Eval → Adjust                │ │
-│   │  Datapoints   Vector                  Strategy            │ │
-│   └───────────────────────────────────────────────────────────┘ │
-│                           │                                      │
-│                           ▼                                      │
-│   ┌───────────────────────────────────────────────────────────┐ │
-│   │ JUDGE                                                     │ │
-│   │                                                           │ │
-│   │  Thorough evaluation → Scores + Citations + Verdict       │ │
-│   └───────────────────────────────────────────────────────────┘ │
-│                           │                                      │
-│                    ┌──────┴──────┐                              │
-│                    │  ACCEPTED?  │                              │
-│                    └──────┬──────┘                              │
-│                      No   │   Yes                               │
-│                      ↓    │    ↓                                │
-│                   Refine  │  Done                               │
-└─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+┌─────────────────────────────────────────────────────────────────┐
+│  1. BEHAVIOR EXPANSION (BehaviorExpander)                       │
+│     → Expands description into domains, criteria, scenarios     │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. CONTRAST PIPELINE (ContrastPipeline)                        │
+│     → Generates validated contrast pairs for training           │
+│     → Seeds → Pairs → Validation → Quality filtering            │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. PARALLEL EXTRACTION (TaskRunner)                            │
+│     → Runs N samples concurrently with varied configs           │
+│     → CAA or gradient-based extraction                          │
+│     → All vectors saved to session storage                      │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. EVALUATION (LLM Judge)                                      │
+│     → Scores behavior, specificity, coherence, capability       │
+│     → Tournament elimination of weak candidates                 │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  5. AGGREGATION                                                 │
+│     → Combines top-K results via averaging or PCA               │
+│     → Final vector with quality score                           │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
-### Datapoint Quality Analysis
+### Event-Sourced Session Storage
 
-Vector Forge identifies problematic training datapoints:
-- Gradient-based influence analysis
-- Leave-one-out estimation
-- Embedding outlier detection
+All extraction runs are fully recorded:
+- Every LLM call, tool execution, and vector creation is logged
+- Sessions can be replayed and analyzed
+- Vectors are automatically saved when extracted
 
-### Diversity Verification
+### Parallel Multi-Sample Extraction
 
-Ensures generated prompts are diverse:
-- Embedding-based similarity analysis
-- Maximal Marginal Relevance selection
-- Structured sampling across domains
+Explores the configuration space efficiently:
+- Multiple layer strategies (auto, sweep, middle, late)
+- Multiple token positions for CAA (mean, last, last_prompt)
+- Multiple random seeds for diversity
 
-### Event System
+### Contrast Pair Validation
 
-Subscribe to events for UI integration:
+Ensures high-quality training data:
+- Semantic distance scoring
+- Dimension-specific contrast checking
+- Structural quality validation
+- Automatic regeneration of failed pairs
 
-```python
-from vector_forge.core.events import EventType
+### LLM Judge Evaluation
 
-pipeline.on(EventType.AGENT_TOOL_CALL, lambda e: print(f"Tool: {e.data['tool']}"))
-pipeline.on(EventType.JUDGE_VERDICT, lambda e: print(f"Verdict: {e.data['verdict']}"))
+Comprehensive quality assessment:
+- Behavior induction strength
+- Specificity (avoids unintended effects)
+- Coherence (maintains fluency)
+- Capability preservation
+- Generalization testing
+
+## Session Storage
+
+Sessions are stored in `~/.vector-forge/sessions/`:
+
+```
+~/.vector-forge/sessions/
+└── sycophancy_20240101_120000/
+    ├── events.jsonl       # Event log (all LLM calls, tool uses, etc.)
+    ├── metadata.json      # Session metadata
+    ├── vectors/           # All extracted vectors
+    │   ├── layer_15_v001.pt
+    │   ├── layer_16_v001.pt
+    │   └── final.pt
+    └── contrast/          # Generated contrast pairs
 ```
 
 ## License
