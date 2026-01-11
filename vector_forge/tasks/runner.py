@@ -355,10 +355,13 @@ class TaskRunner:
         )
 
         # Profile actual memory usage (cached after first call)
+        # CAA only uses forward passes (no gradients), so profile accordingly
+        is_forward_only = task.config.extraction_method == ExtractionMethod.CAA
         memory_profile = self._memory_profiler.profile(
             datapoints=profile_datapoints,
             batch_size=batch_size,
             layer=self._num_layers // 2,
+            forward_only=is_forward_only,
         )
 
         # Create memory-aware semaphore based on profiled memory
@@ -371,9 +374,10 @@ class TaskRunner:
             max_concurrent=safe_concurrency,
         )
 
+        mode = "forward-only" if is_forward_only else "gradient"
         logger.info(
-            f"Running {len(task.samples)} extractions with concurrency: {safe_concurrency} "
-            f"(profiled: {memory_profile.memory_per_extraction_gb:.1f}GB/extraction, "
+            f"Running {len(task.samples)} extractions ({mode}) with concurrency: {safe_concurrency} "
+            f"(profiled: {memory_profile.memory_per_extraction_gb:.3f}GB/extraction, "
             f"free: {memory_profile.free_memory_gb:.1f}GB)"
         )
 

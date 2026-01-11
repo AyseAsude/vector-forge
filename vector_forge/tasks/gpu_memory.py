@@ -80,13 +80,19 @@ class ExtractionMemoryProfiler:
     Instead of estimating memory with formulas, this class measures actual
     memory usage by running a minimal extraction operation. This provides
     accurate memory requirements for any model/configuration combination.
+
+    Supports two modes:
+    - forward_only=True: Measures forward pass only (for CAA extraction)
+    - forward_only=False: Measures full optimization (for gradient extraction)
     """
 
     # Minimum datapoints needed for profiling (uses subset for speed)
     MIN_PROFILE_DATAPOINTS = 4
 
-    # Safety multiplier applied to measured memory (accounts for variance and concurrent overhead)
-    SAFETY_MULTIPLIER = 2.0
+    # Safety multiplier for gradient (higher variance due to optimizer state)
+    SAFETY_MULTIPLIER_GRADIENT = 2.0
+    # Safety multiplier for forward-only (lower variance, more predictable)
+    SAFETY_MULTIPLIER_FORWARD = 1.5
 
     def __init__(self, backend: "HuggingFaceBackend") -> None:
         """Initialize profiler with model backend.
@@ -96,27 +102,34 @@ class ExtractionMemoryProfiler:
         """
         self._backend = backend
         self._cached_profile: Optional[MemoryProfile] = None
+        self._cached_forward_profile: Optional[MemoryProfile] = None
 
     def profile(
         self,
         datapoints: List["TrainingDatapoint"],
         batch_size: int = 8,
         layer: Optional[int] = None,
+        forward_only: bool = False,
     ) -> MemoryProfile:
         """Profile memory usage by running a minimal extraction.
 
-        Runs a single optimization iteration to measure actual memory delta.
+        Runs a single extraction to measure actual memory delta.
         Result is cached for subsequent calls.
 
         Args:
             datapoints: Sample datapoints (only first few are used).
             batch_size: Batch size for optimization.
             layer: Target layer (defaults to middle layer).
+            forward_only: If True, profile forward pass only (for CAA).
+                         If False, profile full optimization (for gradient).
 
         Returns:
             MemoryProfile with measured memory requirements.
         """
-        if self._cached_profile is not None:
+        # Check cache based on mode
+        if forward_only and self._cached_forward_profile is not None:
+            return self._cached_forward_profile
+        if not forward_only and self._cached_profile is not None:
             return self._cached_profile
 
         if not torch.cuda.is_available():
@@ -132,7 +145,7 @@ class ExtractionMemoryProfiler:
         profile_datapoints = datapoints[: self.MIN_PROFILE_DATAPOINTS]
         if not profile_datapoints:
             logger.warning("No datapoints for profiling, using conservative estimate")
-            return self._create_conservative_profile()
+            return self._create_conservative_profile(forward_only=forward_only)
 
         target_layer = layer or self._backend.get_num_layers() // 2
 
@@ -146,37 +159,53 @@ class ExtractionMemoryProfiler:
         total_memory = torch.cuda.get_device_properties(0).total_memory
 
         try:
-            # Run minimal optimization to measure memory
-            memory_delta = self._measure_extraction_memory(
-                profile_datapoints,
-                batch_size,
-                target_layer,
-            )
+            if forward_only:
+                # Measure forward pass only (for CAA)
+                memory_delta = self._measure_forward_memory(
+                    profile_datapoints,
+                    target_layer,
+                )
+                safety_multiplier = self.SAFETY_MULTIPLIER_FORWARD
+            else:
+                # Measure full optimization (for gradient)
+                memory_delta = self._measure_extraction_memory(
+                    profile_datapoints,
+                    batch_size,
+                    target_layer,
+                )
+                safety_multiplier = self.SAFETY_MULTIPLIER_GRADIENT
 
             # Apply safety multiplier
-            memory_per_extraction = memory_delta * self.SAFETY_MULTIPLIER
+            memory_per_extraction = memory_delta * safety_multiplier
 
             # Calculate free memory (total - currently allocated by model)
             model_memory = baseline_allocated / (1024**3)
             free_memory = (total_memory - baseline_allocated) / (1024**3)
 
-            self._cached_profile = MemoryProfile(
+            profile = MemoryProfile(
                 memory_per_extraction_gb=memory_per_extraction,
                 model_memory_gb=model_memory,
                 free_memory_gb=free_memory,
                 total_memory_gb=total_memory / (1024**3),
             )
 
+            # Cache based on mode
+            if forward_only:
+                self._cached_forward_profile = profile
+            else:
+                self._cached_profile = profile
+
+            mode = "forward-only" if forward_only else "gradient"
             logger.info(
-                f"Profiled extraction memory: {memory_per_extraction:.2f}GB "
-                f"(measured {memory_delta:.2f}GB + {self.SAFETY_MULTIPLIER}x safety)"
+                f"Profiled {mode} memory: {memory_per_extraction:.3f}GB "
+                f"(measured {memory_delta:.3f}GB × {safety_multiplier}x safety)"
             )
 
-            return self._cached_profile
+            return profile
 
         except Exception as e:
             logger.warning(f"Memory profiling failed: {e}, using conservative estimate")
-            return self._create_conservative_profile()
+            return self._create_conservative_profile(forward_only=forward_only)
 
         finally:
             # Clean up profiling artifacts
@@ -223,8 +252,50 @@ class ExtractionMemoryProfiler:
         # This represents memory needed for extraction activations
         return (peak_memory - baseline) / (1024**3)
 
-    def _create_conservative_profile(self) -> MemoryProfile:
-        """Create a conservative profile when measurement fails."""
+    def _measure_forward_memory(
+        self,
+        datapoints: List["TrainingDatapoint"],
+        layer: int,
+    ) -> float:
+        """Measure memory for forward pass only (CAA extraction).
+
+        CAA only needs forward passes without gradients, so memory
+        usage is much lower than full optimization.
+
+        Returns memory usage in GB.
+        """
+        # Record baseline before forward pass
+        baseline = torch.cuda.memory_allocated()
+
+        try:
+            dp = datapoints[0]
+            prompt = dp.prompt if hasattr(dp, "prompt") else "Test prompt."
+            completion = dp.dst_completions[0] if dp.dst_completions else "Test."
+
+            # Tokenize and run forward pass (like CAA does)
+            text = prompt + completion
+            input_ids = self._backend.tokenize(text)
+
+            # Run forward pass with no_grad (CAA doesn't need gradients)
+            with torch.no_grad():
+                _ = self._backend.get_logits(input_ids)
+
+            peak_memory = torch.cuda.max_memory_allocated()
+            return (peak_memory - baseline) / (1024**3)
+
+        except Exception as e:
+            logger.warning(f"Forward memory measurement failed: {e}")
+            # Fallback: estimate based on model size
+            # Forward pass typically uses ~1-5% of model memory
+            model_memory = baseline / (1024**3)
+            return max(0.1, model_memory * 0.02)
+
+    def _create_conservative_profile(self, forward_only: bool = False) -> MemoryProfile:
+        """Create a conservative profile when measurement fails.
+
+        Args:
+            forward_only: If True, use lighter estimates for forward-only mode.
+        """
         if torch.cuda.is_available():
             total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             allocated = torch.cuda.memory_allocated() / (1024**3)
@@ -234,17 +305,24 @@ class ExtractionMemoryProfiler:
             allocated = 0.0
             free = float("inf")
 
-        # Conservative estimate: assume 25% of free memory per extraction
+        if forward_only:
+            # Forward-only is much lighter - estimate ~2% of model memory
+            memory_per = max(0.1, allocated * 0.02)
+        else:
+            # Conservative estimate: assume 25% of free memory per extraction
+            memory_per = free * 0.25 if free < float("inf") else 2.0
+
         return MemoryProfile(
-            memory_per_extraction_gb=free * 0.25,
+            memory_per_extraction_gb=memory_per,
             model_memory_gb=allocated,
             free_memory_gb=free,
             total_memory_gb=total,
         )
 
     def clear_cache(self) -> None:
-        """Clear cached profile (call when model changes)."""
+        """Clear cached profiles (call when model changes)."""
         self._cached_profile = None
+        self._cached_forward_profile = None
 
 
 class MemoryAwareSemaphore:
