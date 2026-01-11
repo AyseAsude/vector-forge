@@ -294,13 +294,11 @@ class UIStateSynchronizer:
                     # Add message based on event type
                     if log.event_type == "llm.request":
                         agent.turns += 1
-                        # Extract prompt summary
+                        # Extract prompt content
                         messages = log.payload.get("messages", []) if log.payload else []
                         if messages:
                             last_msg = messages[-1] if messages else {}
                             content = last_msg.get("content", "")
-                            if isinstance(content, str) and len(content) > 100:
-                                content = content[:97] + "..."
                             agent.add_message(
                                 MessageRole.USER,
                                 content or "LLM request",
@@ -504,13 +502,10 @@ class UIStateSynchronizer:
             content = last_msg.get("content", "")
             role = last_msg.get("role", "user")
 
-            # Truncate very long prompts for display
-            display_content = content[:1000] + "..." if len(content) > 1000 else content
-
-            if role == "user" and display_content:
+            if role == "user" and content:
                 agent.add_message(
                     role=MessageRole.USER,
-                    content=display_content,
+                    content=content,
                 )
 
         self._ui_state._notify()
