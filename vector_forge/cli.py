@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from vector_forge.constants import DEFAULT_MODEL
+from vector_forge.core.config import LLMConfig
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -113,12 +114,13 @@ async def _extract_async(
         config = TaskConfig.standard()
 
     # Update config with CLI parameters
+    llm_config = LLMConfig(model=llm_model)
     config = config.model_copy(update={
         "target_model": model_path,
         "num_samples": num_samples,
-        "generator_model": llm_model,
-        "judge_model": llm_model,
-        "expander_model": llm_model,
+        "generator_llm": llm_config,
+        "judge_llm": llm_config,
+        "expander_llm": llm_config,
     })
 
     # Set up progress callback

@@ -77,14 +77,6 @@ class LiteLLMClient(BaseLLMClient):
         super().__init__(config, store)
         self._source = source
 
-        # Configure litellm
-        if config.api_key:
-            # Set API key based on model provider
-            if "gpt" in config.model or "openai" in config.model:
-                litellm.openai_key = config.api_key
-            elif "claude" in config.model or "anthropic" in config.model:
-                litellm.anthropic_key = config.api_key
-
     async def complete(
         self,
         messages: List[Message],
@@ -122,6 +114,7 @@ class LiteLLMClient(BaseLLMClient):
                 model=self.config.model,
                 messages=messages_dict,
                 api_base=self.config.api_base,
+                api_key=self.config.api_key or None,
                 num_retries=10,
                 **merged_kwargs,
             )
@@ -203,6 +196,7 @@ class LiteLLMClient(BaseLLMClient):
                 messages=messages_dict,
                 tools=tools_dict,
                 api_base=self.config.api_base,
+                api_key=self.config.api_key or None,
                 num_retries=10,
                 **merged_kwargs,
             )
@@ -389,6 +383,7 @@ class LiteLLMClient(BaseLLMClient):
                 model=self.config.model,
                 messages=messages,
                 api_base=self.config.api_base,
+                api_key=self.config.api_key or None,
                 stream=True,
                 num_retries=10,
                 **merged_kwargs,

@@ -150,9 +150,9 @@ class ExtractionRunner:
             from vector_forge.tasks.expander import BehaviorExpander
 
             store = self._session_service.get_session_store(session_id)
-            raw_expander = create_client(config.expander_model)
-            raw_generator = create_client(config.generator_model)
-            raw_judge = create_client(config.judge_model)
+            raw_expander = create_client(config.expander_llm)
+            raw_generator = create_client(config.generator_llm)
+            raw_judge = create_client(config.judge_llm)
 
             # Wrap behavior expander client to emit LLM events (creates agent in UI)
             behavior_expander_llm = EventEmittingLLMClient(
@@ -168,7 +168,7 @@ class ExtractionRunner:
                 message="Expanding behavior description...",
             ))
 
-            expander = BehaviorExpander(behavior_expander_llm, model=config.expander_model)
+            expander = BehaviorExpander(behavior_expander_llm, model=config.expander_model)  # Uses property for display
             expanded_behavior = await expander.expand(behavior_description)
             logger.info(
                 f"Behavior expanded: {expanded_behavior.name} | "

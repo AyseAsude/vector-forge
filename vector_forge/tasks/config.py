@@ -10,6 +10,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from vector_forge.constants import DEFAULT_MODEL
+from vector_forge.core.config import LLMConfig
 
 
 class ContrastQuality(str, Enum):
@@ -1285,21 +1286,37 @@ class TaskConfig(BaseModel):
         description="HuggingFace model ID or path for steering vector extraction",
     )
 
-    # LLM settings (for agents)
-    generator_model: str = Field(
-        default=DEFAULT_MODEL,
-        description="Model for contrast pair generation",
+    # LLM settings (full config with api_base and api_key support)
+    generator_llm: LLMConfig = Field(
+        default_factory=LLMConfig,
+        description="LLM config for contrast pair generation",
     )
 
-    judge_model: str = Field(
-        default=DEFAULT_MODEL,
-        description="Model for evaluation judging",
+    judge_llm: LLMConfig = Field(
+        default_factory=LLMConfig,
+        description="LLM config for evaluation judging",
     )
 
-    expander_model: str = Field(
-        default=DEFAULT_MODEL,
-        description="Model for behavior expansion",
+    expander_llm: LLMConfig = Field(
+        default_factory=LLMConfig,
+        description="LLM config for behavior expansion",
     )
+
+    # Backward compatibility properties for display
+    @property
+    def generator_model(self) -> str:
+        """Get generator model name for display."""
+        return self.generator_llm.model
+
+    @property
+    def judge_model(self) -> str:
+        """Get judge model name for display."""
+        return self.judge_llm.model
+
+    @property
+    def expander_model(self) -> str:
+        """Get expander model name for display."""
+        return self.expander_llm.model
 
     @model_validator(mode="after")
     def validate_top_k(self) -> "TaskConfig":

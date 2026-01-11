@@ -137,7 +137,9 @@ class SessionLoader:
                 import json
                 with open(config_path) as f:
                     config = json.load(f)
-                    model = config.get("generator_model", "")
+                    # LLMConfig is nested as generator_llm.model
+                    generator_llm = config.get("generator_llm", {})
+                    model = generator_llm.get("model", "") if isinstance(generator_llm, dict) else ""
                     target_model = config.get("target_model", "")
         except Exception:
             pass

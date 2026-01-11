@@ -233,7 +233,9 @@ def apply_event_to_state(
             )
             config = payload.get("config", {})
             extraction.max_outer_iterations = config.get("num_samples", 16)
-            extraction.model = config.get("generator_model", "")
+            # LLMConfig is nested as generator_llm.model
+            generator_llm = config.get("generator_llm", {})
+            extraction.model = generator_llm.get("model", "") if isinstance(generator_llm, dict) else ""
             extraction.target_model = config.get("target_model", "")
             state.extractions[session_id] = extraction
             if state.selected_id is None:

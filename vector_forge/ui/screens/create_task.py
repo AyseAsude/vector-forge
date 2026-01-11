@@ -8,6 +8,7 @@ from textual.widgets import Static, Input, Button, TextArea
 from textual.message import Message
 
 from vector_forge.constants import DEFAULT_MODEL
+from vector_forge.core.config import LLMConfig
 from vector_forge.tasks.config import (
     TaskConfig,
     LayerStrategy,
@@ -1072,16 +1073,22 @@ class CreateTaskScreen(Screen):
         }
         aggregation = agg_map.get(self._aggregation, AggregationStrategy.TOP_K_AVERAGE)
 
-        # Get model names from configs (with provider prefix for litellm)
-        generator_model = (
-            self._generator_config.get_litellm_model() if self._generator_config else DEFAULT_MODEL
-        )
-        judge_model = (
-            self._judge_config.get_litellm_model() if self._judge_config else DEFAULT_MODEL
-        )
-        expander_model = (
-            self._expander_config.get_litellm_model() if self._expander_config else DEFAULT_MODEL
-        )
+        # Build full LLMConfig from ModelConfig (includes api_base and api_key)
+        def model_config_to_llm_config(config: ModelConfig | None) -> LLMConfig:
+            """Convert ModelConfig to LLMConfig with all settings."""
+            if config is None:
+                return LLMConfig(model=DEFAULT_MODEL)
+            return LLMConfig(
+                model=config.get_litellm_model(),
+                api_base=config.api_base,
+                api_key=config.get_api_key(),
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+            )
+
+        generator_llm = model_config_to_llm_config(self._generator_config)
+        judge_llm = model_config_to_llm_config(self._judge_config)
+        expander_llm = model_config_to_llm_config(self._expander_config)
 
         # Build optimization config
         max_norm_str = self.query_one("#inp-max-norm", Input).value.strip()
@@ -1228,9 +1235,9 @@ class CreateTaskScreen(Screen):
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
             evaluation=evaluation_config,
             tournament=tournament_config,
-            generator_model=generator_model,
-            judge_model=judge_model,
-            expander_model=expander_model,
+            generator_llm=generator_llm,
+            judge_llm=judge_llm,
+            expander_llm=expander_llm,
             target_model=target_model,
         )
 
