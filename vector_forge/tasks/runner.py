@@ -643,6 +643,16 @@ class TaskRunner:
                 outlier_std_threshold=config.caa.outlier_std_threshold,
             )
 
+            # Normalize CAA vector to starting_norm (consistent with HYBRID)
+            # Raw CAA vectors have unpredictable norms (2-4x expected), which
+            # causes inconsistent steering strength across different samples.
+            vector = result.vector
+            original_norm = vector.norm().item()
+            target_norm = config.optimization.starting_norm
+            if original_norm > 0:
+                vector = vector * (target_norm / original_norm)
+            normalized_norm = vector.norm().item()
+
             duration = time.time() - start_time
 
             # Emit completed event
@@ -660,7 +670,7 @@ class TaskRunner:
             )
 
             return ExtractionResult(
-                vector=result.vector,
+                vector=vector,
                 layer=layer,
                 final_loss=0.0,
                 iterations=1,
@@ -671,7 +681,8 @@ class TaskRunner:
                     "token_position": token_position.value,
                     "layer": layer,
                     "seed": sample.config.seed,
-                    "vector_norm": result.metadata.get("vector_norm", 0.0),
+                    "original_norm": original_norm,
+                    "normalized_norm": normalized_norm,
                     "num_pairs": len(pairs),
                     "num_pairs_used": result.metadata.get("num_pairs_used", len(pairs)),
                     "outliers_removed": result.metadata.get("outliers_removed", 0),
