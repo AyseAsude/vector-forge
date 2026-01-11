@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import uuid
 
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from vector_forge.constants import (
     DEFAULT_MODEL,
@@ -52,6 +53,93 @@ def _get_common_models(provider: Provider) -> List[str]:
     return COMMON_MODELS.get(provider.value, [])
 
 
+class MaxPrice(BaseModel):
+    """Maximum price constraints for OpenRouter requests.
+
+    All values are in USD per million tokens.
+    """
+
+    prompt: Optional[float] = Field(default=None, ge=0, description="Max USD per million prompt tokens")
+    completion: Optional[float] = Field(default=None, ge=0, description="Max USD per million completion tokens")
+
+    def to_dict(self) -> Dict[str, float]:
+        """Convert to dict, excluding None values."""
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class ProviderPreferences(BaseModel):
+    """OpenRouter-specific provider routing preferences.
+
+    Controls how OpenRouter selects and routes to underlying providers.
+    See: https://openrouter.ai/docs/features/provider-routing
+
+    Example:
+        >>> prefs = ProviderPreferences(
+        ...     order=["anthropic", "openai"],
+        ...     sort="price",
+        ...     max_price=MaxPrice(prompt=1.0, completion=2.0),
+        ... )
+    """
+
+    order: Optional[List[str]] = Field(
+        default=None,
+        description="Preferred provider order (e.g., ['anthropic', 'openai'])",
+    )
+    allow_fallbacks: bool = Field(
+        default=True,
+        description="Allow backup providers if primary fails",
+    )
+    only: Optional[List[str]] = Field(
+        default=None,
+        description="Whitelist: only use these providers",
+    )
+    ignore: Optional[List[str]] = Field(
+        default=None,
+        description="Blacklist: skip these providers",
+    )
+    sort: Optional[Literal["price", "throughput", "latency"]] = Field(
+        default=None,
+        description="Sort strategy for provider selection",
+    )
+    data_collection: Literal["allow", "deny"] = Field(
+        default="allow",
+        description="Privacy: allow or deny data collection",
+    )
+    require_parameters: bool = Field(
+        default=False,
+        description="Only use providers supporting all request parameters",
+    )
+    max_price: Optional[MaxPrice] = Field(
+        default=None,
+        description="Maximum price constraints (USD per million tokens)",
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict for API request, excluding defaults/None values."""
+        result: Dict[str, Any] = {}
+
+        if self.order:
+            result["order"] = self.order
+        if not self.allow_fallbacks:
+            result["allow_fallbacks"] = False
+        if self.only:
+            result["only"] = self.only
+        if self.ignore:
+            result["ignore"] = self.ignore
+        if self.sort:
+            result["sort"] = self.sort
+        if self.data_collection != "allow":
+            result["data_collection"] = self.data_collection
+        if self.require_parameters:
+            result["require_parameters"] = True
+        if self.max_price:
+            price_dict = self.max_price.to_dict()
+            if price_dict:
+                result["max_price"] = price_dict
+
+        return result
+
+
 class ModelConfig(BaseModel):
     """Configuration for a single LLM model.
 
@@ -78,6 +166,12 @@ class ModelConfig(BaseModel):
 
     # Azure-specific
     api_version: Optional[str] = Field(default=None, description="Azure API version")
+
+    # OpenRouter-specific
+    provider_preferences: Optional[ProviderPreferences] = Field(
+        default=None,
+        description="OpenRouter provider routing preferences",
+    )
 
     # Generation defaults
     temperature: float = Field(default=0.7, ge=0, le=2)
@@ -124,7 +218,7 @@ class ModelConfig(BaseModel):
 
     def to_llm_config(self) -> Dict[str, Any]:
         """Convert to LLMConfig-compatible dict for litellm."""
-        config = {
+        config: Dict[str, Any] = {
             "model": self.get_litellm_model(),
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -134,6 +228,13 @@ class ModelConfig(BaseModel):
         api_key = self.get_api_key()
         if api_key:
             config["api_key"] = api_key
+
+        # Include OpenRouter provider preferences
+        if self.provider == Provider.OPENROUTER and self.provider_preferences:
+            provider_dict = self.provider_preferences.to_dict()
+            if provider_dict:
+                config["extra_params"] = {"provider": provider_dict}
+
         return config
 
     @classmethod
