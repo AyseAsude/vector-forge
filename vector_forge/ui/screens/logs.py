@@ -616,8 +616,14 @@ class LogsScreen(Screen):
         get_state().remove_listener(self._on_state_change)
 
     def _on_state_change(self, _) -> None:
-        """Handle state changes - update logs."""
-        self._sync()
+        """Handle state changes - update logs.
+
+        Uses call_later to ensure sync runs on the main thread.
+        Events may be emitted from background threads (e.g., extraction
+        running in executor), and Textual widget updates must happen
+        on the main thread.
+        """
+        self.call_later(self._sync)
 
     # ─────────────────────────────────────────────────────────────────
     # Event Handlers - Targeted Updates

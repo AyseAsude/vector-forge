@@ -637,7 +637,14 @@ class DashboardScreen(Screen):
         get_state().remove_listener(self._on_state_change)
 
     def _on_state_change(self, _) -> None:
-        self._sync()
+        """Handle state changes.
+
+        Uses call_later to ensure sync runs on the main thread.
+        Events may be emitted from background threads (e.g., extraction
+        running in executor), and Textual widget updates must happen
+        on the main thread.
+        """
+        self.call_later(self._sync)
 
     def _tick(self) -> None:
         state = get_state()
