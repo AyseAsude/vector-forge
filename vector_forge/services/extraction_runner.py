@@ -144,6 +144,32 @@ class ExtractionRunner:
                 self._cached_backend = model_backend
                 self._cached_model_id = config.target_model
 
+            # Step 2: Create LLM clients with event logging and real-time notification
+            from vector_forge.services.task_executor import EventEmittingLLMClient
+            from vector_forge.storage import EventEmitter
+            from vector_forge.tasks.expander import BehaviorExpander
+
+            store = self._session_service.get_session_store(session_id)
+            raw_expander = create_client(config.expander_model)
+            raw_extractor = create_client(config.extractor_model)
+            raw_judge = create_client(config.judge_model)
+
+            # Step 3: Run BehaviorExpander first (uses expander model)
+            self._emit_progress(ExtractionProgress(
+                session_id=session_id,
+                phase="expanding_behavior",
+                progress=0.05,
+                message="Expanding behavior description...",
+            ))
+
+            expander = BehaviorExpander(raw_expander, model=config.expander_model)
+            expanded_behavior = await expander.expand(behavior_description)
+            logger.info(
+                f"Behavior expanded: {expanded_behavior.name} | "
+                f"{len(expanded_behavior.domains)} domains, "
+                f"{len(expanded_behavior.evaluation_criteria)} criteria"
+            )
+
             self._emit_progress(ExtractionProgress(
                 session_id=session_id,
                 phase="generating_contrast",
@@ -151,21 +177,14 @@ class ExtractionRunner:
                 message="Generating contrast pairs...",
             ))
 
-            # Step 2: Create LLM clients with event logging and real-time notification
-            from vector_forge.services.task_executor import EventEmittingLLMClient
-            from vector_forge.storage import EventEmitter
-
-            store = self._session_service.get_session_store(session_id)
-            raw_extractor = create_client(config.extractor_model)
-            raw_judge = create_client(config.judge_model)
-
             # Create notification callback for real-time UI updates
             def on_event(envelope):
                 self._session_service._notify_event(session_id, envelope)
 
             # Wrap with event emission so ALL LLM calls are logged + notify UI
-            extractor_llm = EventEmittingLLMClient(
-                raw_extractor, store,
+            # Use expander model for contrast pipeline (analysis, seeds, pairs)
+            expander_llm = EventEmittingLLMClient(
+                raw_expander, store,
                 source="contrast_extractor",
                 on_event=on_event,
             )
@@ -174,11 +193,17 @@ class ExtractionRunner:
                 source="contrast_judge",
                 on_event=on_event,
             )
+            # Extractor LLM for task execution (optimization phase)
+            extractor_llm = EventEmittingLLMClient(
+                raw_extractor, store,
+                source="extractor",
+                on_event=on_event,
+            )
 
             # Create event emitter for complete event sourcing with notification
             event_emitter = EventEmitter(store, default_source="extraction_runner", on_event=on_event)
 
-            # Step 3: Build contrast config from task config
+            # Step 4: Build contrast config from task config
             contrast_config = ContrastPipelineConfig(
                 core_pool_size=config.contrast.core_pool_size,
                 core_seeds_per_sample=config.contrast.core_seeds_per_sample,
@@ -191,9 +216,10 @@ class ExtractionRunner:
                 max_concurrent_generations=config.contrast.max_concurrent_generations,
             )
 
-            # Step 4: Run ContrastPipeline with event emitter
+            # Step 5: Run ContrastPipeline with event emitter
+            # Uses expander_llm for BehaviorAnalyzer, seeds, and pairs
             contrast_pipeline = ContrastPipeline(
-                llm_client=extractor_llm,
+                llm_client=expander_llm,
                 judge_llm_client=judge_llm,
                 config=contrast_config,
                 event_emitter=event_emitter,
@@ -224,15 +250,19 @@ class ExtractionRunner:
                 message=f"Starting extraction ({config.num_samples} samples)...",
             ))
 
-            # Step 5: Create ExtractionTask
-            behavior = ExpandedBehavior(
-                name=behavior_name,
-                description=behavior_description,
-                detailed_definition=behavior_description,
+            # Step 6: Augment ExpandedBehavior with analysis from contrast pipeline
+            # This merges the expander output (domains, criteria) with
+            # the analyzer output (scenarios, components) for comprehensive evaluation
+            expanded_behavior.augment_with_analysis(pipeline_result.behavior_analysis)
+            logger.info(
+                f"Behavior augmented with analysis: "
+                f"{len(expanded_behavior.realistic_scenarios)} scenarios, "
+                f"{len(expanded_behavior.components)} components"
             )
-            task = ExtractionTask.from_behavior(behavior, config)
 
-            # Step 6: Set up progress forwarding
+            task = ExtractionTask.from_behavior(expanded_behavior, config)
+
+            # Step 7: Set up progress forwarding
             def on_runner_progress(sid: str, runner_progress: RunnerProgress) -> None:
                 # Map runner progress to our progress format
                 if runner_progress.current_phase == "extracting":

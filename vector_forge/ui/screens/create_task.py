@@ -312,20 +312,6 @@ class CreateTaskScreen(Screen):
         background: $surface;
     }
 
-    CreateTaskScreen #expand-btn {
-        width: auto;
-        min-width: 16;
-        height: 1;
-        background: $accent;
-        color: $background;
-        border: none;
-        padding: 0 1;
-    }
-
-    CreateTaskScreen #expand-btn:hover {
-        background: $accent 80%;
-    }
-
     /* Parameters */
     CreateTaskScreen #params-container {
         height: auto;
@@ -405,8 +391,6 @@ class CreateTaskScreen(Screen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._profile = "standard"
-        self._expanded = None
-        self._expanding = False
         self._layer_strategy = "auto"
         self._aggregation = "top_k_average"
         self._contrast_quality = "standard"
@@ -419,7 +403,7 @@ class CreateTaskScreen(Screen):
         # Load API model configs from preferences (or fall back to default)
         self._extractor_config = self._load_model_config(ModelRole.EXTRACTOR)
         self._judge_config = self._load_model_config(ModelRole.JUDGE)
-        self._expander_config = self._load_model_config(ModelRole.EXPANDER)
+        self._expander_config = self._load_model_config(ModelRole.EXPANDER)  # Used automatically in pipeline
 
         # Load target model config from preferences (or fall back to default)
         self._target_config = self._load_target_config()
@@ -474,7 +458,6 @@ class CreateTaskScreen(Screen):
                     placeholder="Describe the behavior to extract (e.g., 'sycophancy', 'helpfulness')",
                     id="behavior-input"
                 )
-                yield Button("Expand with LLM", id="expand-btn")
 
             # Parameters section
             yield Static("PARAMETERS", classes="main-section")
@@ -744,62 +727,6 @@ class CreateTaskScreen(Screen):
             self.action_cancel()
         elif event.button.id == "btn-create":
             self.action_create()
-        elif event.button.id == "expand-btn":
-            self._do_expand()
-
-    def _do_expand(self) -> None:
-        if self._expanding:
-            return
-
-        textarea = self.query_one("#behavior-input", TextArea)
-        text = textarea.text.strip()
-        if not text:
-            self._status("Enter a behavior first", "error")
-            return
-
-        self._expanding = True
-        self._status("Expanding with LLM...", "warning")
-        textarea.disabled = True
-        self.run_worker(self._expand_async(text), exclusive=True)
-
-    async def _expand_async(self, text: str) -> None:
-        try:
-            from vector_forge.tasks.expander import BehaviorExpander
-            from vector_forge.llm import create_client
-
-            # Use expander model, or default (with provider prefix)
-            model = self._expander_config.get_litellm_model() if self._expander_config else DEFAULT_MODEL
-            llm = create_client(model)
-            expander = BehaviorExpander(llm)
-            result = await expander.expand(text)
-
-            self._expanded = result
-
-            expanded_text = f"""{result.name}
-
-{result.description}
-
-DEFINITION:
-{result.detailed_definition[:500]}{'...' if len(result.detailed_definition) > 500 else ''}
-
-POSITIVE EXAMPLES:
-{chr(10).join('• ' + ex[:150] for ex in result.positive_examples[:3])}
-
-NEGATIVE EXAMPLES:
-{chr(10).join('• ' + ex[:150] for ex in result.negative_examples[:3])}
-
-DOMAINS: {', '.join(result.domains[:6])}
-"""
-            textarea = self.query_one("#behavior-input", TextArea)
-            textarea.text = expanded_text
-            textarea.disabled = False
-            self._status("Expanded - you can edit", "success")
-
-        except Exception as e:
-            self._status(f"Error: {e}", "error")
-            self.query_one("#behavior-input", TextArea).disabled = False
-        finally:
-            self._expanding = False
 
     def _status(self, msg: str, level: str = "info") -> None:
         colors = {"error": "$error", "success": "$success", "warning": "$warning"}
@@ -893,12 +820,8 @@ DOMAINS: {', '.join(result.domains[:6])}
 
         try:
             config = self._build_config()
-            # Use LLM-generated short description if available, otherwise raw text
-            if self._expanded:
-                description = f"{self._expanded.name}: {self._expanded.description}"
-            else:
-                description = text
-            self.post_message(self.TaskCreated(config, description))
+            # Expansion happens automatically in the pipeline
+            self.post_message(self.TaskCreated(config, text))
             self.app.pop_screen()
         except Exception as e:
             self._status(f"Error: {e}", "error")

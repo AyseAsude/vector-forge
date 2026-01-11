@@ -1,39 +1,94 @@
-"""Behavior expansion service for enriching user descriptions.
+"""Behavior expansion and specification for steering vector extraction.
 
-Transforms brief user descriptions into comprehensive behavior specifications
-with examples, evaluation criteria, and contrast pair guidance.
+This module provides:
+1. ExpandedBehavior - unified behavior specification used throughout the pipeline
+2. BehaviorExpander - LLM-based expansion of brief descriptions into detailed specs
+
+The expansion runs automatically at the start of the extraction pipeline,
+producing a comprehensive specification used for both contrast generation
+and evaluation.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Protocol
+from __future__ import annotations
+
 import json
+from dataclasses import dataclass, field
+from typing import List, Optional, Protocol, TYPE_CHECKING
 
 from vector_forge.constants import DEFAULT_MODEL
 from vector_forge.core.behavior import BehaviorSpec
 
+if TYPE_CHECKING:
+    from vector_forge.contrast.protocols import (
+        BehaviorAnalysis,
+        BehaviorComponent,
+        RealisticScenario,
+        NegativeExample,
+    )
+
 
 @dataclass
 class ExpandedBehavior:
-    """Enriched behavior specification with detailed guidance.
+    """Unified behavior specification for the entire extraction pipeline.
 
-    Contains all information needed for high-quality extraction:
-    - Clear behavior definition
-    - Positive and negative examples
-    - Evaluation criteria
-    - Domain coverage guidance
+    This class consolidates all behavior information needed for:
+    - Contrast pair generation (via to_behavior_spec())
+    - Evaluation prompt generation (via get_evaluation_prompts())
+    - Behavior judging (via get_judge_criteria())
+    - Specificity testing (via not_this_behavior)
+
+    Created by BehaviorExpander at the start of the pipeline, then
+    augmented with BehaviorAnalysis data after contrast generation.
     """
 
+    # Core identification
     name: str
     description: str
     detailed_definition: str
+
+    # For evaluation - from BehaviorExpander
     positive_examples: List[str] = field(default_factory=list)
     negative_examples: List[str] = field(default_factory=list)
     evaluation_criteria: List[str] = field(default_factory=list)
-    contrast_guidance: str = ""
     domains: List[str] = field(default_factory=list)
     avoid_behaviors: List[str] = field(default_factory=list)
+    contrast_guidance: str = ""
     strength_notes: str = ""
+
+    # For evaluation - from BehaviorAnalysis (populated after contrast pipeline)
+    realistic_scenarios: List["RealisticScenario"] = field(default_factory=list)
+    trigger_conditions: List[str] = field(default_factory=list)
+    components: List["BehaviorComponent"] = field(default_factory=list)
+    contrast_dimensions: List[str] = field(default_factory=list)
+    not_this_behavior: List["NegativeExample"] = field(default_factory=list)
+
+    # Metadata
     metadata: dict = field(default_factory=dict)
+
+    def augment_with_analysis(self, analysis: "BehaviorAnalysis") -> None:
+        """Augment this behavior with data from BehaviorAnalysis.
+
+        Called after the contrast pipeline runs to add scenario and
+        component information for richer evaluation.
+
+        Args:
+            analysis: BehaviorAnalysis from the contrast pipeline.
+        """
+        self.realistic_scenarios = list(analysis.realistic_scenarios)
+        self.trigger_conditions = list(analysis.trigger_conditions)
+        self.components = list(analysis.components)
+        self.contrast_dimensions = list(analysis.contrast_dimensions)
+        self.not_this_behavior = list(analysis.not_this_behavior)
+
+        # Augment evaluation criteria with component info
+        for comp in analysis.components:
+            criteria = f"{comp.name}: {comp.description}"
+            if criteria not in self.evaluation_criteria:
+                self.evaluation_criteria.append(criteria)
+
+        # Use core_definition if we don't have a good detailed_definition
+        if analysis.core_definition and len(self.detailed_definition) < 100:
+            self.detailed_definition = analysis.core_definition
 
     def to_behavior_spec(self) -> BehaviorSpec:
         """Convert to standard BehaviorSpec for pipeline compatibility."""
@@ -45,6 +100,76 @@ class ExpandedBehavior:
             prompt_domains=self.domains,
             avoid_behaviors=self.avoid_behaviors,
         )
+
+    def get_evaluation_prompts(self, max_prompts: int = 50) -> List[str]:
+        """Generate evaluation prompts from available data.
+
+        Uses realistic scenarios (from BehaviorAnalysis) as primary source,
+        falling back to domains (from BehaviorExpander) if needed.
+
+        Args:
+            max_prompts: Maximum number of prompts to return.
+
+        Returns:
+            List of prompts for behavior evaluation.
+        """
+        prompts = []
+
+        # Primary: Use realistic scenarios - specifically designed to trigger behavior
+        for scenario in self.realistic_scenarios:
+            prompt = f"{scenario.setup} {scenario.natural_trigger}"
+            prompts.append(prompt)
+
+        # Secondary: Use trigger conditions as contextual prompts
+        for condition in self.trigger_conditions:
+            prompt = f"In a situation where {condition}, how would you respond?"
+            prompts.append(prompt)
+
+        # Tertiary: Use domains with templates (from BehaviorExpander)
+        if len(prompts) < max_prompts and self.domains:
+            templates = [
+                "What do you think about {topic}?",
+                "Can you help me understand {topic}?",
+                "I believe something about {topic}. What's your view?",
+                "Explain {topic} to me.",
+                "What's your opinion on {topic}?",
+            ]
+            for domain in self.domains:
+                for template in templates:
+                    if len(prompts) >= max_prompts:
+                        break
+                    prompts.append(template.format(topic=domain))
+
+        return prompts[:max_prompts]
+
+    def get_judge_criteria(self) -> str:
+        """Get formatted criteria for behavior judging.
+
+        Returns:
+            Formatted string with criteria and markers for the judge LLM.
+        """
+        lines = [f"Behavior: {self.name}", f"Definition: {self.detailed_definition}", ""]
+
+        if self.evaluation_criteria:
+            lines.append("Evaluation criteria:")
+            for criterion in self.evaluation_criteria[:8]:
+                lines.append(f"- {criterion}")
+
+        if self.components:
+            lines.append("")
+            lines.append("Components to look for:")
+            for comp in self.components[:5]:
+                lines.append(f"- {comp.name}: {comp.description}")
+                if comp.markers:
+                    lines.append(f"  Markers: {', '.join(comp.markers[:3])}")
+
+        if self.not_this_behavior:
+            lines.append("")
+            lines.append("This is NOT (do not confuse with):")
+            for neg in self.not_this_behavior[:3]:
+                lines.append(f"- {neg.similar_behavior}: {neg.why_different}")
+
+        return "\n".join(lines)
 
 
 class LLMClient(Protocol):
@@ -102,8 +227,7 @@ class BehaviorExpander:
     - Evaluation criteria
     - Contrast pair guidance
 
-    This mirrors how Petri uses special_instructions to define audit goals,
-    but specialized for steering vector extraction.
+    This runs automatically at the start of the extraction pipeline.
 
     Example:
         >>> expander = BehaviorExpander(llm_client)

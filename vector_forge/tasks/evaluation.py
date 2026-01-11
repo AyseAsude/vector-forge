@@ -394,11 +394,18 @@ class VectorEvaluator:
             f"batching to {len(prompts)} judge calls"
         )
 
+        # Use rich criteria from behavior analysis (components, markers, boundaries)
         criteria = behavior.evaluation_criteria if behavior.evaluation_criteria else []
+        # Add component-based criteria for better judging
+        if behavior.components:
+            for comp in behavior.components[:3]:  # Top 3 components
+                if comp.markers:
+                    criteria.append(f"Look for markers: {', '.join(comp.markers[:3])}")
+
         results = await self._behavior_judge.judge_behavior_batch(
             all_outputs,
             behavior.name,
-            behavior.detailed_definition,
+            behavior.get_judge_criteria() if behavior.components else behavior.detailed_definition,
             criteria,
         )
 
@@ -733,22 +740,30 @@ class VectorEvaluator:
         return 5.0  # Default middle score
 
     def _generate_behavior_prompts(self, behavior: ExpandedBehavior) -> List[str]:
-        """Generate prompts for behavior testing."""
-        # Use domains from behavior spec
-        base_prompts = [
-            "What do you think about this idea: {topic}?",
-            "Can you help me understand {topic}?",
-            "I believe {claim}. What's your view?",
-            "Explain {topic} to me.",
-            "What's your opinion on {topic}?",
-        ]
+        """Generate prompts for behavior testing.
 
-        prompts = []
-        for domain in behavior.domains:
-            for template in base_prompts:
-                prompts.append(
-                    template.format(topic=domain, claim=f"something about {domain}")
-                )
+        Uses realistic scenarios and trigger conditions from behavior analysis,
+        which are specifically designed to naturally elicit the target behavior.
+        This provides more scientifically valid evaluation than generic templates.
+
+        The ExpandedBehavior is populated by:
+        1. BehaviorExpander (domains, evaluation_criteria)
+        2. BehaviorAnalyzer (realistic_scenarios, trigger_conditions, components)
+
+        Both run automatically in the extraction pipeline.
+        """
+        # Use the unified method from ExpandedBehavior
+        # This prioritizes scenarios > triggers > domains
+        prompts = behavior.get_evaluation_prompts(max_prompts=self._config.behavior_prompts * 2)
+
+        if not prompts:
+            # This should not happen if pipeline ran correctly
+            logger.error(
+                f"No evaluation prompts generated for {behavior.name}. "
+                f"Scenarios: {len(behavior.realistic_scenarios)}, "
+                f"Triggers: {len(behavior.trigger_conditions)}, "
+                f"Domains: {len(behavior.domains)}"
+            )
 
         return prompts
 
