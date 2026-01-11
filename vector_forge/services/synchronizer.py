@@ -208,7 +208,7 @@ class UIStateSynchronizer:
                 agent = AgentUIState(
                     id=agent_id,
                     name=f"Sample {sample_idx + 1}",
-                    role=f"L={layer} iters={iterations}",
+                    role=f"L{layer} iters={iterations}",
                     status=AgentStatus.COMPLETE if opt.success else AgentStatus.ERROR,
                     started_at=started_at,
                     completed_at=completed_at,
@@ -228,6 +228,39 @@ class UIStateSynchronizer:
                         f"Optimization failed: {opt.error or 'Unknown error'}"
                     )
                 extraction.add_agent(agent)
+
+        # Reconstruct sample agents from contrast pairs (if not already created from optimizations)
+        if replayed and replayed.contrast_pairs:
+            # Count pairs per sample (excluding core pool with sample_idx=-1)
+            pairs_per_sample: dict[int, int] = {}
+            for pair in replayed.contrast_pairs.values():
+                idx = pair.sample_idx
+                if idx >= 0:  # Skip core pool
+                    pairs_per_sample[idx] = pairs_per_sample.get(idx, 0) + 1
+
+            # Create or update sample agents with pair counts
+            for sample_idx, pair_count in pairs_per_sample.items():
+                agent_id = f"{extraction.id}_sample_{sample_idx}"
+                if agent_id in extraction.agents:
+                    # Update existing agent's pair count
+                    extraction.agents[agent_id].tool_calls_count = pair_count
+                else:
+                    # Create new agent for contrast phase
+                    agent = AgentUIState(
+                        id=agent_id,
+                        name=f"Sample {sample_idx + 1}",
+                        role=f"contrast pairs",
+                        status=AgentStatus.COMPLETE,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        turns=1,
+                        tool_calls_count=pair_count,
+                    )
+                    agent.add_message(
+                        MessageRole.ASSISTANT,
+                        f"Generated {pair_count} contrast pairs"
+                    )
+                    extraction.add_agent(agent)
 
         # Reconstruct source-based agents from LLM events in logs
         # These are agents like "extractor", "judge", "contrast_extractor", etc.
@@ -939,6 +972,10 @@ class UIStateSynchronizer:
         payload = event.payload
         sample_idx = payload.get("sample_idx", 0)
 
+        # Skip core pool events (sample_idx=-1), not a real sample
+        if sample_idx < 0:
+            return
+
         # Create or update sample agent to show contrast pair generation
         agent = self._get_or_create_sample_agent(extraction, sample_idx)
         agent.status = AgentStatus.RUNNING
@@ -1023,7 +1060,7 @@ class UIStateSynchronizer:
         if config:
             lr = config.get("lr", 0.01)
             seed = config.get("seed", 0)
-            role = f"L={layer} lr={lr:.3f} seed={seed}"
+            role = f"L{layer} lr={lr:.3f} seed={seed}"
         else:
             role = f"sample {sample_idx}"
 

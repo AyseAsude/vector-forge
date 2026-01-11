@@ -311,6 +311,7 @@ class WorkerListItem(ListItem):
         icon, color, label = self._get_display_values()
         agent = self._agent
 
+        count_label = self._get_count_label()
         with Horizontal(classes="row"):
             yield Static(
                 f"[{color}]{icon}[/] [bold]{agent.name}[/]",
@@ -319,7 +320,7 @@ class WorkerListItem(ListItem):
             )
             yield Static(agent.elapsed_str, classes="time", id="worker-time")
         yield Static(
-            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools",
+            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {count_label}",
             classes="meta",
             id="worker-meta",
         )
@@ -335,18 +336,26 @@ class WorkerListItem(ListItem):
         }
         return status_map.get(self._agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
+    def _get_count_label(self) -> str:
+        """Get the appropriate label for tool_calls_count based on agent type."""
+        # Sample agents show "pairs", source agents show "calls"
+        if "_sample_" in self._agent.id:
+            return "pairs"
+        return "calls"
+
     def update_agent(self, agent: AgentUIState) -> None:
         """Update the agent data and refresh display."""
         self._agent = agent
         if self.is_mounted:
             icon, color, label = self._get_display_values()
+            count_label = self._get_count_label()
             try:
                 self.query_one("#worker-name", Static).update(
                     f"[{color}]{icon}[/] [bold]{agent.name}[/]"
                 )
                 self.query_one("#worker-time", Static).update(agent.elapsed_str)
                 self.query_one("#worker-meta", Static).update(
-                    f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} tools"
+                    f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {count_label}"
                 )
             except Exception:
                 pass
