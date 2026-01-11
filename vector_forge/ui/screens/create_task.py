@@ -238,6 +238,7 @@ class CreateTaskScreen(Screen):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+s", "create", "Create"),
+        Binding("q", "cancel", "Quit"),
     ]
 
     DEFAULT_CSS = """
