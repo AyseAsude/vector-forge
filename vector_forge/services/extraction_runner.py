@@ -213,6 +213,8 @@ class ExtractionRunner:
                 min_contrast_quality=config.contrast.min_contrast_quality,
                 max_regeneration_attempts=config.contrast.max_regeneration_attempts,
                 max_concurrent_generations=config.contrast.max_concurrent_generations,
+                min_seed_quality=config.contrast.min_seed_quality,
+                generation_temperature=config.contrast.generation_temperature,
                 # Intensity distribution
                 intensity_extreme=config.contrast.intensity_extreme,
                 intensity_high=config.contrast.intensity_high,

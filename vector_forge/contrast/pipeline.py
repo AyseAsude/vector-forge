@@ -258,6 +258,7 @@ class ContrastPipeline:
         self._pair_generator = ContrastPairGenerator(
             llm_client,
             temperature=self._config.generation_temperature,
+            max_concurrency=self._config.max_concurrent_generations,
         )
         self._regenerator = ContrastRegenerator(llm_client)
         self._territory_assigner = TerritoryAssigner()

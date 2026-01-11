@@ -266,7 +266,7 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
         intensity: SignalIntensity = SignalIntensity.MEDIUM,
-        max_concurrency: int = 10,
+        max_concurrency: Optional[int] = None,
     ) -> List[ContrastPair]:
         """Generate multiple contrast pairs at the same intensity.
 
@@ -276,7 +276,7 @@ class ContrastPairGenerator(PairGeneratorProtocol):
             seeds: Seeds to generate from.
             analysis: Behavior analysis for context.
             intensity: Signal intensity for all pairs.
-            max_concurrency: Maximum concurrent generations.
+            max_concurrency: Maximum concurrent generations. If None, uses instance default.
 
         Returns:
             List of ContrastPairs.
@@ -284,7 +284,8 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         if not seeds:
             return []
 
-        semaphore = asyncio.Semaphore(max_concurrency)
+        concurrency = max_concurrency if max_concurrency is not None else self._max_concurrency
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def bounded_generate(seed: Seed) -> ContrastPair:
             async with semaphore:
@@ -308,7 +309,7 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
         distribution: Optional[Dict[SignalIntensity, float]] = None,
-        max_concurrency: int = 10,
+        max_concurrency: Optional[int] = None,
     ) -> List[ContrastPair]:
         """Generate pairs with distributed intensities concurrently.
 
@@ -318,7 +319,7 @@ class ContrastPairGenerator(PairGeneratorProtocol):
             seeds: Seeds to generate from.
             analysis: Behavior analysis for context.
             distribution: Optional intensity distribution (defaults to balanced).
-            max_concurrency: Maximum concurrent generations.
+            max_concurrency: Maximum concurrent generations. If None, uses instance default.
 
         Returns:
             List of ContrastPairs at varying intensities.
@@ -360,7 +361,8 @@ class ContrastPairGenerator(PairGeneratorProtocol):
                 seed_idx += 1
 
         # Generate concurrently with semaphore
-        semaphore = asyncio.Semaphore(max_concurrency)
+        concurrency = max_concurrency if max_concurrency is not None else self._max_concurrency
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def bounded_generate(seed: Seed, intensity: SignalIntensity) -> ContrastPair:
             async with semaphore:
