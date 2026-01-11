@@ -445,6 +445,14 @@ class EvaluationConfig(BaseModel):
         description="Steering strengths to test",
     )
 
+    # Generation temperature for steered outputs during evaluation
+    generation_temperature: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=2.0,
+        description="Temperature for generating steered outputs during evaluation",
+    )
+
     # Scoring weights
     behavior_weight: float = Field(default=0.30, ge=0, le=1)
     specificity_weight: float = Field(default=0.25, ge=0, le=1)
@@ -481,6 +489,7 @@ class EvaluationConfig(BaseModel):
             capability_prompts=10,
             generalization_prompts=15,
             strength_levels=[0.5, 1.0, 1.5],
+            generation_temperature=0.7,
         )
 
     @classmethod
@@ -499,6 +508,7 @@ class EvaluationConfig(BaseModel):
             capability_prompts=30,
             generalization_prompts=50,
             strength_levels=[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+            generation_temperature=0.7,
         )
 
 

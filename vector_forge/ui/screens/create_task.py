@@ -14,6 +14,7 @@ from vector_forge.tasks.config import (
     AggregationStrategy,
     ContrastConfig,
     OptimizationConfig,
+    EvaluationConfig,
 )
 from vector_forge.storage.models import (
     ModelConfig,
@@ -489,13 +490,17 @@ class CreateTaskScreen(Screen):
                         yield ParamRow("Max SRC", "inp-max-src", "3.0", "behavior score")
                         yield ParamRow("Min Distance", "inp-min-dist", "0.3", "semantic")
 
-                # Row 3: Parallelism
+                # Row 3: Parallelism & Evaluation
                 with Horizontal(classes="params-row"):
                     with ParamSection("PARALLELISM"):
                         yield ParamRow("Extractions", "inp-extractions", "1")
                         yield ParamRow("Evaluations", "inp-evaluations", "16")
                         yield ParamRow("Generations", "inp-generations", "16", "LLM API calls")
                         yield ParamRow("Top K", "inp-topk", "5")
+
+                    with ParamSection("EVALUATION"):
+                        yield ParamRow("Strengths", "inp-strengths", "0.5, 1.0, 1.5, 2.0", "levels to test")
+                        yield ParamRow("Temperature", "inp-eval-temp", "0.7", "steered generation")
 
                 # Strategy options
                 with Horizontal(classes="option-row"):
@@ -682,6 +687,12 @@ class CreateTaskScreen(Screen):
         self.query_one("#inp-max-src", Input).value = str(contrast.max_src_score)
         self.query_one("#inp-min-dist", Input).value = str(contrast.min_semantic_distance)
 
+        # Update evaluation fields
+        eval_cfg = cfg.evaluation
+        strengths_str = ", ".join(str(s) for s in eval_cfg.strength_levels)
+        self.query_one("#inp-strengths", Input).value = strengths_str
+        self.query_one("#inp-eval-temp", Input).value = str(eval_cfg.generation_temperature)
+
         # Update layer strategy pills
         strategy = cfg.layer_strategies[0].value if cfg.layer_strategies else "auto"
         self._layer_strategy = strategy
@@ -773,7 +784,9 @@ class CreateTaskScreen(Screen):
     def _status(self, msg: str, level: str = "info") -> None:
         colors = {"error": "$error", "success": "$success", "warning": "$warning"}
         color = colors.get(level, "$foreground-muted")
-        self.query_one("#status", Static).update(f"[{color}]{msg}[/]")
+        # Escape brackets in message to avoid Rich markup interpretation
+        escaped_msg = msg.replace("[", r"\[").replace("]", r"\]")
+        self.query_one("#status", Static).update(f"[{color}]{escaped_msg}[/]")
 
     def _build_config(self) -> TaskConfig:
         # Map layer strategy
@@ -843,6 +856,33 @@ class CreateTaskScreen(Screen):
             except ValueError:
                 pass  # Invalid input, use None
 
+        # Parse strength levels from input (requires at least 2 levels)
+        strengths_str = self.query_one("#inp-strengths", Input).value.strip()
+        strength_levels = [0.5, 1.0, 1.5, 2.0]  # Default
+        if strengths_str:
+            try:
+                parsed = [float(s.strip()) for s in strengths_str.split(",") if s.strip()]
+                if len(parsed) >= 2:
+                    strength_levels = parsed
+                # If less than 2 parsed, keep default
+            except ValueError:
+                pass  # Invalid input, use default
+
+        # Parse evaluation temperature
+        eval_temp_str = self.query_one("#inp-eval-temp", Input).value.strip()
+        eval_temp = 0.7  # Default
+        if eval_temp_str:
+            try:
+                eval_temp = float(eval_temp_str)
+            except ValueError:
+                pass  # Invalid input, use default
+
+        # Build evaluation config
+        evaluation_config = EvaluationConfig(
+            strength_levels=strength_levels,
+            generation_temperature=eval_temp,
+        )
+
         return TaskConfig(
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
@@ -855,6 +895,7 @@ class CreateTaskScreen(Screen):
             max_concurrent_evaluations=int(self.query_one("#inp-evaluations", Input).value or "16"),
             aggregation_strategy=aggregation,
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
+            evaluation=evaluation_config,
             extractor_model=extractor_model,
             judge_model=judge_model,
             expander_model=expander_model,

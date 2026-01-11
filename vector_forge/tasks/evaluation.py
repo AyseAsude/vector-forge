@@ -291,6 +291,7 @@ class VectorEvaluator:
             strength=strength,
             max_new_tokens=max_new_tokens,
             do_sample=True,
+            temperature=self._config.generation_temperature,
         )
 
     def _generate_steered_batch(
@@ -327,6 +328,7 @@ class VectorEvaluator:
             strength=strength,
             max_new_tokens=max_new_tokens,
             do_sample=True,
+            temperature=self._config.generation_temperature,
         )
 
     def _generate_baseline_batch(
@@ -350,6 +352,7 @@ class VectorEvaluator:
             prompts,
             max_new_tokens=max_new_tokens,
             do_sample=True,
+            temperature=self._config.generation_temperature,
         )
 
     async def evaluate(
