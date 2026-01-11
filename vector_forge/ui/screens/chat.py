@@ -22,7 +22,7 @@ from vector_forge.ui.widgets.chat_input import ChatInput
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
-class ConversationPanel(Vertical):
+class ChatConversationPanel(Vertical):
     """Right panel showing the chat conversation.
 
     Implements a chat-like interface with:
@@ -32,37 +32,38 @@ class ConversationPanel(Vertical):
     """
 
     DEFAULT_CSS = """
-    ConversationPanel {
+    ChatConversationPanel {
         width: 1fr;
         background: $surface;
     }
 
-    ConversationPanel .panel-header {
+    ChatConversationPanel .panel-header {
         height: auto;
         padding: 1 2;
+        background: $panel;
         border-bottom: solid $surface-lighten-1;
     }
 
-    ConversationPanel .title {
+    ChatConversationPanel .title {
         text-style: bold;
         color: $foreground;
     }
 
-    ConversationPanel .message-stream {
+    ChatConversationPanel .message-stream {
         height: 1fr;
         padding: 2 1 1 2;
-        background: $background;
+        background: $surface-darken-1;
         scrollbar-gutter: stable;
     }
 
-    ConversationPanel .empty-state {
+    ChatConversationPanel .empty-state {
         height: 1fr;
         width: 100%;
         content-align: center middle;
         color: $foreground-muted;
     }
 
-    ConversationPanel .hint-bar {
+    ChatConversationPanel .hint-bar {
         height: 1;
         padding: 0 1;
         color: $foreground-muted;
@@ -173,7 +174,7 @@ class ChatScreen(Screen):
     def compose(self) -> ComposeResult:
         with Horizontal(id="content"):
             yield VectorSelector(id="vector-selector")
-            yield ConversationPanel(id="conversation-panel")
+            yield ChatConversationPanel(id="conversation-panel")
         yield TmuxBar(active_screen="chat")
 
     def on_mount(self) -> None:
@@ -203,7 +204,7 @@ class ChatScreen(Screen):
 
     def _load_session(self, extraction_id: str | None) -> None:
         """Load chat session for extraction."""
-        conv_panel = self.query_one("#conversation-panel", ConversationPanel)
+        conv_panel = self.query_one("#conversation-panel", ChatConversationPanel)
 
         if extraction_id is None:
             conv_panel.show_empty_state("Select a task from Dashboard to chat")
@@ -260,7 +261,7 @@ class ChatScreen(Screen):
 
         # Add user message
         user_msg = session.add_message(ChatMessageType.USER, event.content)
-        conv_panel = self.query_one("#conversation-panel", ConversationPanel)
+        conv_panel = self.query_one("#conversation-panel", ChatConversationPanel)
         conv_panel.add_message(user_msg)
 
         # Disable input while generating
@@ -286,7 +287,7 @@ class ChatScreen(Screen):
     async def _generate_responses(
         self,
         session,
-        conv_panel: ConversationPanel,
+        conv_panel: ChatConversationPanel,
         extraction_id: str,
         layer: int | None,
         strength: float,

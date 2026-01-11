@@ -472,7 +472,7 @@ class LogPanel(Vertical):
     LogPanel .log-stream {
         height: 1fr;
         padding: 1 0 1 2;
-        background: $background;
+        background: $surface-darken-1;
         scrollbar-gutter: stable;
     }
 

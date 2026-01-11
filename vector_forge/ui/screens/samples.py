@@ -557,7 +557,7 @@ class MessageRow(Static):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class ConversationPanel(Vertical):
+class WorkerConversationPanel(Vertical):
     """Right panel showing worker conversation.
 
     Uses VerticalScroll with individual MessageRow widgets for consistency
@@ -566,44 +566,45 @@ class ConversationPanel(Vertical):
     """
 
     DEFAULT_CSS = """
-    ConversationPanel {
+    WorkerConversationPanel {
         width: 2fr;
         background: $surface;
     }
 
-    ConversationPanel .panel-header {
+    WorkerConversationPanel .panel-header {
         height: auto;
         padding: 1 2;
+        background: $panel;
     }
 
-    ConversationPanel .title-row {
+    WorkerConversationPanel .title-row {
         height: 1;
         margin-bottom: 1;
     }
 
-    ConversationPanel .title {
+    WorkerConversationPanel .title {
         width: 1fr;
         text-style: bold;
     }
 
-    ConversationPanel .time {
+    WorkerConversationPanel .time {
         width: auto;
         color: $foreground-muted;
     }
 
-    ConversationPanel .stats {
+    WorkerConversationPanel .stats {
         height: 1;
         color: $foreground-muted;
     }
 
-    ConversationPanel .message-stream {
+    WorkerConversationPanel .message-stream {
         height: 1fr;
         padding: 1 0 1 2;
-        background: $background;
+        background: $surface-darken-1;
         scrollbar-gutter: stable;
     }
 
-    ConversationPanel .empty {
+    WorkerConversationPanel .empty {
         height: 1fr;
         content-align: center middle;
         color: $foreground-muted;
@@ -755,7 +756,7 @@ class SamplesScreen(Screen):
     def compose(self) -> ComposeResult:
         with Horizontal(id="content"):
             yield WorkersPanel(id="workers-panel")
-            yield ConversationPanel(id="conversation-panel")
+            yield WorkerConversationPanel(id="conversation-panel")
         yield TmuxBar(active_screen="samples")
 
     def on_mount(self) -> None:
@@ -788,7 +789,7 @@ class SamplesScreen(Screen):
                         pass
 
             # Update conversation time
-            conv_panel = self.query_one("#conversation-panel", ConversationPanel)
+            conv_panel = self.query_one("#conversation-panel", WorkerConversationPanel)
             if conv_panel.current_agent_id:
                 agent = extraction.agents.get(conv_panel.current_agent_id)
                 if agent:
@@ -802,7 +803,7 @@ class SamplesScreen(Screen):
         extraction = state.selected_extraction
 
         workers_panel = self.query_one("#workers-panel", WorkersPanel)
-        conv_panel = self.query_one("#conversation-panel", ConversationPanel)
+        conv_panel = self.query_one("#conversation-panel", WorkerConversationPanel)
 
         if extraction is None:
             workers_panel.update_workers({}, None)

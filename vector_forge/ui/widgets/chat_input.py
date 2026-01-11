@@ -44,7 +44,7 @@ class ChatInput(Widget):
         height: auto;
         margin-top: 1;
         padding: 1 1;
-        background: $background;
+        background: $surface-darken-1;
     }
 
     ChatInput .input-box {
