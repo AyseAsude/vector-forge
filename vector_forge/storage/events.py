@@ -213,6 +213,7 @@ class EvaluationStartedEvent(BaseModel):
     eval_type: str  # "quick" or "comprehensive"
     vector_id: str
     layer: int
+    sample_idx: Optional[int] = None  # Sample index for UI tracking
     strength_levels: List[float] = Field(default_factory=list)
     num_prompts: int = 0
     dimensions: List[str] = Field(default_factory=list)  # e.g., ["behavior", "specificity", ...]
@@ -292,6 +293,7 @@ class EvaluationCompletedEvent(BaseModel):
 
     event_type: Literal["evaluation.completed"] = "evaluation.completed"
     evaluation_id: str
+    sample_idx: Optional[int] = None  # Sample index for UI tracking
     scores: Dict[str, float] = Field(default_factory=dict)
     dimension_scores: Dict[str, float] = Field(default_factory=dict)  # Per-dimension breakdown
     citations: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)

@@ -388,6 +388,13 @@ def apply_event_to_state(
         extraction.phase = Phase.EVALUATING
         extraction.progress = max(extraction.progress, 0.7)
 
+        # Update sample status if sample_idx is provided
+        sample_idx = payload.get("sample_idx")
+        if sample_idx is not None:
+            agent = _get_sample_agent(extraction, sample_idx)
+            if agent:
+                agent.status = AgentStatus.RUNNING
+
     elif event_type == "evaluation.completed":
         scores = payload.get("scores", {})
         extraction.evaluation.behavior = scores.get("behavior", 0.0)
@@ -398,6 +405,18 @@ def apply_event_to_state(
         extraction.evaluation.best_strength = payload.get("recommended_strength", 1.0)
         extraction.phase = Phase.JUDGE_REVIEW
         extraction.progress = max(extraction.progress, 0.9)
+
+        # Update sample status if sample_idx is provided
+        sample_idx = payload.get("sample_idx")
+        if sample_idx is not None:
+            agent = _get_sample_agent(extraction, sample_idx)
+            if agent:
+                verdict = payload.get("verdict", "")
+                if verdict == "failed":
+                    agent.status = AgentStatus.ERROR
+                else:
+                    agent.status = AgentStatus.COMPLETE
+                agent.completed_at = event.timestamp.timestamp()
 
 
 def _get_or_create_sample_agent(

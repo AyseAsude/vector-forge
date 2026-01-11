@@ -424,6 +424,7 @@ class EventEmitter:
         strength_levels: List[float],
         num_prompts: int,
         dimensions: Optional[List[str]] = None,
+        sample_idx: Optional[int] = None,
     ) -> None:
         """Emit evaluation started event."""
         self.emit(
@@ -432,6 +433,7 @@ class EventEmitter:
                 eval_type=eval_type,
                 vector_id=vector_id,
                 layer=layer,
+                sample_idx=sample_idx,
                 strength_levels=strength_levels,
                 num_prompts=num_prompts,
                 dimensions=dimensions or ["behavior", "specificity", "coherence", "capability", "generalization"],
@@ -578,11 +580,13 @@ class EventEmitter:
         duration_seconds: float = 0.0,
         total_generations: int = 0,
         total_judge_calls: int = 0,
+        sample_idx: Optional[int] = None,
     ) -> None:
         """Emit evaluation completed event."""
         self.emit(
             EvaluationCompletedEvent(
                 evaluation_id=evaluation_id,
+                sample_idx=sample_idx,
                 scores=scores,
                 dimension_scores=dimension_scores or {},
                 citations=citations or {},

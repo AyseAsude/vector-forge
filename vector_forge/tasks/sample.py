@@ -32,12 +32,15 @@ class ExtractionSample:
         config: Sample-specific hyperparameters.
         strategy_name: Human-readable name for this strategy combination.
         sample_id: Unique identifier for this sample.
+        sample_index: Index of this sample in the SampleSet (0-based).
+            Used for UI tracking and event correlation.
     """
 
     behavior: ExpandedBehavior
     config: SampleConfig
     strategy_name: str = ""
     sample_id: str = ""
+    sample_index: int = 0
 
     def __post_init__(self) -> None:
         """Generate strategy name and ID if not provided."""
@@ -74,11 +77,21 @@ class SampleSet:
     """Collection of samples for parallel execution.
 
     Groups samples by strategy type for analysis and provides
-    iteration utilities.
+    iteration utilities. Automatically assigns sample_index to
+    each sample for UI tracking and event correlation.
     """
 
     samples: List[ExtractionSample] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Ensure all samples have correct sample_index."""
+        self._assign_indices()
+
+    def _assign_indices(self) -> None:
+        """Assign sample_index to all samples based on list position."""
+        for idx, sample in enumerate(self.samples):
+            sample.sample_index = idx
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -88,6 +101,11 @@ class SampleSet:
 
     def __getitem__(self, index: int) -> ExtractionSample:
         return self.samples[index]
+
+    def append(self, sample: ExtractionSample) -> None:
+        """Add a sample and assign its index."""
+        sample.sample_index = len(self.samples)
+        self.samples.append(sample)
 
     def by_strategy(self, strategy: LayerStrategy) -> List[ExtractionSample]:
         """Filter samples by layer strategy."""

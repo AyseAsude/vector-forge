@@ -567,7 +567,7 @@ class TaskRunner:
 
         Supports both CAA and gradient-based extraction based on config.
         """
-        sample_idx = sample.config.seed % 1000
+        sample_idx = sample.sample_index
 
         if not datapoints:
             self._emit(
@@ -615,7 +615,7 @@ class TaskRunner:
         CAA is fast, deterministic, and recommended for most use cases.
         Uses sample's token_position (assigned by generator to explore all positions).
         """
-        sample_idx = sample.config.seed % 1000
+        sample_idx = sample.sample_index
         token_position = sample.config.token_position
 
         # Emit extraction started event
@@ -722,7 +722,7 @@ class TaskRunner:
         Gradient optimization can find arbitrary directions. Consider using
         CAA instead, or use hybrid mode (CAA init + gradient refinement).
         """
-        sample_idx = sample.config.seed % 1000
+        sample_idx = sample.sample_index
 
         # Build optimization config
         opt_config = config.optimization
@@ -989,7 +989,7 @@ class TaskRunner:
             async with limit_concurrent_evaluations():
                 start_time = time.time()
                 eval_id = self._generate_id("eval")
-                sample_idx = result.sample.config.seed % 1000
+                sample_idx = result.sample.sample_index
 
                 # Set evaluation ID for event tracking within evaluator
                 evaluator.set_evaluation_id(eval_id)
@@ -1004,6 +1004,7 @@ class TaskRunner:
                     strength_levels=config.evaluation.strength_levels,
                     num_prompts=config.evaluation.behavior_prompts,
                     dimensions=["behavior", "specificity", "coherence", "capability", "generalization"],
+                    sample_idx=sample_idx,
                 )
 
                 try:
@@ -1040,6 +1041,7 @@ class TaskRunner:
                         duration_seconds=time.time() - start_time,
                         total_generations=evaluator._generation_count,
                         total_judge_calls=evaluator._judge_call_count,
+                        sample_idx=sample_idx,
                     )
 
                     completed += 1
@@ -1065,6 +1067,7 @@ class TaskRunner:
                         citations=None,
                         recommendations=None,
                         raw_judge_output=f"Error: {str(e)}",
+                        sample_idx=sample_idx,
                     )
                     completed += 1
                     self._report_progress(
