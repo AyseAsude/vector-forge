@@ -327,11 +327,11 @@ class VectorSelector(Vertical):
             if self._selected_layer is None:
                 self._selected_layer = self._vectors[0].layer
 
-        # Mount vector rows
-        for v in self._vectors:
+        # Mount vector rows (use index for unique ID, not layer which may have duplicates)
+        for idx, v in enumerate(self._vectors):
             is_selected = (v.layer == self._selected_layer)
             vector_list.mount(
-                VectorRow(v, is_selected=is_selected, id=f"vector-{v.layer}")
+                VectorRow(v, is_selected=is_selected, id=f"vector-{idx}")
             )
 
     def on_vector_row_selected(self, event: VectorRow.Selected) -> None:
