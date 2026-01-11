@@ -7,6 +7,7 @@ Provides:
 
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
@@ -47,6 +48,7 @@ class SessionStore:
         self._sequence = 0
         self._events_file: Optional[Path] = None
         self._vector_versions: Dict[int, int] = {}  # layer -> version count
+        self._vector_versions_lock = threading.Lock()
         self._initialized = False
 
     @property
@@ -173,11 +175,12 @@ class SessionStore:
         """
         self._ensure_initialized()
 
-        # Auto-increment version if not specified
+        # Auto-increment version if not specified (thread-safe)
         if version is None:
-            current = self._vector_versions.get(layer, 0)
-            version = current + 1
-            self._vector_versions[layer] = version
+            with self._vector_versions_lock:
+                current = self._vector_versions.get(layer, 0)
+                version = current + 1
+                self._vector_versions[layer] = version
 
         filename = f"layer_{layer:02d}_v{version:03d}.pt"
         full_path = self.vectors_path / filename

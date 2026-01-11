@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import logging
+import threading
 
 from vector_forge.storage import (
     StorageManager,
@@ -106,6 +107,7 @@ class SessionService:
         """
         self._storage = StorageManager(base_path)
         self._active_sessions: Dict[str, SessionStore] = {}
+        self._sessions_lock = threading.Lock()
 
     def create_session(
         self,
@@ -130,8 +132,9 @@ class SessionService:
         store = self._storage.create_session(behavior_name, config_dict)
         session_id = store.session_id
 
-        # Track as active
-        self._active_sessions[session_id] = store
+        # Track as active (thread-safe)
+        with self._sessions_lock:
+            self._active_sessions[session_id] = store
 
         # Emit session started event
         started_event = SessionStartedEvent(
@@ -156,12 +159,13 @@ class SessionService:
         Raises:
             FileNotFoundError: If session doesn't exist.
         """
-        if session_id in self._active_sessions:
-            return self._active_sessions[session_id]
+        with self._sessions_lock:
+            if session_id in self._active_sessions:
+                return self._active_sessions[session_id]
 
-        store = self._storage.get_session(session_id)
-        self._active_sessions[session_id] = store
-        return store
+            store = self._storage.get_session(session_id)
+            self._active_sessions[session_id] = store
+            return store
 
     def complete_session(
         self,
@@ -197,9 +201,9 @@ class SessionService:
         # Update metadata
         store.finalize(success, error)
 
-        # Remove from active
-        if session_id in self._active_sessions:
-            del self._active_sessions[session_id]
+        # Remove from active (thread-safe)
+        with self._sessions_lock:
+            self._active_sessions.pop(session_id, None)
 
         logger.info(f"Session {session_id} completed: success={success}, score={final_score}")
 
@@ -323,9 +327,9 @@ class SessionService:
         Returns:
             True if deleted, False if not found.
         """
-        # Remove from active tracking
-        if session_id in self._active_sessions:
-            del self._active_sessions[session_id]
+        # Remove from active tracking (thread-safe)
+        with self._sessions_lock:
+            self._active_sessions.pop(session_id, None)
 
         return self._storage.delete_session(session_id)
 
@@ -341,9 +345,9 @@ class SessionService:
         Returns:
             True if hidden, False if not found.
         """
-        # Remove from active tracking
-        if session_id in self._active_sessions:
-            del self._active_sessions[session_id]
+        # Remove from active tracking (thread-safe)
+        with self._sessions_lock:
+            self._active_sessions.pop(session_id, None)
 
         return self._storage.hide_session(session_id)
 
@@ -388,4 +392,5 @@ class SessionService:
     @property
     def active_session_ids(self) -> List[str]:
         """Get list of currently active session IDs."""
-        return list(self._active_sessions.keys())
+        with self._sessions_lock:
+            return list(self._active_sessions.keys())
