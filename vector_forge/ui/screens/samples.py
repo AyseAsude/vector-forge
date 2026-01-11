@@ -311,7 +311,6 @@ class WorkerListItem(ListItem):
         icon, color, label = self._get_display_values()
         agent = self._agent
 
-        count_label = self._get_count_label()
         with Horizontal(classes="row"):
             yield Static(
                 f"[{color}]{icon}[/] [bold]{agent.name}[/]",
@@ -320,7 +319,7 @@ class WorkerListItem(ListItem):
             )
             yield Static(agent.elapsed_str, classes="time", id="worker-time")
         yield Static(
-            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {count_label}",
+            f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {agent.count_label}",
             classes="meta",
             id="worker-meta",
         )
@@ -336,26 +335,18 @@ class WorkerListItem(ListItem):
         }
         return status_map.get(self._agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
-    def _get_count_label(self) -> str:
-        """Get the appropriate label for tool_calls_count based on agent type."""
-        # Sample agents show "pairs", source agents show "calls"
-        if "_sample_" in self._agent.id:
-            return "pairs"
-        return "calls"
-
     def update_agent(self, agent: AgentUIState) -> None:
         """Update the agent data and refresh display."""
         self._agent = agent
         if self.is_mounted:
             icon, color, label = self._get_display_values()
-            count_label = self._get_count_label()
             try:
                 self.query_one("#worker-name", Static).update(
                     f"[{color}]{icon}[/] [bold]{agent.name}[/]"
                 )
                 self.query_one("#worker-time", Static).update(agent.elapsed_str)
                 self.query_one("#worker-meta", Static).update(
-                    f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {count_label}"
+                    f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {agent.count_label}"
                 )
             except Exception:
                 pass
@@ -663,7 +654,7 @@ class ConversationPanel(Vertical):
         time_widget.update(f"[$foreground-muted]{agent.elapsed_str}[/]")
         stats.update(
             f"[{color}]{label}[/] · {agent.role} · "
-            f"{len(agent.messages)} msgs · {agent.turns} turns · {agent.tool_calls_count} tools"
+            f"{len(agent.messages)} msgs · {agent.turns} turns · {agent.tool_calls_count} {agent.count_label}"
         )
 
         # Check if agent changed
@@ -754,23 +745,13 @@ class SamplesScreen(Screen):
 
     def on_mount(self) -> None:
         """Initial sync from current state."""
-        get_state().add_listener(self._on_state_change)
         self._sync()
         # Set up periodic time updates
         self.set_interval(1.0, self._tick)
 
-    def on_unmount(self) -> None:
-        get_state().remove_listener(self._on_state_change)
-
-    def _on_state_change(self, _) -> None:
-        """Handle state changes.
-
-        Uses call_later to ensure sync runs on the main thread.
-        Events may be emitted from background threads (e.g., extraction
-        running in executor), and Textual widget updates must happen
-        on the main thread.
-        """
-        self.call_later(self._sync)
+    def refresh_content(self) -> None:
+        """Refresh screen content (called by App on new events)."""
+        self._sync()
 
     def _tick(self) -> None:
         """Periodic update for elapsed times."""

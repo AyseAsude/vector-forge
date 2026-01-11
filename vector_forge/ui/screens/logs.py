@@ -608,22 +608,11 @@ class LogsScreen(Screen):
 
     def on_mount(self) -> None:
         """Initial projection from current state."""
-        get_state().add_listener(self._on_state_change)
         self._sync()
 
-    def on_unmount(self) -> None:
-        """Clean up state listener."""
-        get_state().remove_listener(self._on_state_change)
-
-    def _on_state_change(self, _) -> None:
-        """Handle state changes - update logs.
-
-        Uses call_later to ensure sync runs on the main thread.
-        Events may be emitted from background threads (e.g., extraction
-        running in executor), and Textual widget updates must happen
-        on the main thread.
-        """
-        self.call_later(self._sync)
+    def refresh_content(self) -> None:
+        """Refresh screen content (called by App on new events)."""
+        self._sync()
 
     # ─────────────────────────────────────────────────────────────────
     # Event Handlers - Targeted Updates

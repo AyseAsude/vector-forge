@@ -7,8 +7,7 @@ between the UI layer and the storage layer.
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
-import asyncio
+from typing import Any, Dict, List, Optional
 import logging
 
 from vector_forge.storage import (
@@ -107,34 +106,6 @@ class SessionService:
         """
         self._storage = StorageManager(base_path)
         self._active_sessions: Dict[str, SessionStore] = {}
-        self._event_listeners: List[Callable[[str, EventEnvelope], None]] = []
-
-    def add_event_listener(
-        self,
-        callback: Callable[[str, EventEnvelope], None],
-    ) -> None:
-        """Register an event listener.
-
-        Args:
-            callback: Function called with (session_id, event) on each event.
-        """
-        self._event_listeners.append(callback)
-
-    def remove_event_listener(
-        self,
-        callback: Callable[[str, EventEnvelope], None],
-    ) -> None:
-        """Remove an event listener."""
-        if callback in self._event_listeners:
-            self._event_listeners.remove(callback)
-
-    def _notify_event(self, session_id: str, event: EventEnvelope) -> None:
-        """Notify all listeners of an event."""
-        for listener in self._event_listeners:
-            try:
-                listener(session_id, event)
-            except Exception as e:
-                logger.warning(f"Event listener error: {e}")
 
     def create_session(
         self,
@@ -168,8 +139,7 @@ class SessionService:
             behavior_description=behavior_description,
             config=config_dict,
         )
-        envelope = store.append_event(started_event, source="session_service")
-        self._notify_event(session_id, envelope)
+        store.append_event(started_event, source="session_service")
 
         logger.info(f"Created session: {session_id} for behavior: {behavior_name}")
         return session_id
@@ -222,8 +192,7 @@ class SessionService:
             total_tokens=total_tokens,
             error=error,
         )
-        envelope = store.append_event(completed_event, source="session_service")
-        self._notify_event(session_id, envelope)
+        store.append_event(completed_event, source="session_service")
 
         # Update metadata
         store.finalize(success, error)
@@ -396,7 +365,6 @@ class SessionService:
         """
         store = self.get_session_store(session_id)
         envelope = store.append_event(event, source=source)
-        self._notify_event(session_id, envelope)
         return envelope
 
     def get_recent_events(

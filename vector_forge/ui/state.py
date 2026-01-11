@@ -7,7 +7,7 @@ agent execution, messages, and UI state across screens.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Any
 import time
 
 
@@ -125,6 +125,14 @@ class AgentUIState:
     def last_message(self) -> Optional[AgentMessage]:
         """Get the most recent message."""
         return self.messages[-1] if self.messages else None
+
+    @property
+    def count_label(self) -> str:
+        """Get the appropriate label for tool_calls_count.
+
+        Sample agents show 'pairs' (contrast pairs), others show 'calls'.
+        """
+        return "pairs" if "_sample_" in self.id else "calls"
 
     def add_message(
         self,
@@ -301,9 +309,6 @@ class UIState:
     log_source_filter: Optional[str] = None
     log_level_filter: Optional[str] = None
 
-    # Callbacks for state changes
-    _listeners: List[Callable[["UIState"], None]] = field(default_factory=list)
-
     @property
     def selected_extraction(self) -> Optional[ExtractionUIState]:
         """Get the currently selected extraction."""
@@ -337,7 +342,6 @@ class UIState:
         self.extractions[extraction.id] = extraction
         if self.selected_id is None:
             self.selected_id = extraction.id
-        self._notify()
 
     def remove_extraction(self, extraction_id: str) -> None:
         """Remove an extraction."""
@@ -345,23 +349,6 @@ class UIState:
             del self.extractions[extraction_id]
             if self.selected_id == extraction_id:
                 self.selected_id = next(iter(self.extractions), None)
-            self._notify()
-
-    def update_extraction(
-        self,
-        extraction_id: str,
-        **updates: Any,
-    ) -> None:
-        """Update extraction state fields."""
-        extraction = self.extractions.get(extraction_id)
-        if extraction is None:
-            return
-
-        for key, value in updates.items():
-            if hasattr(extraction, key):
-                setattr(extraction, key, value)
-
-        self._notify()
 
     def add_log(
         self,
@@ -429,21 +416,6 @@ class UIState:
         """Select an extraction for detailed view."""
         if extraction_id in self.extractions:
             self.selected_id = extraction_id
-            self._notify()
-
-    def add_listener(self, callback: Callable[["UIState"], None]) -> None:
-        """Register a state change listener."""
-        self._listeners.append(callback)
-
-    def remove_listener(self, callback: Callable[["UIState"], None]) -> None:
-        """Remove a state change listener."""
-        if callback in self._listeners:
-            self._listeners.remove(callback)
-
-    def _notify(self) -> None:
-        """Notify all listeners of state change."""
-        for listener in self._listeners:
-            listener(self)
 
 
 # Global state instance
