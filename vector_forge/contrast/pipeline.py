@@ -55,14 +55,14 @@ class ContrastPipelineConfig:
     """How many unique seeds each sample generates."""
 
     # Validation settings
-    min_semantic_distance: float = 0.3
-    """Minimum semantic distance between dst and src."""
+    min_semantic_score: float = 4.0
+    """Minimum semantic distance score (0-10, maps from distance 0.3 ~ score 4)."""
 
-    min_dst_score: float = 7.0
-    """Minimum behavior score for dst."""
+    min_dimension_score: float = 6.0
+    """Minimum dimension check score."""
 
-    max_src_score: float = 3.0
-    """Maximum behavior score for src."""
+    min_structural_score: float = 7.0
+    """Minimum structural check score."""
 
     min_contrast_quality: float = 6.0
     """Minimum overall contrast quality."""
@@ -108,8 +108,9 @@ class ContrastPipelineConfig:
             unique_seeds_per_sample=15,
             max_regeneration_attempts=3,
             min_seed_quality=7.0,
-            min_dst_score=8.0,
-            max_src_score=2.0,
+            min_dimension_score=7.0,
+            min_structural_score=8.0,
+            min_semantic_score=5.0,
             min_contrast_quality=7.0,
         )
 
@@ -217,15 +218,15 @@ class ContrastPipeline:
         self._pool_manager = PoolManager(self._config.to_pool_config())
 
         # Build validator chain
+        # Convert semantic score threshold back to distance for embedding validator
+        # score 4.0 ~ distance 0.28, score 6.0 ~ distance 0.42
+        min_distance = (self._config.min_semantic_score / 10.0) * 0.7
         self._validator = CompositeContrastValidator([
-            EmbeddingContrastValidator(
-                min_distance=self._config.min_semantic_distance,
-            ),
+            EmbeddingContrastValidator(min_distance=min_distance),
             LLMContrastValidator(
                 self._judge_llm,
-                min_dst_score=self._config.min_dst_score,
-                max_src_score=self._config.max_src_score,
-                min_contrast_quality=self._config.min_contrast_quality,
+                min_dimension_score=self._config.min_dimension_score,
+                min_structural_score=self._config.min_structural_score,
             ),
         ])
 
@@ -270,9 +271,9 @@ class ContrastPipeline:
                 "core_pool_size": self._config.core_pool_size,
                 "core_seeds_per_sample": self._config.core_seeds_per_sample,
                 "unique_seeds_per_sample": self._config.unique_seeds_per_sample,
-                "min_semantic_distance": self._config.min_semantic_distance,
-                "min_dst_score": self._config.min_dst_score,
-                "max_src_score": self._config.max_src_score,
+                "min_semantic_score": self._config.min_semantic_score,
+                "min_dimension_score": self._config.min_dimension_score,
+                "min_structural_score": self._config.min_structural_score,
                 "min_contrast_quality": self._config.min_contrast_quality,
             },
         )
@@ -446,10 +447,9 @@ class ContrastPipeline:
                 for pair in dataset.all_pairs[:3]:  # First 3
                     if pair.validation:
                         logger.warning(
-                            f"  Invalid pair: dst_score={pair.validation.dst_behavior_score:.1f}, "
-                            f"src_score={pair.validation.src_behavior_score:.1f}, "
+                            f"  Invalid pair: weakest={pair.validation.weakest_dimension}, "
                             f"quality={pair.validation.contrast_quality:.1f}, "
-                            f"valid={pair.validation.is_valid}"
+                            f"reason={pair.validation.get_improvement_guidance()}"
                         )
 
         return PipelineResult(
@@ -523,27 +523,20 @@ class ContrastPipeline:
             # Emit validation event
             rejection_reason = None
             if not validation.is_valid:
-                reasons = []
-                # Check semantic distance first (most common early failure)
-                if validation.semantic_distance >= 0 and validation.semantic_distance < self._config.min_semantic_distance:
-                    reasons.append(f"semantic_dist={validation.semantic_distance:.2f}<{self._config.min_semantic_distance}")
-                # Only check behavior scores if they were evaluated (not -1 sentinel)
-                if validation.dst_behavior_score >= 0 and validation.dst_behavior_score < self._config.min_dst_score:
-                    reasons.append(f"dst_score={validation.dst_behavior_score:.1f}<{self._config.min_dst_score}")
-                if validation.src_behavior_score >= 0 and validation.src_behavior_score > self._config.max_src_score:
-                    reasons.append(f"src_score={validation.src_behavior_score:.1f}>{self._config.max_src_score}")
-                if validation.contrast_quality < self._config.min_contrast_quality:
-                    reasons.append(f"quality={validation.contrast_quality:.1f}<{self._config.min_contrast_quality}")
-                rejection_reason = "; ".join(reasons) if reasons else "unknown"
+                rejection_reason = validation.get_improvement_guidance()
 
             self._emit(
                 "emit_pair_validated",
                 pair_id=pair_id,
                 is_valid=validation.is_valid,
-                dst_score=validation.dst_behavior_score,
-                src_score=validation.src_behavior_score,
-                semantic_distance=validation.semantic_distance,
                 contrast_quality=validation.contrast_quality,
+                dimension_score=validation.dimension_score,
+                marker_score=validation.marker_score,
+                boundary_score=validation.boundary_score,
+                intensity_score=validation.intensity_score,
+                structural_score=validation.structural_score,
+                semantic_score=validation.semantic_score,
+                weakest_dimension=validation.weakest_dimension if not validation.is_valid else None,
                 rejection_reason=rejection_reason,
             )
 
@@ -562,8 +555,7 @@ class ContrastPipeline:
             if attempt < self._config.max_regeneration_attempts:
                 logger.debug(
                     f"Regenerating pair (attempt {attempt + 1}): "
-                    f"dst={validation.dst_behavior_score:.1f}, "
-                    f"src={validation.src_behavior_score:.1f}, "
+                    f"weakest={validation.weakest_dimension}, "
                     f"quality={validation.contrast_quality:.1f}"
                 )
                 current_pair = await self._regenerator.regenerate(

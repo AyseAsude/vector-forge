@@ -7,12 +7,72 @@ the contrast generation pipeline, following Interface Segregation Principle.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Protocol, List, Optional, Dict, Any, Tuple, runtime_checkable
+
+
+# ============================================================================
+# Enums
+# ============================================================================
+
+class SignalIntensity(str, Enum):
+    """Signal intensity levels for contrast pairs."""
+    EXTREME = "extreme"  # Maximum contrast, establishes direction
+    HIGH = "high"        # Clear signal, still plausible
+    MEDIUM = "medium"    # Balanced contrast
+    NATURAL = "natural"  # Subtle, realistic deployment
 
 
 # ============================================================================
 # Data Classes
 # ============================================================================
+
+@dataclass
+class BehavioralTest:
+    """The test that reveals a behavior - the core of extraction.
+
+    This defines HOW to test for the behavior, which drives
+    all scenario generation and pair creation.
+    """
+    description: str                    # Full description of the test
+    user_action: str                    # What user does to trigger the test
+    model_choice: str                   # What decision the model faces
+    distinguishing_variable: str        # THE thing that differs (critical!)
+    present_response_pattern: str       # What model does if behavior present
+    absent_response_pattern: str        # What model does if behavior absent
+
+    def format_for_prompt(self) -> str:
+        """Format behavioral test for inclusion in prompts."""
+        return f"""The behavioral test for this behavior:
+- User action: {self.user_action}
+- Model faces choice about: {self.model_choice}
+- The distinguishing variable: {self.distinguishing_variable}
+- If behavior PRESENT: {self.present_response_pattern}
+- If behavior ABSENT: {self.absent_response_pattern}"""
+
+
+@dataclass
+class IntensityCalibration:
+    """How this specific behavior manifests at different intensities.
+
+    Each behavior has its own intensity calibration that defines
+    what extreme vs natural looks like for THAT behavior.
+    """
+    extreme_looks_like: str   # Maximum expression of the behavior
+    high_looks_like: str      # Clear but not cartoonish
+    medium_looks_like: str    # Balanced expression
+    natural_looks_like: str   # Subtle, deployment-realistic
+
+    def get_for_intensity(self, intensity: SignalIntensity) -> str:
+        """Get calibration for a specific intensity level."""
+        mapping = {
+            SignalIntensity.EXTREME: self.extreme_looks_like,
+            SignalIntensity.HIGH: self.high_looks_like,
+            SignalIntensity.MEDIUM: self.medium_looks_like,
+            SignalIntensity.NATURAL: self.natural_looks_like,
+        }
+        return mapping[intensity]
+
 
 @dataclass
 class BehaviorComponent:
@@ -63,7 +123,8 @@ class BehaviorAnalysis:
     """Result of analyzing a behavior.
 
     Contains structured information about the behavior that guides
-    seed generation and contrast pair creation.
+    seed generation and contrast pair creation. The behavioral_test
+    and intensity_calibration are the key drivers for composition.
     """
 
     behavior_name: str
@@ -79,6 +140,16 @@ class BehaviorAnalysis:
     realistic_scenarios: List[RealisticScenario] = field(default_factory=list)
     confound_details: List[ConfoundInfo] = field(default_factory=list)
 
+    # NEW: Behavioral test - the core of extraction
+    behavioral_test: Optional[BehavioralTest] = None
+
+    # NEW: Intensity calibration - how behavior manifests at different levels
+    intensity_calibration: Optional[IntensityCalibration] = None
+
+    # NEW: Explicit markers for generation/validation
+    presence_markers: List[str] = field(default_factory=list)  # Signs behavior IS present
+    absence_markers: List[str] = field(default_factory=list)   # Signs behavior is NOT present
+
     def get_component(self, name: str) -> Optional[BehaviorComponent]:
         """Get a component by name."""
         for c in self.components:
@@ -91,6 +162,20 @@ class BehaviorAnalysis:
         markers = []
         for c in self.components:
             markers.extend(c.markers)
+        return markers
+
+    def get_all_presence_markers(self) -> List[str]:
+        """Get all presence markers (explicit + component markers)."""
+        markers = list(self.presence_markers)
+        for c in self.components:
+            markers.extend(c.markers)
+        return markers
+
+    def get_all_absence_markers(self) -> List[str]:
+        """Get all absence markers (explicit + component opposite markers)."""
+        markers = list(self.absence_markers)
+        for c in self.components:
+            markers.extend(c.opposite_markers)
         return markers
 
     def get_negative_examples_text(self) -> str:
@@ -111,6 +196,18 @@ class BehaviorAnalysis:
             lines.append(f"- {sc.setup} (user: {sc.user_persona}, stakes: {sc.stakes})")
         return "\n".join(lines)
 
+    def get_behavioral_test_text(self) -> str:
+        """Format behavioral test for prompts."""
+        if not self.behavioral_test:
+            return ""
+        return self.behavioral_test.format_for_prompt()
+
+    def get_intensity_guidance(self, intensity: SignalIntensity) -> str:
+        """Get intensity-specific guidance for this behavior."""
+        if not self.intensity_calibration:
+            return f"Generate at {intensity.value} intensity level."
+        return self.intensity_calibration.get_for_intensity(intensity)
+
 
 @dataclass
 class Seed:
@@ -126,6 +223,8 @@ class Seed:
     attributes: Dict[str, Any] = field(default_factory=dict)
     quality_score: float = 0.0
     example_prompt: str = ""
+    # NEW: Suggested intensity for this seed (can be overridden)
+    suggested_intensity: Optional[SignalIntensity] = None
 
     def __hash__(self) -> int:
         return hash((self.scenario, self.context))
@@ -137,26 +236,152 @@ class Seed:
 
 
 @dataclass
+class DimensionCheckResult:
+    """Result of checking if contrast is on the correct dimension."""
+    score: float  # 0-10
+    is_correct: bool
+    what_differs: str  # What actually differs between dst and src
+    expected_variable: str  # The distinguishing variable we expected
+    dst_pattern_match: bool  # Does dst match present_response_pattern?
+    src_pattern_match: bool  # Does src match absent_response_pattern?
+    explanation: str = ""
+
+
+@dataclass
+class MarkerCheckResult:
+    """Result of checking if markers appear correctly."""
+    score: float  # 0-10
+    presence_markers_found: List[str] = field(default_factory=list)  # Found in dst
+    presence_markers_missing: List[str] = field(default_factory=list)  # Expected but not in dst
+    absence_markers_found: List[str] = field(default_factory=list)  # Found in src
+    absence_markers_missing: List[str] = field(default_factory=list)  # Expected but not in src
+    explanation: str = ""
+
+
+@dataclass
+class BoundaryCheckResult:
+    """Result of checking if we captured the right behavior."""
+    score: float  # 0-10
+    is_correct_behavior: bool
+    confused_with: Optional[str] = None  # Similar behavior it might be confused with
+    explanation: str = ""
+
+
+@dataclass
+class IntensityCheckResult:
+    """Result of checking if intensity matches target."""
+    score: float  # 0-10
+    target_intensity: str  # What was requested
+    actual_intensity: str  # What was detected
+    matches_calibration: bool
+    calibration_description: str = ""  # What target intensity should look like
+    explanation: str = ""
+
+
+@dataclass
+class StructuralCheckResult:
+    """Result of checking structural quality."""
+    score: float  # 0-10
+    dst_wellformed: bool
+    src_wellformed: bool
+    dst_complete: bool
+    src_complete: bool
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
 class ValidationResult:
     """Result of validating a contrast pair.
 
-    Contains scores from various validation dimensions and
-    identifies any issues found.
+    Contains scores from validation dimensions with detailed results.
+    All scores use -1.0 to indicate "not evaluated".
     """
     is_valid: bool
-    dst_behavior_score: float  # 0-10, how strongly dst exhibits behavior
-    src_behavior_score: float  # 0-10, should be LOW
-    semantic_distance: float   # 0-1, how different dst and src are
-    contrast_quality: float    # 0-10, overall contrast quality
-    confounds_detected: List[str] = field(default_factory=list)
+    contrast_quality: float  # 0-10, overall contrast quality
     reasoning: str = ""
 
+    # Dimension-specific scores (0-10, -1 = not evaluated)
+    dimension_score: float = -1.0  # Is contrast on right variable?
+    marker_score: float = -1.0     # Do markers appear correctly?
+    boundary_score: float = -1.0   # Is it the right behavior?
+    intensity_score: float = -1.0  # Does it match target intensity?
+    structural_score: float = -1.0 # Well-formed, complete?
+    semantic_score: float = -1.0   # Semantic distance (from embedding)
+
+    # Detailed results from each check (optional)
+    dimension_details: Optional[DimensionCheckResult] = None
+    marker_details: Optional[MarkerCheckResult] = None
+    boundary_details: Optional[BoundaryCheckResult] = None
+    intensity_details: Optional[IntensityCheckResult] = None
+    structural_details: Optional[StructuralCheckResult] = None
+
     @property
-    def contrast_gap(self) -> float:
-        """Gap between dst and src behavior scores."""
-        if self.dst_behavior_score < 0 or self.src_behavior_score < 0:
-            return -1
-        return self.dst_behavior_score - self.src_behavior_score
+    def scores(self) -> Dict[str, float]:
+        """Get all scores as a dictionary."""
+        return {
+            "dimension": self.dimension_score,
+            "marker": self.marker_score,
+            "boundary": self.boundary_score,
+            "intensity": self.intensity_score,
+            "structural": self.structural_score,
+            "semantic": self.semantic_score,
+        }
+
+    @property
+    def evaluated_scores(self) -> Dict[str, float]:
+        """Get only scores that were evaluated (not -1)."""
+        return {k: v for k, v in self.scores.items() if v >= 0}
+
+    @property
+    def weakest_dimension(self) -> str:
+        """Return the name of the weakest evaluated dimension."""
+        evaluated = self.evaluated_scores
+        if not evaluated:
+            return "unknown"
+        return min(evaluated, key=evaluated.get)
+
+    @property
+    def strongest_dimension(self) -> str:
+        """Return the name of the strongest evaluated dimension."""
+        evaluated = self.evaluated_scores
+        if not evaluated:
+            return "unknown"
+        return max(evaluated, key=evaluated.get)
+
+    def get_improvement_guidance(self) -> str:
+        """Get targeted guidance for improving this pair."""
+        guidance = []
+
+        if self.dimension_score >= 0 and self.dimension_score < 7:
+            if self.dimension_details:
+                guidance.append(
+                    f"Dimension: Contrast is on '{self.dimension_details.what_differs}' "
+                    f"but should be on '{self.dimension_details.expected_variable}'"
+                )
+
+        if self.marker_score >= 0 and self.marker_score < 7:
+            if self.marker_details and self.marker_details.presence_markers_missing:
+                guidance.append(
+                    f"Markers: Missing in dst: {self.marker_details.presence_markers_missing[:3]}"
+                )
+
+        if self.boundary_score >= 0 and self.boundary_score < 7:
+            if self.boundary_details and self.boundary_details.confused_with:
+                guidance.append(
+                    f"Boundary: May be confused with '{self.boundary_details.confused_with}'"
+                )
+
+        if self.intensity_score >= 0 and self.intensity_score < 7:
+            if self.intensity_details:
+                guidance.append(
+                    f"Intensity: Expected {self.intensity_details.target_intensity}, "
+                    f"got {self.intensity_details.actual_intensity}"
+                )
+
+        if self.semantic_score >= 0 and self.semantic_score < 5:
+            guidance.append(f"Semantic: Distance too low ({self.semantic_score:.1f})")
+
+        return " | ".join(guidance) if guidance else "General quality issues"
 
 
 @dataclass
@@ -401,6 +626,9 @@ def merge_validation_results(
 ) -> ValidationResult:
     """Merge two validation results, keeping valid values from each.
 
+    For each score, uses the new value if it was evaluated (>= 0),
+    otherwise keeps the current value.
+
     Args:
         current: Existing validation result.
         new: New validation result to merge in.
@@ -408,24 +636,33 @@ def merge_validation_results(
     Returns:
         Merged ValidationResult.
     """
+    def pick_score(curr: float, new_val: float) -> float:
+        """Pick new value if evaluated, else keep current."""
+        return new_val if new_val >= 0 else curr
+
+    # Merge reasoning
+    curr_reason = current.reasoning.strip()
+    new_reason = new.reasoning.strip()
+    if curr_reason and new_reason:
+        merged_reasoning = f"{curr_reason} | {new_reason}"
+    else:
+        merged_reasoning = curr_reason or new_reason
+
     return ValidationResult(
         is_valid=current.is_valid and new.is_valid,
-        dst_behavior_score=(
-            new.dst_behavior_score
-            if new.dst_behavior_score >= 0
-            else current.dst_behavior_score
-        ),
-        src_behavior_score=(
-            new.src_behavior_score
-            if new.src_behavior_score >= 0
-            else current.src_behavior_score
-        ),
-        semantic_distance=(
-            new.semantic_distance
-            if new.semantic_distance >= 0
-            else current.semantic_distance
-        ),
         contrast_quality=max(current.contrast_quality, new.contrast_quality),
-        confounds_detected=current.confounds_detected + new.confounds_detected,
-        reasoning=f"{current.reasoning} | {new.reasoning}".strip(" |"),
+        reasoning=merged_reasoning,
+        # Merge dimension scores
+        dimension_score=pick_score(current.dimension_score, new.dimension_score),
+        marker_score=pick_score(current.marker_score, new.marker_score),
+        boundary_score=pick_score(current.boundary_score, new.boundary_score),
+        intensity_score=pick_score(current.intensity_score, new.intensity_score),
+        structural_score=pick_score(current.structural_score, new.structural_score),
+        semantic_score=pick_score(current.semantic_score, new.semantic_score),
+        # Merge details (prefer new if available)
+        dimension_details=new.dimension_details or current.dimension_details,
+        marker_details=new.marker_details or current.marker_details,
+        boundary_details=new.boundary_details or current.boundary_details,
+        intensity_details=new.intensity_details or current.intensity_details,
+        structural_details=new.structural_details or current.structural_details,
     )

@@ -1343,10 +1343,10 @@ class TaskRunner:
                 # Add validation info if available
                 if pair.validation:
                     pair_dict["validation"] = {
-                        "dst_behavior_score": pair.validation.dst_behavior_score,
-                        "src_behavior_score": pair.validation.src_behavior_score,
-                        "semantic_distance": pair.validation.semantic_distance,
+                        "is_valid": pair.validation.is_valid,
                         "contrast_quality": pair.validation.contrast_quality,
+                        "scores": pair.validation.evaluated_scores,
+                        "weakest_dimension": pair.validation.weakest_dimension,
                     }
                 pairs_data.append(pair_dict)
 

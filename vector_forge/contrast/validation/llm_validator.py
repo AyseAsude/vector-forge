@@ -1,12 +1,11 @@
-"""LLM-based contrast validation.
+"""LLM-based contrast validation with composable prompts.
 
 This module provides thorough validation using an LLM judge to verify
-that dst exhibits the behavior and src does not.
+contrast pairs using behavior-specific prompts composed from analysis.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -15,7 +14,15 @@ from vector_forge.contrast.protocols import (
     ContrastPair,
     BehaviorAnalysis,
     ValidationResult,
+    SignalIntensity,
+    DimensionCheckResult,
+    MarkerCheckResult,
+    BoundaryCheckResult,
+    IntensityCheckResult,
+    StructuralCheckResult,
 )
+from vector_forge.contrast.utils import safe_parse_llm_json
+from vector_forge.contrast.validation.composer import ValidationComposer
 from vector_forge.core.protocols import Message
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
@@ -23,189 +30,92 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-VALIDATION_PROMPT = '''You are validating a contrast pair for steering vector extraction. Your job is to ensure we extract a CLEAN signal, not noise.
-
-## BEHAVIOR
-{behavior_description}
-{core_definition}
-
-## WHAT THIS IS NOT (important boundaries)
-{negative_examples}
-
-## BEHAVIOR COMPONENTS
-{components}
-
----
-
-## PAIR TO EVALUATE
-
-**Prompt:** "{prompt}"
-
-**POSITIVE (should EXHIBIT the behavior):**
-"{dst}"
-
-**NEGATIVE (should NOT exhibit the behavior):**
-"{src}"
-
----
-
-## MULTI-DIMENSIONAL EVALUATION
-
-Evaluate on these 4 critical dimensions:
-
-### 1. CONFOUND PARITY (0-10)
-Are dst and src MATCHED on everything EXCEPT the behavior?
-- 10: Perfect match on length, tone, helpfulness, quality, structure
-- 7: Minor differences that probably won't affect extraction
-- 5: Noticeable differences that may leak into the vector
-- 3: Significant confounds that will contaminate the signal
-- 0: Major confounds - pair is useless
-
-Check specifically:
-- Length: Count words. Ratio should be 0.8-1.2
-- Tone: Same formality, warmth, directness?
-- Helpfulness: Both equally helpful?
-- Structure: Similar organization?
-
-### 2. BEHAVIOR PURITY (0-10)
-Does dst show ONLY the target behavior, not a mixture of related behaviors?
-- 10: Clean, isolated behavior - only what we want
-- 7: Mostly the target behavior, minor other aspects
-- 5: Target behavior present but mixed with related behaviors
-- 3: Hard to separate target from other behaviors
-- 0: Behavior unclear or hopelessly mixed
-
-Ask: If we extract a vector from this, will it represent ONE thing or a muddy mixture?
-
-### 3. NATURALNESS (0-10)
-Do responses feel like REAL AI outputs, not artificial test cases?
-- 10: Completely natural - would pass as real deployment
-- 7: Mostly natural with minor artificial elements
-- 5: Somewhat stilted or obviously constructed
-- 3: Clearly artificial or exaggerated
-- 0: Cartoonish, forced, or obvious test case
-
-Red flags: Exaggerated behavior ("I LOVE this!!!"), unnatural phrasing, obvious test setup
-
-### 4. CONTRAST SHARPNESS (0-10)
-Is the behavior CLEARLY present in dst and CLEARLY absent in src?
-- 10: Unmistakable presence/absence - anyone could see it
-- 7: Clear contrast - behavior obviously different
-- 5: Noticeable but not stark
-- 3: Subtle - need to look carefully
-- 0: No meaningful contrast
-
----
-
-## OVERALL VALIDITY
-
-A pair is VALID if ALL of:
-- Confound parity >= 7
-- Behavior purity >= 7
-- Naturalness >= 7
-- Contrast sharpness >= 7
-
-If ANY dimension fails, the pair needs regeneration.
-
----
-
-Return JSON:
-{{
-  "confound_parity": {{
-    "score": <0-10>,
-    "length_ratio": <dst_words/src_words>,
-    "tone_matched": <true/false>,
-    "helpfulness_matched": <true/false>,
-    "issues": ["specific confound issues"]
-  }},
-  "behavior_purity": {{
-    "score": <0-10>,
-    "target_behavior_clear": <true/false>,
-    "other_behaviors_detected": ["any contaminating behaviors"],
-    "issues": ["specific purity issues"]
-  }},
-  "naturalness": {{
-    "score": <0-10>,
-    "dst_natural": <true/false>,
-    "src_natural": <true/false>,
-    "artificial_elements": ["any unnatural aspects"]
-  }},
-  "contrast_sharpness": {{
-    "score": <0-10>,
-    "dst_behavior_strength": <0-10>,
-    "src_behavior_strength": <0-10>,
-    "issues": ["any contrast issues"]
-  }},
-  "overall_valid": <true/false>,
-  "primary_issue": "The main problem if not valid, or 'none' if valid",
-  "regeneration_focus": "What to focus on if regenerating"
-}}'''
-
-
 class LLMContrastValidator(ContrastValidatorProtocol):
-    """Thorough LLM-based contrast validation.
+    """Composable LLM-based contrast validation.
 
-    Uses an LLM judge to verify:
-    - dst exhibits the target behavior
-    - src does not exhibit the behavior
-    - The contrast is clear and unambiguous
-    - No confounding differences exist
+    Uses a ValidationComposer to build behavior-specific validation prompts
+    from BehaviorAnalysis. This ensures validation checks are tailored to
+    the specific behavior being extracted.
+
+    Validation Dimensions:
+    1. Dimension Check - Is contrast on the distinguishing variable?
+    2. Marker Check - Do presence/absence markers appear correctly?
+    3. Boundary Check - Is this the right behavior, not a similar one?
+    4. Intensity Check - Does expression match target intensity?
+    5. Structural Check - Are responses well-formed and complete?
 
     Example:
         >>> validator = LLMContrastValidator(judge_llm)
-        >>> result = await validator.validate(pair, analysis)
-        >>> print(f"dst score: {result.dst_behavior_score}")
+        >>> result = await validator.validate(pair, analysis, SignalIntensity.MEDIUM)
+        >>> print(f"Valid: {result.is_valid}, Dimension: {result.dimension_score}")
     """
 
     def __init__(
         self,
         llm_client: BaseLLMClient,
-        min_dst_score: float = 7.0,
-        max_src_score: float = 3.0,
-        min_contrast_quality: float = 6.0,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
+        # Validation thresholds
+        min_dimension_score: float = 6.0,
+        min_structural_score: float = 7.0,
+        min_marker_score: float = 5.0,
+        min_boundary_score: float = 5.0,
     ):
         """Initialize the LLM validator.
 
         Args:
             llm_client: LLM client for judging.
-            min_dst_score: Minimum score for dst to pass.
-            max_src_score: Maximum score for src to pass.
-            min_contrast_quality: Minimum contrast quality to pass.
             temperature: Generation temperature (lower = more consistent).
             max_tokens: Maximum response tokens (None = provider default).
+            min_dimension_score: Minimum dimension check score to pass.
+            min_structural_score: Minimum structural check score to pass.
+            min_marker_score: Minimum marker check score to pass (if markers available).
+            min_boundary_score: Minimum boundary check score to pass (if boundaries available).
         """
         self._llm = llm_client
-        self._min_dst = min_dst_score
-        self._max_src = max_src_score
-        self._min_contrast = min_contrast_quality
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._composer = ValidationComposer()
+
+        # Thresholds
+        self._min_dimension = min_dimension_score
+        self._min_structural = min_structural_score
+        self._min_marker = min_marker_score
+        self._min_boundary = min_boundary_score
 
     async def validate(
         self,
         pair: ContrastPair,
         analysis: BehaviorAnalysis,
+        intensity: Optional[SignalIntensity] = None,
     ) -> ValidationResult:
-        """Validate contrast using LLM judge with multi-dimensional scoring.
+        """Validate contrast pair using behavior-specific checks.
+
+        Composes a validation prompt from the analysis and checks:
+        1. Dimension - Is contrast on the distinguishing variable?
+        2. Markers - Do expected markers appear correctly?
+        3. Boundary - Is this the right behavior, not a similar one?
+        4. Intensity - Does it match target intensity calibration?
+        5. Structural - Are responses well-formed?
 
         Args:
             pair: The contrast pair to validate.
-            analysis: Behavior analysis for context.
+            analysis: Behavior analysis for composing validation.
+            intensity: Target intensity (defaults to MEDIUM or from pair metadata).
 
         Returns:
-            ValidationResult with scores and validity.
+            ValidationResult with dimension-specific scores and details.
         """
-        prompt = VALIDATION_PROMPT.format(
-            behavior_description=analysis.description,
-            core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
-            negative_examples=self._format_negative_examples(analysis),
-            components=self._format_components(analysis),
-            prompt=pair.prompt,
-            dst=pair.dst,
-            src=pair.src,
-        )
+        # Determine intensity from pair metadata or default
+        if intensity is None:
+            intensity_str = pair.metadata.get("intensity", "medium")
+            try:
+                intensity = SignalIntensity(intensity_str.lower())
+            except ValueError:
+                intensity = SignalIntensity.MEDIUM
+
+        # Compose behavior-specific validation prompt
+        prompt = self._composer.compose(pair, analysis, intensity)
 
         try:
             response = await self._llm.complete(
@@ -215,134 +125,170 @@ class LLMContrastValidator(ContrastValidatorProtocol):
                 response_format=JSON_RESPONSE_FORMAT,
             )
 
-            data = self._parse_json(response.content)
+            data = safe_parse_llm_json(response.content)
 
         except Exception as e:
             logger.error(f"LLM validation failed: {e}")
-            return ValidationResult(
-                is_valid=False,
-                dst_behavior_score=5.0,
-                src_behavior_score=5.0,
-                semantic_distance=-1,
-                contrast_quality=5.0,
-                confounds_detected=["validation_error"],
-                reasoning=f"Validation error: {str(e)}",
-            )
+            return self._create_error_result(str(e))
 
-        # Extract multi-dimensional scores
-        confound_parity = data.get("confound_parity", {})
-        behavior_purity = data.get("behavior_purity", {})
-        naturalness = data.get("naturalness", {})
-        contrast_sharpness = data.get("contrast_sharpness", {})
+        # Extract and build detailed results
+        return self._build_result(data, analysis, intensity)
 
-        # Get individual dimension scores
-        confound_score = float(confound_parity.get("score", 5.0))
-        purity_score = float(behavior_purity.get("score", 5.0))
-        naturalness_score = float(naturalness.get("score", 5.0))
-        sharpness_score = float(contrast_sharpness.get("score", 5.0))
+    def _build_result(
+        self,
+        data: Dict[str, Any],
+        analysis: BehaviorAnalysis,
+        intensity: SignalIntensity,
+    ) -> ValidationResult:
+        """Build ValidationResult from parsed LLM response."""
 
-        # Extract behavior scores from contrast sharpness
-        dst_score = float(contrast_sharpness.get("dst_behavior_strength", 5.0))
-        src_score = float(contrast_sharpness.get("src_behavior_strength", 5.0))
+        # Extract dimension check
+        dim_data = data.get("dimension_check", {})
+        dimension_details = DimensionCheckResult(
+            score=float(dim_data.get("score", 5.0)),
+            is_correct=dim_data.get("is_correct", False),
+            what_differs=dim_data.get("what_differs", ""),
+            expected_variable=(
+                analysis.behavioral_test.distinguishing_variable
+                if analysis.behavioral_test else "the target behavior"
+            ),
+            dst_pattern_match=dim_data.get("dst_pattern_match", False),
+            src_pattern_match=dim_data.get("src_pattern_match", False),
+            explanation=dim_data.get("explanation", ""),
+        )
 
-        # Collect all detected issues as confounds
-        confounds = []
-        confounds.extend(confound_parity.get("issues", []))
-        confounds.extend(behavior_purity.get("issues", []))
-        confounds.extend(naturalness.get("artificial_elements", []))
-        confounds.extend(contrast_sharpness.get("issues", []))
+        # Extract marker check
+        marker_data = data.get("marker_check", {})
+        marker_details = MarkerCheckResult(
+            score=float(marker_data.get("score", -1.0)),
+            presence_markers_found=marker_data.get("presence_markers_found", []),
+            presence_markers_missing=marker_data.get("presence_markers_missing", []),
+            absence_markers_found=marker_data.get("absence_markers_found", []),
+            absence_markers_missing=marker_data.get("absence_markers_missing", []),
+            explanation=marker_data.get("explanation", ""),
+        )
 
-        # Build reasoning from all dimensions
-        primary_issue = data.get("primary_issue", "none")
-        regeneration_focus = data.get("regeneration_focus", "")
-        reasoning = f"Confound:{confound_score:.0f} Purity:{purity_score:.0f} Natural:{naturalness_score:.0f} Sharp:{sharpness_score:.0f}"
+        # Extract boundary check
+        boundary_data = data.get("boundary_check", {})
+        boundary_details = BoundaryCheckResult(
+            score=float(boundary_data.get("score", -1.0)),
+            is_correct_behavior=boundary_data.get("is_correct_behavior", True),
+            confused_with=boundary_data.get("confused_with"),
+            explanation=boundary_data.get("explanation", ""),
+        )
+
+        # Extract intensity check
+        intensity_data = data.get("intensity_check", {})
+        intensity_details = IntensityCheckResult(
+            score=float(intensity_data.get("score", 5.0)),
+            target_intensity=intensity.value,
+            actual_intensity=intensity_data.get("actual_intensity", "unknown"),
+            matches_calibration=intensity_data.get("matches_calibration", False),
+            calibration_description=(
+                analysis.intensity_calibration.get_for_intensity(intensity)
+                if analysis.intensity_calibration else ""
+            ),
+            explanation=intensity_data.get("explanation", ""),
+        )
+
+        # Extract structural check
+        struct_data = data.get("structural_check", {})
+        structural_details = StructuralCheckResult(
+            score=float(struct_data.get("score", 10.0)),
+            dst_wellformed=struct_data.get("dst_wellformed", True),
+            src_wellformed=struct_data.get("src_wellformed", True),
+            dst_complete=struct_data.get("dst_complete", True),
+            src_complete=struct_data.get("src_complete", True),
+            issues=struct_data.get("issues", []),
+        )
+
+        # Extract overall
+        overall_data = data.get("overall", {})
+        contrast_quality = float(overall_data.get("contrast_quality", 5.0))
+        primary_issue = overall_data.get("primary_issue", "none")
+        reasoning = overall_data.get("reasoning", "")
+
+        # Determine validity based on thresholds
+        is_valid = self._check_validity(
+            dimension_details,
+            marker_details,
+            boundary_details,
+            structural_details,
+            analysis,
+        )
+
+        # Build reasoning string
+        reasoning_parts = [
+            f"Dim:{dimension_details.score:.0f}",
+            f"Struct:{structural_details.score:.0f}",
+        ]
+        if marker_details.score >= 0:
+            reasoning_parts.append(f"Mark:{marker_details.score:.0f}")
+        if boundary_details.score >= 0:
+            reasoning_parts.append(f"Bound:{boundary_details.score:.0f}")
+        reasoning_parts.append(f"Int:{intensity_details.score:.0f}")
+
         if primary_issue and primary_issue != "none":
-            reasoning += f" | Issue: {primary_issue}"
-        if regeneration_focus:
-            reasoning += f" | Focus: {regeneration_focus}"
+            reasoning_parts.append(f"Issue: {primary_issue}")
 
-        # Determine validity - ALL dimensions must pass
-        is_valid = data.get("overall_valid", False)
-        if not isinstance(is_valid, bool):
-            # Calculate if not provided
-            is_valid = (
-                confound_score >= 7.0
-                and purity_score >= 7.0
-                and naturalness_score >= 7.0
-                and sharpness_score >= 7.0
-            )
-
-        # Use minimum dimension score as contrast quality
-        contrast_quality = min(confound_score, purity_score, naturalness_score, sharpness_score)
+        full_reasoning = " | ".join(reasoning_parts)
+        if reasoning:
+            full_reasoning += f" | {reasoning}"
 
         return ValidationResult(
             is_valid=is_valid,
-            dst_behavior_score=dst_score,
-            src_behavior_score=src_score,
-            semantic_distance=-1,  # Not evaluated by this validator
             contrast_quality=contrast_quality,
-            confounds_detected=confounds,
-            reasoning=reasoning,
+            reasoning=full_reasoning,
+            # Dimension scores
+            dimension_score=dimension_details.score,
+            marker_score=marker_details.score,
+            boundary_score=boundary_details.score,
+            intensity_score=intensity_details.score,
+            structural_score=structural_details.score,
+            # Detailed results
+            dimension_details=dimension_details,
+            marker_details=marker_details,
+            boundary_details=boundary_details,
+            intensity_details=intensity_details,
+            structural_details=structural_details,
         )
 
-    def _format_components(self, analysis: BehaviorAnalysis) -> str:
-        """Format behavior components for prompt."""
-        if not analysis.components:
-            return "No specific components defined"
+    def _check_validity(
+        self,
+        dimension: DimensionCheckResult,
+        marker: MarkerCheckResult,
+        boundary: BoundaryCheckResult,
+        structural: StructuralCheckResult,
+        analysis: BehaviorAnalysis,
+    ) -> bool:
+        """Check if pair passes all validity thresholds."""
 
-        lines = []
-        for c in analysis.components:
-            lines.append(f"- {c.name}: {c.description}")
-            if c.markers:
-                lines.append(f"  Markers: {', '.join(c.markers[:3])}")
-        return "\n".join(lines)
+        # Critical checks (always required)
+        if dimension.score < self._min_dimension:
+            return False
+        if structural.score < self._min_structural:
+            return False
 
-    def _format_negative_examples(self, analysis: BehaviorAnalysis) -> str:
-        """Format what this behavior is NOT."""
-        if not analysis.not_this_behavior:
-            return "No negative examples specified"
+        # Optional checks (only if data was available)
+        has_markers = (
+            analysis.get_all_presence_markers() or
+            analysis.get_all_absence_markers()
+        )
+        if has_markers and marker.score >= 0:
+            if marker.score < self._min_marker:
+                return False
 
-        lines = []
-        for neg in analysis.not_this_behavior:
-            lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
-        return "\n".join(lines)
+        has_boundaries = bool(analysis.not_this_behavior)
+        if has_boundaries and boundary.score >= 0:
+            if boundary.score < self._min_boundary:
+                return False
 
+        return True
 
-    def _parse_json(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response.
-
-        With JSON response format enabled, the LLM should return valid JSON directly.
-        Falls back to markdown extraction if needed for compatibility.
-        """
-        content = content.strip()
-
-        # Primary: Direct JSON parse (expected with response_format)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Extract from markdown code block if present
-        if "```" in content:
-            parts = content.split("```")
-            for i, part in enumerate(parts):
-                if i % 2 == 1:  # Odd indices are inside code blocks
-                    part = part.strip()
-                    if part.startswith(("json", "JSON")):
-                        part = part[4:].strip()
-                    try:
-                        return json.loads(part)
-                    except json.JSONDecodeError:
-                        continue
-
-        # Fallback: Find JSON object boundaries
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(content[start:end])
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning("Failed to parse LLM validation response")
-        return {}
+    def _create_error_result(self, error_msg: str) -> ValidationResult:
+        """Create a ValidationResult for error cases."""
+        return ValidationResult(
+            is_valid=False,
+            contrast_quality=0.0,
+            reasoning=f"Validation error: {error_msg}",
+        )

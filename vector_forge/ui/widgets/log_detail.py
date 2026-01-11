@@ -167,16 +167,27 @@ class ContrastPairRenderer(LogDetailRenderer):
         if entry.event_type == "contrast.pair_validated":
             is_valid = payload.get("is_valid", False)
             status = "[$success]VALID[/]" if is_valid else "[$error]REJECTED[/]"
-            dst_score = payload.get("dst_score", 0.0)
-            src_score = payload.get("src_score", 0.0)
             quality = payload.get("contrast_quality", 0.0)
-            semantic_dist = payload.get("semantic_distance", 0.0)
             scores = f"Status: {status}\n"
-            scores += f"Target score: {dst_score:.3f} | Source score: {src_score:.3f}\n"
-            scores += f"Contrast quality: {quality:.3f} | Semantic distance: {semantic_dist:.3f}"
+            scores += f"Contrast quality: {quality:.1f}/10\n"
+            # Show dimension scores
+            dim = payload.get("dimension_score", -1)
+            struct = payload.get("structural_score", -1)
+            semantic = payload.get("semantic_score", -1)
+            marker = payload.get("marker_score", -1)
+            if dim >= 0:
+                scores += f"Dimension: {dim:.1f} | "
+            if struct >= 0:
+                scores += f"Structural: {struct:.1f} | "
+            if semantic >= 0:
+                scores += f"Semantic: {semantic:.1f} | "
+            if marker >= 0:
+                scores += f"Marker: {marker:.1f}"
+            scores = scores.rstrip(" |")
             if not is_valid:
+                weakest = payload.get("weakest_dimension", "unknown")
                 reason = payload.get("rejection_reason", "unknown")
-                scores += f"\nRejection reason: {reason}"
+                scores += f"\nWeakest: {weakest} | Reason: {reason}"
             sections.append(("VALIDATION SCORES", scores))
 
         # Prompt

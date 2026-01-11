@@ -3,10 +3,6 @@
 Provides comprehensive configuration for parallel extraction tasks, including
 optimization parameters, contrast generation, evaluation settings, and aggregation strategies.
 
-Architecture follows SOLID principles:
-- Single Responsibility: Each config class handles one concern
-- Open/Closed: Presets extend base configs without modification
-- Interface Segregation: Separate configs for separate concerns
 """
 
 from enum import Enum
@@ -262,25 +258,25 @@ class ContrastConfig(BaseModel):
     )
 
     # Validation thresholds
-    min_semantic_distance: float = Field(
-        default=0.3,
-        ge=0.1,
-        le=0.9,
-        description="Minimum semantic distance between dst and src",
+    min_semantic_score: float = Field(
+        default=4.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum semantic distance score (0-10 scale)",
     )
 
-    min_dst_score: float = Field(
+    min_dimension_score: float = Field(
+        default=6.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum dimension check score (contrast on right variable)",
+    )
+
+    min_structural_score: float = Field(
         default=7.0,
         ge=1.0,
         le=10.0,
-        description="Minimum behavior score for dst (exhibits behavior)",
-    )
-
-    max_src_score: float = Field(
-        default=3.0,
-        ge=0.0,
-        le=9.0,
-        description="Maximum behavior score for src (no behavior)",
+        description="Minimum structural check score (well-formed responses)",
     )
 
     min_contrast_quality: float = Field(
@@ -322,10 +318,58 @@ class ContrastConfig(BaseModel):
         description="Maximum concurrent LLM API calls for pair generation",
     )
 
+    # Intensity distribution for contrast pairs
+    intensity_extreme: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Proportion of extreme intensity pairs (0.0-1.0)",
+    )
+
+    intensity_high: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description="Proportion of high intensity pairs (0.0-1.0)",
+    )
+
+    intensity_medium: float = Field(
+        default=0.30,
+        ge=0.0,
+        le=1.0,
+        description="Proportion of medium intensity pairs (0.0-1.0)",
+    )
+
+    intensity_natural: float = Field(
+        default=0.40,
+        ge=0.0,
+        le=1.0,
+        description="Proportion of natural intensity pairs (0.0-1.0)",
+    )
+
     @property
     def pairs_per_sample(self) -> int:
         """Total pairs per sample (core + unique)."""
         return self.core_seeds_per_sample + self.unique_seeds_per_sample
+
+    @property
+    def intensity_distribution(self) -> dict:
+        """Get intensity distribution as a dictionary."""
+        from vector_forge.contrast.protocols import SignalIntensity
+        return {
+            SignalIntensity.EXTREME: self.intensity_extreme,
+            SignalIntensity.HIGH: self.intensity_high,
+            SignalIntensity.MEDIUM: self.intensity_medium,
+            SignalIntensity.NATURAL: self.intensity_natural,
+        }
+
+    @model_validator(mode='after')
+    def validate_intensity_sum(self) -> 'ContrastConfig':
+        """Validate that intensity proportions sum to approximately 1.0."""
+        total = self.intensity_extreme + self.intensity_high + self.intensity_medium + self.intensity_natural
+        if not (0.95 <= total <= 1.05):
+            raise ValueError(f"Intensity proportions must sum to ~1.0, got {total:.2f}")
+        return self
 
     @classmethod
     def fast(cls) -> "ContrastConfig":
@@ -336,8 +380,9 @@ class ContrastConfig(BaseModel):
             unique_seeds_per_sample=5,
             max_regeneration_attempts=1,
             min_seed_quality=5.0,
-            min_dst_score=6.0,
-            max_src_score=4.0,
+            min_dimension_score=5.0,
+            min_structural_score=6.0,
+            min_semantic_score=3.0,
             min_contrast_quality=5.0,
         )
 
@@ -355,8 +400,9 @@ class ContrastConfig(BaseModel):
             unique_seeds_per_sample=15,
             max_regeneration_attempts=3,
             min_seed_quality=7.0,
-            min_dst_score=8.0,
-            max_src_score=2.0,
+            min_dimension_score=7.0,
+            min_structural_score=8.0,
+            min_semantic_score=5.0,
             min_contrast_quality=7.0,
         )
 

@@ -1,21 +1,22 @@
-"""Contrast pair regenerator for fixing failed pairs.
+"""Contrast pair regenerator with targeted feedback from rich validation.
 
 This module regenerates pairs that failed validation with
-targeted feedback based on what went wrong.
+targeted feedback based on dimension-specific issues.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from vector_forge.contrast.protocols import (
     PairRegeneratorProtocol,
     ContrastPair,
     ValidationResult,
     BehaviorAnalysis,
+    SignalIntensity,
 )
+from vector_forge.contrast.utils import safe_parse_llm_json
 from vector_forge.core.protocols import Message
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
@@ -23,113 +24,271 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-REGENERATION_PROMPT = '''The previous contrast pair failed validation. Generate an improved version.
+class RegenerationPromptComposer:
+    """Composes regeneration prompts from validation results and analysis.
 
-## BEHAVIOR
-{behavior_description}
-{core_definition}
+    Uses the rich validation data to create targeted regeneration prompts
+    that focus on the specific issues identified.
+    """
 
-## WHAT THIS IS NOT (avoid confusing with these)
-{negative_examples}
+    def compose(
+        self,
+        pair: ContrastPair,
+        validation: ValidationResult,
+        analysis: BehaviorAnalysis,
+        attempt: int,
+        intensity: SignalIntensity,
+    ) -> str:
+        """Compose a targeted regeneration prompt.
 
-## ORIGINAL PAIR
+        Args:
+            pair: The original pair that failed.
+            validation: Rich validation result with dimension details.
+            analysis: Behavior analysis for context.
+            attempt: Which regeneration attempt this is.
+            intensity: Target intensity for the pair.
 
-**Prompt:** "{original_prompt}"
+        Returns:
+            Composed regeneration prompt.
+        """
+        sections = [
+            self._compose_header(attempt),
+            self._compose_behavior_context(analysis),
+            self._compose_original_pair(pair),
+            self._compose_validation_feedback(validation, analysis),
+            self._compose_targeted_fixes(validation, analysis, intensity),
+            self._compose_attempt_instructions(attempt),
+            self._compose_output_format(),
+        ]
 
-**POSITIVE (should exhibit behavior):**
-"{original_dst}"
+        return "\n\n".join(s for s in sections if s)
 
-**NEGATIVE (should NOT exhibit behavior):**
-"{original_src}"
+    def _compose_header(self, attempt: int) -> str:
+        """Compose header with attempt context."""
+        return f"""The previous contrast pair failed validation. Generate an improved version.
+**Attempt {attempt} of 3**"""
 
----
+    def _compose_behavior_context(self, analysis: BehaviorAnalysis) -> str:
+        """Compose behavior context section."""
+        lines = ["## BEHAVIOR"]
+        lines.append(f"**Name:** {analysis.behavior_name}")
+        lines.append(f"**Description:** {analysis.description}")
 
-## VALIDATION RESULTS
+        if analysis.core_definition:
+            lines.append(f"**Core:** {analysis.core_definition}")
 
-### PRIMARY ISSUE
-{primary_issue}
+        # Include behavioral test if available
+        if analysis.behavioral_test:
+            bt = analysis.behavioral_test
+            lines.append("")
+            lines.append("**Behavioral Test:**")
+            lines.append(f"- Distinguishing Variable: {bt.distinguishing_variable}")
+            lines.append(f"- dst should show: {bt.present_response_pattern}")
+            lines.append(f"- src should show: {bt.absent_response_pattern}")
 
-### DIMENSION SCORES (all need >= 7 to pass)
-{dimension_scores}
+        # Include negative examples
+        if analysis.not_this_behavior:
+            lines.append("")
+            lines.append("**What this is NOT:**")
+            for neg in analysis.not_this_behavior[:3]:
+                lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
 
-### SPECIFIC PROBLEMS
-{problems}
+        return "\n".join(lines)
 
-### REGENERATION FOCUS
-{regeneration_focus}
+    def _compose_original_pair(self, pair: ContrastPair) -> str:
+        """Compose original pair section."""
+        lines = ["## ORIGINAL PAIR"]
+        lines.append(f'**Prompt:** "{pair.prompt}"')
+        lines.append("")
+        lines.append(f'**dst (should exhibit behavior):**\n"{pair.dst}"')
+        lines.append("")
+        lines.append(f'**src (should NOT exhibit behavior):**\n"{pair.src}"')
 
----
+        return "\n".join(lines)
 
-## REGENERATION INSTRUCTIONS
+    def _compose_validation_feedback(
+        self,
+        validation: ValidationResult,
+        analysis: BehaviorAnalysis,
+    ) -> str:
+        """Compose validation feedback section with dimension-specific issues."""
+        lines = ["## VALIDATION RESULTS"]
 
-**Attempt {attempt} of 3**
+        # Overall scores
+        lines.append("**Dimension Scores:**")
+        if validation.dimension_score >= 0:
+            status = "PASS" if validation.dimension_score >= 6 else "FAIL"
+            lines.append(f"- Dimension: {validation.dimension_score:.0f}/10 [{status}]")
+        if validation.structural_score >= 0:
+            status = "PASS" if validation.structural_score >= 7 else "FAIL"
+            lines.append(f"- Structural: {validation.structural_score:.0f}/10 [{status}]")
+        if validation.marker_score >= 0:
+            status = "PASS" if validation.marker_score >= 5 else "FAIL"
+            lines.append(f"- Markers: {validation.marker_score:.0f}/10 [{status}]")
+        if validation.boundary_score >= 0:
+            status = "PASS" if validation.boundary_score >= 5 else "FAIL"
+            lines.append(f"- Boundary: {validation.boundary_score:.0f}/10 [{status}]")
+        if validation.intensity_score >= 0:
+            lines.append(f"- Intensity: {validation.intensity_score:.0f}/10")
 
-{attempt_specific_instructions}
+        lines.append("")
+        lines.append(f"**Weakest Dimension:** {validation.weakest_dimension}")
+        lines.append("")
 
-## CRITICAL REQUIREMENTS
+        # Dimension-specific feedback
+        lines.append("**Specific Issues:**")
 
-1. **CONFOUND PARITY**: Length, tone, helpfulness must be MATCHED
-   - Count words: both responses within 20% of each other
-   - Same formality, warmth, structure
+        # Dimension check issues
+        if validation.dimension_details and validation.dimension_score < 7:
+            dd = validation.dimension_details
+            lines.append(f"- DIMENSION: Contrast is on '{dd.what_differs}' but should be on '{dd.expected_variable}'")
+            if not dd.dst_pattern_match:
+                lines.append(f"  - dst does NOT match expected pattern")
+            if not dd.src_pattern_match:
+                lines.append(f"  - src does NOT match expected pattern")
 
-2. **BEHAVIOR PURITY**: ONLY the target behavior should differ
-   - Don't mix in other behaviors
-   - Clean, isolated signal
+        # Marker check issues
+        if validation.marker_details and validation.marker_score >= 0 and validation.marker_score < 7:
+            md = validation.marker_details
+            if md.presence_markers_missing:
+                lines.append(f"- MARKERS: Missing in dst: {md.presence_markers_missing[:3]}")
+            if md.absence_markers_missing:
+                lines.append(f"- MARKERS: Missing in src: {md.absence_markers_missing[:3]}")
 
-3. **NATURALNESS**: Responses must feel REAL, not artificial
-   - No exaggerated behavior ("I LOVE this!!!")
-   - Should pass as real deployment outputs
+        # Boundary check issues
+        if validation.boundary_details and validation.boundary_score >= 0 and validation.boundary_score < 7:
+            bd = validation.boundary_details
+            if bd.confused_with:
+                lines.append(f"- BOUNDARY: May be confused with '{bd.confused_with}'")
 
-4. **CONTRAST SHARPNESS**: Clear presence in dst, clear absence in src
-   - Anyone should immediately see the difference
+        # Intensity check issues
+        if validation.intensity_details and validation.intensity_score < 7:
+            id = validation.intensity_details
+            lines.append(f"- INTENSITY: Expected {id.target_intensity}, got {id.actual_intensity}")
 
----
+        # Structural issues
+        if validation.structural_details and validation.structural_score < 8:
+            sd = validation.structural_details
+            if sd.issues:
+                for issue in sd.issues[:3]:
+                    lines.append(f"- STRUCTURAL: {issue}")
 
-Return JSON:
-{{
-  "prompt": "The improved prompt (can reuse original if fine)",
-  "dst": "The improved positive response",
-  "src": "The improved negative response",
-  "improvements_made": ["what you changed and why"],
-  "dimension_improvements": {{
-    "confound_fix": "how you fixed confound issues",
-    "purity_fix": "how you improved behavior purity",
-    "naturalness_fix": "how you improved naturalness",
-    "sharpness_fix": "how you improved contrast"
-  }}
-}}'''
+        return "\n".join(lines)
 
+    def _compose_targeted_fixes(
+        self,
+        validation: ValidationResult,
+        analysis: BehaviorAnalysis,
+        intensity: SignalIntensity,
+    ) -> str:
+        """Compose targeted fix instructions based on validation."""
+        lines = ["## TARGETED FIXES REQUIRED"]
 
-ATTEMPT_INSTRUCTIONS = {
-    1: """
-**Standard improvement**: Make targeted fixes based on the problems identified.
-- If dst was too weak: Make it more clearly exhibit the behavior
-- If src was too strong: Make it more neutral or opposite
-- If too similar: Increase the semantic difference
-""",
-    2: """
-**Stronger improvement**: The first attempt wasn't enough. Be more aggressive.
-- If dst was too weak: Make it STRONGLY exhibit the behavior, almost exaggerated
-- If src was too strong: Make it actively OPPOSITE to the behavior
-- If too similar: Change the approach entirely while keeping the same topic
-- Consider changing the structure or style of responses
-""",
-    3: """
+        # Get the improvement guidance
+        guidance = validation.get_improvement_guidance()
+        lines.append(f"**Priority:** {guidance}")
+        lines.append("")
+
+        # Dimension fixes
+        if validation.dimension_score < 7:
+            lines.append("### Fix Dimension Issues")
+            if analysis.behavioral_test:
+                bt = analysis.behavioral_test
+                lines.append(f"The contrast MUST be on: **{bt.distinguishing_variable}**")
+                lines.append(f"- Make dst clearly show: {bt.present_response_pattern}")
+                lines.append(f"- Make src clearly show: {bt.absent_response_pattern}")
+            else:
+                lines.append("Ensure dst clearly exhibits the behavior while src does not")
+            lines.append("")
+
+        # Marker fixes
+        if validation.marker_score >= 0 and validation.marker_score < 7:
+            lines.append("### Fix Marker Issues")
+            if validation.marker_details:
+                md = validation.marker_details
+                if md.presence_markers_missing:
+                    lines.append(f"Include these in dst: {md.presence_markers_missing[:5]}")
+                if md.absence_markers_missing:
+                    lines.append(f"Include these in src: {md.absence_markers_missing[:5]}")
+            lines.append("")
+
+        # Boundary fixes
+        if validation.boundary_score >= 0 and validation.boundary_score < 7:
+            lines.append("### Fix Boundary Issues")
+            if validation.boundary_details and validation.boundary_details.confused_with:
+                confused = validation.boundary_details.confused_with
+                # Find the negative example for guidance
+                for neg in analysis.not_this_behavior:
+                    if neg.similar_behavior.lower() == confused.lower():
+                        lines.append(f"This looks like '{confused}' instead of the target behavior")
+                        lines.append(f"Remember: {neg.why_different}")
+                        break
+            lines.append("")
+
+        # Intensity fixes
+        if validation.intensity_score < 7:
+            lines.append("### Fix Intensity Issues")
+            lines.append(f"Target intensity: **{intensity.value.upper()}**")
+            if analysis.intensity_calibration:
+                calibration = analysis.intensity_calibration.get_for_intensity(intensity)
+                lines.append(f"What {intensity.value} looks like: {calibration}")
+            lines.append("Note: 'Natural' still requires CLEAR contrast, just realistic expression")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _compose_attempt_instructions(self, attempt: int) -> str:
+        """Compose attempt-specific instructions."""
+        instructions = {
+            1: """## ATTEMPT 1 APPROACH
+**Standard improvement**: Make targeted fixes based on the specific issues identified.
+- Focus on the weakest dimension first
+- Make incremental improvements
+- Maintain what was working""",
+
+            2: """## ATTEMPT 2 APPROACH
+**Stronger improvement**: Previous attempt wasn't enough. Be more aggressive.
+- Make the contrast MORE obvious
+- If dimension was wrong, completely rethink the response approach
+- Consider restructuring responses to highlight the distinguishing variable""",
+
+            3: """## ATTEMPT 3 APPROACH
 **Maximum contrast**: Previous attempts failed. Use extreme measures.
 - Make dst the STRONGEST possible example of the behavior
 - Make src the CLEAREST possible counter-example
 - The difference should be immediately obvious to anyone
-- If the scenario itself is problematic, adapt it
-""",
+- If the scenario itself is problematic, adapt it significantly""",
+        }
+
+        return instructions.get(min(attempt, 3), instructions[3])
+
+    def _compose_output_format(self) -> str:
+        """Compose output format section."""
+        return """## OUTPUT
+
+Return JSON:
+{
+  "prompt": "The improved prompt (can reuse original if fine)",
+  "dst": "The improved dst response",
+  "src": "The improved src response",
+  "improvements_made": ["list of specific improvements"],
+  "expected_dimension_score": <0-10>,
+  "fixed_issues": {
+    "dimension": "how you fixed dimension issues",
+    "markers": "how you fixed marker issues",
+    "boundary": "how you fixed boundary issues",
+    "intensity": "how you fixed intensity issues"
+  }
 }
+
+Return ONLY the JSON object."""
 
 
 class ContrastRegenerator(PairRegeneratorProtocol):
-    """Regenerates pairs that failed validation.
+    """Regenerates pairs that failed validation with targeted feedback.
 
-    Uses targeted feedback based on validation results to fix issues
-    with contrast pairs. Progressively becomes more aggressive with
-    each regeneration attempt.
+    Uses rich validation data to create targeted regeneration prompts
+    that focus on the specific dimension issues identified.
 
     Example:
         >>> regenerator = ContrastRegenerator(llm_client)
@@ -154,6 +313,7 @@ class ContrastRegenerator(PairRegeneratorProtocol):
         self._llm = llm_client
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._composer = RegenerationPromptComposer()
 
     async def regenerate(
         self,
@@ -164,38 +324,28 @@ class ContrastRegenerator(PairRegeneratorProtocol):
     ) -> ContrastPair:
         """Regenerate a pair that failed validation.
 
+        Uses rich validation data to create targeted feedback for
+        the LLM to fix specific dimension issues.
+
         Args:
             pair: The original pair that failed.
-            validation: Validation result with failure reasons.
+            validation: Rich validation result with dimension details.
             analysis: Behavior analysis for context.
             attempt: Which regeneration attempt this is (1-indexed).
 
         Returns:
             New ContrastPair with improvements.
         """
-        problems = self._build_problems(validation)
-        dimension_scores = self._extract_dimension_scores(validation)
-        primary_issue, regeneration_focus = self._extract_focus(validation)
+        # Determine intensity from pair metadata
+        intensity_str = pair.metadata.get("intensity", "medium")
+        try:
+            intensity = SignalIntensity(intensity_str.lower())
+        except ValueError:
+            intensity = SignalIntensity.MEDIUM
 
-        # Get attempt-specific instructions
-        attempt_instructions = ATTEMPT_INSTRUCTIONS.get(
-            min(attempt, 3),
-            ATTEMPT_INSTRUCTIONS[3]
-        )
-
-        prompt = REGENERATION_PROMPT.format(
-            behavior_description=analysis.description,
-            core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
-            negative_examples=self._format_negative_examples(analysis),
-            original_prompt=pair.prompt,
-            original_dst=pair.dst,
-            original_src=pair.src,
-            primary_issue=primary_issue,
-            dimension_scores=dimension_scores,
-            problems=problems,
-            regeneration_focus=regeneration_focus,
-            attempt=attempt,
-            attempt_specific_instructions=attempt_instructions,
+        # Compose targeted regeneration prompt
+        prompt = self._composer.compose(
+            pair, validation, analysis, attempt, intensity
         )
 
         # Increase temperature slightly for later attempts
@@ -209,7 +359,7 @@ class ContrastRegenerator(PairRegeneratorProtocol):
                 response_format=JSON_RESPONSE_FORMAT,
             )
 
-            data = self._parse_json(response.content)
+            data = safe_parse_llm_json(response.content)
 
         except Exception as e:
             logger.error(f"Regeneration failed: {e}")
@@ -226,146 +376,20 @@ class ContrastRegenerator(PairRegeneratorProtocol):
             src=new_src,
             seed=pair.seed,
             metadata={
+                **pair.metadata,
                 "regenerated": True,
                 "attempt": attempt,
                 "improvements_made": data.get("improvements_made", []),
-                "expected_scores": data.get("expected_scores", {}),
+                "expected_dimension_score": data.get("expected_dimension_score"),
+                "fixed_issues": data.get("fixed_issues", {}),
                 "original_validation": {
-                    "dst_score": validation.dst_behavior_score,
-                    "src_score": validation.src_behavior_score,
+                    "dimension_score": validation.dimension_score,
+                    "marker_score": validation.marker_score,
+                    "boundary_score": validation.boundary_score,
+                    "intensity_score": validation.intensity_score,
+                    "structural_score": validation.structural_score,
                     "contrast_quality": validation.contrast_quality,
+                    "weakest_dimension": validation.weakest_dimension,
                 },
             },
         )
-
-    def _build_problems(self, validation: ValidationResult) -> str:
-        """Build specific problems list from validation results."""
-        problems: List[str] = []
-
-        # Check behavior scores
-        if validation.dst_behavior_score >= 0 and validation.dst_behavior_score < 7:
-            problems.append(
-                f"POSITIVE too weak: behavior score = {validation.dst_behavior_score:.0f}/10"
-            )
-
-        if validation.src_behavior_score >= 0 and validation.src_behavior_score > 3:
-            problems.append(
-                f"NEGATIVE still shows behavior: score = {validation.src_behavior_score:.0f}/10"
-            )
-
-        # Check confounds
-        if validation.confounds_detected:
-            for confound in validation.confounds_detected[:5]:  # Limit to top 5
-                problems.append(f"Confound: {confound}")
-
-        return "\n".join(f"- {p}" for p in problems) or "- General quality issues"
-
-    def _extract_dimension_scores(self, validation: ValidationResult) -> str:
-        """Extract dimension scores from validation reasoning."""
-        # Parse reasoning which contains scores like "Confound:8 Purity:7 Natural:6 Sharp:8"
-        reasoning = validation.reasoning or ""
-
-        # Try to extract scores from reasoning
-        lines = []
-        if "Confound:" in reasoning:
-            try:
-                parts = reasoning.split("|")[0].strip().split()
-                for part in parts:
-                    if ":" in part:
-                        dim, score = part.split(":")
-                        status = "✓" if float(score) >= 7 else "✗"
-                        lines.append(f"- {dim}: {score}/10 {status}")
-            except (ValueError, IndexError):
-                pass
-
-        if not lines:
-            # Fallback to basic info
-            lines.append(f"- Contrast Quality: {validation.contrast_quality:.0f}/10")
-            lines.append(f"- dst Behavior: {validation.dst_behavior_score:.0f}/10")
-            lines.append(f"- src Behavior: {validation.src_behavior_score:.0f}/10")
-
-        return "\n".join(lines)
-
-    def _extract_focus(self, validation: ValidationResult) -> tuple[str, str]:
-        """Extract primary issue and regeneration focus from validation."""
-        reasoning = validation.reasoning or ""
-
-        # Parse reasoning for Issue and Focus
-        primary_issue = "General quality issues"
-        regeneration_focus = "Improve overall contrast quality"
-
-        if "Issue:" in reasoning:
-            try:
-                issue_part = reasoning.split("Issue:")[1]
-                if "|" in issue_part:
-                    primary_issue = issue_part.split("|")[0].strip()
-                else:
-                    primary_issue = issue_part.strip()
-            except IndexError:
-                pass
-
-        if "Focus:" in reasoning:
-            try:
-                focus_part = reasoning.split("Focus:")[1]
-                if "|" in focus_part:
-                    regeneration_focus = focus_part.split("|")[0].strip()
-                else:
-                    regeneration_focus = focus_part.strip()
-            except IndexError:
-                pass
-
-        # If still default, infer from confounds
-        if primary_issue == "General quality issues" and validation.confounds_detected:
-            primary_issue = validation.confounds_detected[0]
-
-        return primary_issue, regeneration_focus
-
-    def _format_negative_examples(self, analysis: BehaviorAnalysis) -> str:
-        """Format what this behavior is NOT."""
-        if not analysis.not_this_behavior:
-            return "No negative examples specified"
-
-        lines = []
-        for neg in analysis.not_this_behavior:
-            lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
-        return "\n".join(lines)
-
-
-    def _parse_json(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response.
-
-        With JSON response format enabled, the LLM should return valid JSON directly.
-        Falls back to markdown extraction if needed for compatibility.
-        """
-        content = content.strip()
-
-        # Primary: Direct JSON parse (expected with response_format)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Extract from markdown code block if present
-        if "```" in content:
-            parts = content.split("```")
-            for i, part in enumerate(parts):
-                if i % 2 == 1:  # Odd indices are inside code blocks
-                    part = part.strip()
-                    if part.startswith(("json", "JSON")):
-                        part = part[4:].strip()
-                    try:
-                        return json.loads(part)
-                    except json.JSONDecodeError:
-                        continue
-
-        # Fallback: Find JSON object boundaries
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(content[start:end])
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning("Failed to parse regeneration response")
-        return {}

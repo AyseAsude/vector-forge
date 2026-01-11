@@ -15,10 +15,13 @@ from vector_forge.contrast.protocols import (
     BehaviorAnalyzerProtocol,
     BehaviorAnalysis,
     BehaviorComponent,
+    BehavioralTest,
+    IntensityCalibration,
     NegativeExample,
     RealisticScenario,
     ConfoundInfo,
 )
+from vector_forge.contrast.utils import parse_llm_json
 from vector_forge.core.protocols import Message
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
@@ -26,64 +29,87 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-ANALYSIS_PROMPT = '''You are analyzing a behavior for steering vector extraction. Your goal is to deeply understand this behavior so we can generate CLEAN training data with minimal noise.
+ANALYSIS_PROMPT = '''You are analyzing a behavior for steering vector extraction. Your goal is to deeply understand this behavior so we can generate CLEAN, CONTRASTIVE training data.
 
 BEHAVIOR: {behavior_description}
 
 Think carefully and thoroughly. The quality of your analysis determines whether we extract a clean signal or a noisy mixture.
 
+---
+
 ## 1. CORE DEFINITION
-First, deeply understand what this behavior IS:
-- What is the essence of this behavior?
-- What distinguishes it from superficially similar behaviors?
-- When exhibited strongly, what does it look like?
+What is the ESSENCE of this behavior in one sentence?
+Be precise - this distinguishes it from similar behaviors.
 
-## 2. WHAT THIS IS NOT (Critical for clean extraction)
-List behaviors that might be CONFUSED with this but are NOT the same:
-- What similar-seeming behaviors should we NOT capture?
-- What's the boundary between this behavior and acceptable/normal behavior?
-- Example: "Sycophancy" is NOT the same as "politeness" or "being encouraging"
+## 2. THE BEHAVIORAL TEST (Critical - this drives everything)
+Design a TEST that reveals this behavior. This is the most important part.
 
-For each negative example, explain WHY it's different.
+Think about:
+- What situation would REVEAL whether this behavior is present or absent?
+- What choice does the model face in that situation?
+- What SINGLE VARIABLE distinguishes exhibiting from not exhibiting?
+- What does the model do differently when the behavior is present vs absent?
 
-## 3. COMPONENTS
-Break into 3-5 distinct, SEPARABLE components. Each should be:
-- Observable in text (has linguistic markers)
-- Isolatable (can appear without the others)
-- Meaningful (captures a real aspect of the behavior)
+The distinguishing variable is THE thing we extract - be specific and precise.
 
-For each component, provide:
-- Specific markers (exact phrases, patterns, linguistic features)
-- What ABSENCE looks like (not just generic "doesn't do X")
+## 3. INTENSITY CALIBRATION
+How does THIS SPECIFIC behavior manifest at different intensity levels?
+Describe what each intensity looks like FOR THIS BEHAVIOR:
+- EXTREME: Maximum, unmistakable expression
+- HIGH: Clearly present, obvious
+- MEDIUM: Noticeable, balanced
+- NATURAL: Subtle, deployment-realistic
 
-## 4. REALISTIC SCENARIOS
-Generate scenarios where this behavior would NATURALLY arise (not forced/artificial):
-- What real situations trigger this behavior?
-- Who is the user? What's their state? What are the stakes?
-- Make scenarios feel like real deployment, not contrived tests
+Be specific to this behavior - not generic descriptions.
 
-Avoid: Obviously fake scenarios, cartoon situations, or scenarios that scream "this is a test"
+## 4. WHAT THIS IS NOT
+What similar behaviors might be CONFUSED with this?
+For each, explain the boundary and why it's different.
+This prevents capturing the wrong signal.
 
-## 5. CONFOUNDS (What to control for)
-List factors that might CORRELATE with this behavior but aren't the behavior itself:
-- Response length (verbose vs concise)
-- Tone (formal vs casual)
-- Helpfulness level
-- Writing quality
-- Emotional warmth
-- etc.
+## 5. COMPONENTS
+Break into distinct, separable aspects of the behavior.
+Each should be observable and have specific linguistic markers.
+Include markers for both presence AND absence.
 
-For each confound, note if it's EASY or HARD to control for.
+## 6. PRESENCE/ABSENCE MARKERS
+List explicit linguistic patterns that indicate:
+- Behavior IS present
+- Behavior is NOT present
 
-## 6. CONTRAST STRATEGY
-How can we create pairs where:
-- dst CLEARLY shows the behavior
-- src CLEARLY doesn't show it
-- EVERYTHING ELSE is matched (length, tone, helpfulness, quality)
+These guide generation and validation.
+
+## 7. REALISTIC SCENARIOS
+Generate diverse scenarios where this behavior would naturally arise.
+Cover the range of contexts relevant to THIS behavior.
+Each should naturally create the behavioral test situation.
+
+## 8. CONFOUNDS
+What factors correlate with but are NOT this behavior?
+How can each be controlled?
+
+---
 
 Return JSON:
 {{
-  "core_definition": "one sentence capturing the essence",
+  "core_definition": "one precise sentence",
+
+  "behavioral_test": {{
+    "description": "full description of the test",
+    "user_action": "what user does to trigger the test",
+    "model_choice": "what decision the model faces",
+    "distinguishing_variable": "THE thing that differs (be specific)",
+    "present_response_pattern": "what model does if behavior present",
+    "absent_response_pattern": "what model does if behavior absent"
+  }},
+
+  "intensity_calibration": {{
+    "extreme_looks_like": "maximum expression for THIS behavior",
+    "high_looks_like": "clear expression for THIS behavior",
+    "medium_looks_like": "balanced expression for THIS behavior",
+    "natural_looks_like": "subtle expression for THIS behavior"
+  }},
+
   "not_this_behavior": [
     {{
       "similar_behavior": "what it might be confused with",
@@ -91,35 +117,40 @@ Return JSON:
       "example": "concrete example of the non-behavior"
     }}
   ],
+
   "components": [
     {{
       "name": "short_name",
       "description": "what this component represents",
-      "markers": ["specific phrase", "linguistic pattern"],
-      "opposite_markers": ["what absence looks like"],
-      "isolation_note": "can this appear independently?"
+      "markers": ["specific patterns indicating presence"],
+      "opposite_markers": ["specific patterns indicating absence"]
     }}
   ],
+
+  "presence_markers": ["phrases/patterns indicating behavior IS present"],
+  "absence_markers": ["phrases/patterns indicating behavior is NOT present"],
+
   "realistic_scenarios": [
     {{
       "setup": "the situation",
       "user_persona": "who the user is",
-      "natural_trigger": "why behavior would arise here",
-      "stakes": "low/medium/high"
+      "natural_trigger": "why behavior would arise here"
     }}
   ],
+
   "trigger_conditions": ["when this behavior naturally manifests"],
   "contrast_dimensions": ["clearest ways to show presence vs absence"],
+
   "confounds_to_avoid": [
     {{
       "factor": "the confound",
-      "difficulty": "easy/medium/hard to control",
       "strategy": "how to control for it"
     }}
   ]
 }}
 
-Be specific, nuanced, and thoughtful. Vague analysis produces noisy vectors.'''
+Be specific, nuanced, and thoughtful. Vague analysis produces noisy vectors.
+The behavioral_test and distinguishing_variable are CRITICAL - they drive all downstream generation.'''
 
 
 class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
@@ -179,8 +210,8 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
         )
 
         try:
-            data = self._parse_json(response.content)
-        except (json.JSONDecodeError, KeyError) as e:
+            data = parse_llm_json(response.content)
+        except json.JSONDecodeError as e:
             logger.error(f"Failed to parse behavior analysis: {e}")
             raise ValueError(f"Failed to parse behavior analysis: {e}")
 
@@ -205,6 +236,16 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
         # Extract simple confounds list for backward compatibility
         confounds_simple = self._extract_confounds_simple(data)
 
+        # NEW: Extract behavioral test
+        behavioral_test = self._extract_behavioral_test(data)
+
+        # NEW: Extract intensity calibration
+        intensity_calibration = self._extract_intensity_calibration(data)
+
+        # NEW: Extract explicit markers
+        presence_markers = data.get("presence_markers", [])
+        absence_markers = data.get("absence_markers", [])
+
         analysis = BehaviorAnalysis(
             behavior_name=self._extract_name(behavior_description),
             description=behavior_description,
@@ -217,51 +258,22 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
             not_this_behavior=negative_examples,
             realistic_scenarios=realistic_scenarios,
             confound_details=confound_details,
+            # NEW: Behavioral test and intensity
+            behavioral_test=behavioral_test,
+            intensity_calibration=intensity_calibration,
+            presence_markers=presence_markers,
+            absence_markers=absence_markers,
         )
 
         logger.info(
             f"Behavior analysis complete: {len(analysis.components)} components, "
             f"{len(analysis.trigger_conditions)} triggers, "
             f"{len(analysis.not_this_behavior)} negative examples, "
-            f"{len(analysis.realistic_scenarios)} scenarios"
+            f"{len(analysis.realistic_scenarios)} scenarios, "
+            f"behavioral_test={'yes' if behavioral_test else 'no'}"
         )
 
         return analysis
-
-    def _parse_json(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response.
-
-        With JSON response format enabled, the LLM should return valid JSON directly.
-        Falls back to markdown extraction if needed for compatibility.
-        """
-        content = content.strip()
-
-        # Primary: Direct JSON parse (expected with response_format)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Extract from markdown code block if present
-        if "```" in content:
-            parts = content.split("```")
-            for i, part in enumerate(parts):
-                if i % 2 == 1:  # Odd indices are inside code blocks
-                    part = part.strip()
-                    if part.startswith(("json", "JSON")):
-                        part = part[4:].strip()
-                    try:
-                        return json.loads(part)
-                    except json.JSONDecodeError:
-                        continue
-
-        # Fallback: Find JSON object boundaries
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(content[start:end])
-
-        raise json.JSONDecodeError("No valid JSON found", content, 0)
 
     def _extract_components(self, data: Dict[str, Any]) -> list[BehaviorComponent]:
         """Extract behavior components from parsed data."""
@@ -320,7 +332,7 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
                     setup=item.get("setup", ""),
                     user_persona=item.get("user_persona", ""),
                     natural_trigger=item.get("natural_trigger", ""),
-                    stakes=item.get("stakes", "medium"),
+                    stakes=item.get("stakes", ""),  # Optional now
                 )
             )
         return scenarios
@@ -333,7 +345,7 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
                 confounds.append(
                     ConfoundInfo(
                         factor=item.get("factor", ""),
-                        difficulty=item.get("difficulty", "medium"),
+                        difficulty=item.get("difficulty", ""),  # Optional now
                         strategy=item.get("strategy", ""),
                     )
                 )
@@ -350,3 +362,40 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
                 if factor:
                     confounds.append(factor)
         return confounds
+
+    def _extract_behavioral_test(self, data: Dict[str, Any]) -> Optional[BehavioralTest]:
+        """Extract behavioral test from analysis data."""
+        test_data = data.get("behavioral_test", {})
+        if not test_data or not isinstance(test_data, dict):
+            return None
+
+        # Require at minimum the distinguishing variable
+        distinguishing_var = test_data.get("distinguishing_variable", "")
+        if not distinguishing_var:
+            return None
+
+        return BehavioralTest(
+            description=test_data.get("description", ""),
+            user_action=test_data.get("user_action", ""),
+            model_choice=test_data.get("model_choice", ""),
+            distinguishing_variable=distinguishing_var,
+            present_response_pattern=test_data.get("present_response_pattern", ""),
+            absent_response_pattern=test_data.get("absent_response_pattern", ""),
+        )
+
+    def _extract_intensity_calibration(self, data: Dict[str, Any]) -> Optional[IntensityCalibration]:
+        """Extract intensity calibration from analysis data."""
+        cal_data = data.get("intensity_calibration", {})
+        if not cal_data or not isinstance(cal_data, dict):
+            return None
+
+        # Need at least some calibration data
+        if not any(cal_data.values()):
+            return None
+
+        return IntensityCalibration(
+            extreme_looks_like=cal_data.get("extreme_looks_like", "Maximum expression of behavior"),
+            high_looks_like=cal_data.get("high_looks_like", "Clear but plausible expression"),
+            medium_looks_like=cal_data.get("medium_looks_like", "Balanced expression"),
+            natural_looks_like=cal_data.get("natural_looks_like", "Subtle, realistic expression"),
+        )

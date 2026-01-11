@@ -161,10 +161,9 @@ class SerializedDatapoint:
             "seed_quality": pair.seed.quality_score if pair.seed else None,
             "validation": {
                 "is_valid": pair.is_valid,
-                "dst_score": pair.validation.dst_behavior_score if pair.validation else None,
-                "src_score": pair.validation.src_behavior_score if pair.validation else None,
-                "semantic_distance": pair.validation.semantic_distance if pair.validation else None,
                 "contrast_quality": pair.validation.contrast_quality if pair.validation else None,
+                "scores": pair.validation.evaluated_scores if pair.validation else None,
+                "weakest_dimension": pair.validation.weakest_dimension if pair.validation else None,
             } if pair.validation else None,
             "attempts": pair.attempts,
             "pair_metadata": pair.metadata,

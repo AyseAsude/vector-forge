@@ -1,21 +1,22 @@
-"""Contrast pair generator with confound control.
+"""Contrast pair generator with intensity-aware composition.
 
-This module generates contrast pairs from seeds, ensuring that
-the only difference between dst and src is the target behavior.
+This module generates contrast pairs from seeds at different intensity levels,
+ensuring clear contrast on the distinguishing variable at all intensities.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from vector_forge.contrast.protocols import (
     PairGeneratorProtocol,
     Seed,
     BehaviorAnalysis,
     ContrastPair,
+    SignalIntensity,
 )
+from vector_forge.contrast.utils import safe_parse_llm_json
 from vector_forge.core.protocols import Message
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
@@ -23,15 +24,19 @@ from vector_forge.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
-GENERATION_PROMPT = '''Generate a high-quality contrast pair for steering vector training.
+GENERATION_PROMPT = '''Generate a contrast pair for steering vector training.
 
-## BEHAVIOR: {behavior_description}
+## BEHAVIOR
+{behavior_description}
 {core_definition}
 
-## WHAT THIS IS NOT (Critical - do not confuse with these)
+## THE BEHAVIORAL TEST (Critical - this defines the contrast)
+{behavioral_test}
+
+## WHAT THIS IS NOT
 {negative_examples}
 
-## BEHAVIOR COMPONENTS TO TARGET
+## TARGET COMPONENTS
 {target_components}
 
 ## SCENARIO
@@ -42,91 +47,67 @@ GENERATION_PROMPT = '''Generate a high-quality contrast pair for steering vector
 
 ---
 
-## REALISM REQUIREMENT (Critical for clean extraction)
+## INTENSITY: {intensity}
+{intensity_guidance}
 
-Your responses must feel NATURAL - like how a real AI would actually respond.
-- NO forced or exaggerated behavior ("I ABSOLUTELY LOVE your idea!!!")
-- NO cartoonish or obvious test-case responses
-- The behavior should arise naturally, not be artificially inserted
-- Both responses should read as plausible AI assistant outputs
-
-Think: Would someone reading this suspect it's a test case? If yes, it's too artificial.
-
-## CONFOUND CONTROL (Critical for clean signal)
-
-The ONLY difference between POSITIVE and NEGATIVE must be the target behavior.
-Both responses must be MATCHED on:
-
-{confounds}
-
-**Verification checklist:**
-- LENGTH: Count the words - both should be within 20% of each other
-- TONE: Same level of formality, warmth, directness
-- HELPFULNESS: Both equally helpful (unless helpfulness IS the behavior)
-- QUALITY: Both equally well-written and coherent
-- STRUCTURE: Similar organization (paragraphs, lists, etc.)
-
-If you cannot match a confound, the pair is useless. Start over.
+**IMPORTANT**: Intensity controls HOW the behavior is expressed, not the STRENGTH of contrast.
+- The contrast on the distinguishing variable must be CLEAR at ALL intensities
+- "Natural" means realistic expression, NOT weak signal
+- dst and src should clearly differ on the distinguishing variable regardless of intensity
 
 ---
 
 ## GENERATION TASK
 
-1. **PROMPT**: Create a natural user message based on the scenario
-   - Must feel like a real user request, not a test
-   - Should naturally elicit the behavior without forcing it
+Generate a pair where the ONLY difference is the distinguishing variable: {distinguishing_variable}
 
-2. **POSITIVE (dst)**: Response that EXHIBITS the behavior
-   - Show the behavior CLEARLY but NATURALLY
-   - Focus on specified components
-   - Must be a response a real AI might produce
+1. **PROMPT**: User message that creates the test situation
+   - Implements the scenario naturally
+   - Allows the model to exhibit or not exhibit the behavior
 
-3. **NEGATIVE (src)**: Response that does NOT exhibit the behavior
-   - Must NOT show the behavior or its markers
-   - NOT the same as showing opposite behavior (unless appropriate)
-   - Must be EQUALLY good - just without this specific behavior
+2. **dst (behavior PRESENT)**:
+   - Clearly shows: {present_pattern}
+   - Express at {intensity} intensity level
+   - The distinguishing variable is clearly present
 
-4. **SELF-CHECK**: Before outputting, verify:
-   - Is the behavior clear in dst?
-   - Is the behavior absent in src?
-   - Are confounds matched?
-   - Do both responses feel natural?
+3. **src (behavior ABSENT)**:
+   - Clearly shows: {absent_pattern}
+   - The distinguishing variable is clearly absent
+   - Otherwise matches dst (same helpfulness, quality, length)
+
+## CRITICAL: CONTRAST CLARITY
+
+The contrast must be on the DISTINGUISHING VARIABLE, not on:
+- Tone or style (unless that IS the behavior)
+- Length or verbosity
+- Helpfulness level
+- Writing quality
+
+If you swap ONLY the distinguishing variable behavior, src should become dst.
 
 ---
 
 Return JSON:
 {{
-  "prompt": "The user prompt (must feel realistic)",
-  "dst": "Positive response - exhibits behavior naturally",
-  "src": "Negative response - no behavior, matched confounds",
-  "confound_check": {{
-    "dst_word_count": <number>,
-    "src_word_count": <number>,
-    "length_ratio": <dst/src, target 0.8-1.2>,
-    "tone_matched": <true/false>,
-    "helpfulness_matched": <true/false>,
-    "structure_matched": <true/false>
-  }},
-  "naturalness_check": {{
-    "dst_feels_natural": <true/false>,
-    "src_feels_natural": <true/false>,
-    "would_pass_as_real": <true/false>
-  }},
-  "component_coverage": ["components exhibited in dst"],
-  "behavior_markers_in_dst": ["specific markers present"],
-  "behavior_markers_in_src": ["should be empty or minimal"]
+  "prompt": "user message implementing the scenario",
+  "dst": "response with behavior present at {intensity} intensity",
+  "src": "response with behavior absent, otherwise matched",
+  "distinguishing_variable_in_dst": "how the variable manifests in dst",
+  "distinguishing_variable_in_src": "how the variable differs in src",
+  "intensity_applied": "{intensity}"
 }}'''
 
 
 class ContrastPairGenerator(PairGeneratorProtocol):
-    """Generates contrast pairs from seeds with confound control.
+    """Generates contrast pairs from seeds with intensity-aware composition.
 
-    Creates high-quality contrast pairs where the only difference
-    between dst and src is the target behavior.
+    Creates contrast pairs where the only difference between dst and src
+    is the distinguishing variable from the behavioral test.
+    Supports different intensity levels while maintaining clear contrast.
 
     Example:
         >>> generator = ContrastPairGenerator(llm_client)
-        >>> pair = await generator.generate(seed, analysis)
+        >>> pair = await generator.generate(seed, analysis, intensity=SignalIntensity.MEDIUM)
         >>> print(pair.dst)  # Exhibits behavior
         >>> print(pair.src)  # Does not exhibit behavior
     """
@@ -141,7 +122,7 @@ class ContrastPairGenerator(PairGeneratorProtocol):
 
         Args:
             llm_client: LLM client for generation.
-            temperature: Generation temperature.
+            temperature: Base generation temperature.
             max_tokens: Maximum response tokens (None = provider default).
         """
         self._llm = llm_client
@@ -152,45 +133,58 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         self,
         seed: Seed,
         analysis: BehaviorAnalysis,
+        intensity: SignalIntensity = SignalIntensity.MEDIUM,
     ) -> ContrastPair:
-        """Generate a contrast pair from a seed.
+        """Generate a contrast pair from a seed at specified intensity.
 
         Args:
             seed: The seed to generate from.
             analysis: Behavior analysis for context.
+            intensity: Signal intensity level for the pair.
 
         Returns:
             ContrastPair with prompt, dst, and src.
         """
+        # Get behavioral test info
+        behavioral_test = self._format_behavioral_test(analysis)
+        distinguishing_var = self._get_distinguishing_variable(analysis)
+        present_pattern = self._get_present_pattern(analysis)
+        absent_pattern = self._get_absent_pattern(analysis)
+        intensity_guidance = self._get_intensity_guidance(analysis, intensity)
+
         prompt = GENERATION_PROMPT.format(
             behavior_description=analysis.description,
             core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
+            behavioral_test=behavioral_test,
             negative_examples=self._format_negative_examples(analysis),
             target_components=self._format_target_components(seed, analysis),
             scenario=seed.scenario,
             context=seed.context or "No additional context",
-            confounds=self._format_confounds(analysis),
+            intensity=intensity.value.upper(),
+            intensity_guidance=intensity_guidance,
+            distinguishing_variable=distinguishing_var,
+            present_pattern=present_pattern,
+            absent_pattern=absent_pattern,
         )
 
         try:
             response = await self._llm.complete(
                 messages=[Message(role="user", content=prompt)],
-                temperature=self._temperature,
+                temperature=self._get_temperature_for_intensity(intensity),
                 max_tokens=self._max_tokens,
                 response_format=JSON_RESPONSE_FORMAT,
             )
 
-            data = self._parse_json(response.content)
+            data = safe_parse_llm_json(response.content)
 
         except Exception as e:
             logger.error(f"Pair generation failed: {e}")
-            # Return empty pair that will fail validation
             return ContrastPair(
                 prompt="",
                 dst="",
                 src="",
                 seed=seed,
-                metadata={"error": str(e)},
+                metadata={"error": str(e), "intensity": intensity.value},
             )
 
         return ContrastPair(
@@ -199,30 +193,142 @@ class ContrastPairGenerator(PairGeneratorProtocol):
             src=data.get("src", ""),
             seed=seed,
             metadata={
-                "confound_check": data.get("confound_check", {}),
-                "component_coverage": data.get("component_coverage", []),
-                "generation_notes": data.get("generation_notes", ""),
+                "intensity": intensity.value,
+                "distinguishing_variable_in_dst": data.get("distinguishing_variable_in_dst", ""),
+                "distinguishing_variable_in_src": data.get("distinguishing_variable_in_src", ""),
             },
         )
+
+    def _get_temperature_for_intensity(self, intensity: SignalIntensity) -> float:
+        """Get appropriate temperature for intensity level."""
+        # Higher temperature for more extreme (creative), lower for natural (consistent)
+        temps = {
+            SignalIntensity.EXTREME: min(0.9, self._temperature + 0.2),
+            SignalIntensity.HIGH: self._temperature + 0.1,
+            SignalIntensity.MEDIUM: self._temperature,
+            SignalIntensity.NATURAL: max(0.5, self._temperature - 0.1),
+        }
+        return temps.get(intensity, self._temperature)
+
+    def _format_behavioral_test(self, analysis: BehaviorAnalysis) -> str:
+        """Format behavioral test for prompt."""
+        if not analysis.behavioral_test:
+            return "No specific behavioral test defined."
+
+        bt = analysis.behavioral_test
+        return f"""Distinguishing Variable: {bt.distinguishing_variable}
+- User action: {bt.user_action}
+- Model choice: {bt.model_choice}
+- If PRESENT: {bt.present_response_pattern}
+- If ABSENT: {bt.absent_response_pattern}"""
+
+    def _get_distinguishing_variable(self, analysis: BehaviorAnalysis) -> str:
+        """Get the distinguishing variable."""
+        if analysis.behavioral_test:
+            return analysis.behavioral_test.distinguishing_variable
+        return "the target behavior"
+
+    def _get_present_pattern(self, analysis: BehaviorAnalysis) -> str:
+        """Get the present response pattern."""
+        if analysis.behavioral_test:
+            return analysis.behavioral_test.present_response_pattern
+        return "exhibits the behavior"
+
+    def _get_absent_pattern(self, analysis: BehaviorAnalysis) -> str:
+        """Get the absent response pattern."""
+        if analysis.behavioral_test:
+            return analysis.behavioral_test.absent_response_pattern
+        return "does not exhibit the behavior"
+
+    def _get_intensity_guidance(self, analysis: BehaviorAnalysis, intensity: SignalIntensity) -> str:
+        """Get intensity-specific guidance from analysis or defaults."""
+        # Try to get from analysis calibration
+        if analysis.intensity_calibration:
+            specific = analysis.intensity_calibration.get_for_intensity(intensity)
+            if specific:
+                return f"At {intensity.value} intensity, this behavior looks like: {specific}"
+
+        # Default guidance
+        defaults = {
+            SignalIntensity.EXTREME: "Maximum, unmistakable expression. The behavior is obvious and pronounced.",
+            SignalIntensity.HIGH: "Clearly present expression. Obvious on first read.",
+            SignalIntensity.MEDIUM: "Noticeable, balanced expression. Clear but not exaggerated.",
+            SignalIntensity.NATURAL: "Subtle, realistic expression. Would pass as normal conversation, but the distinguishing variable is still clearly different between dst and src.",
+        }
+        return defaults.get(intensity, "")
 
     async def generate_batch(
         self,
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
+        intensity: SignalIntensity = SignalIntensity.MEDIUM,
     ) -> List[ContrastPair]:
-        """Generate multiple contrast pairs.
+        """Generate multiple contrast pairs at the same intensity.
 
         Args:
             seeds: Seeds to generate from.
             analysis: Behavior analysis for context.
+            intensity: Signal intensity for all pairs.
 
         Returns:
             List of ContrastPairs.
         """
         pairs = []
         for seed in seeds:
-            pair = await self.generate(seed, analysis)
+            pair = await self.generate(seed, analysis, intensity)
             pairs.append(pair)
+        return pairs
+
+    async def generate_batch_distributed(
+        self,
+        seeds: List[Seed],
+        analysis: BehaviorAnalysis,
+        distribution: Optional[Dict[SignalIntensity, float]] = None,
+    ) -> List[ContrastPair]:
+        """Generate pairs with distributed intensities.
+
+        Args:
+            seeds: Seeds to generate from.
+            analysis: Behavior analysis for context.
+            distribution: Optional intensity distribution (defaults to balanced).
+
+        Returns:
+            List of ContrastPairs at varying intensities.
+        """
+        if distribution is None:
+            distribution = {
+                SignalIntensity.EXTREME: 0.1,
+                SignalIntensity.HIGH: 0.2,
+                SignalIntensity.MEDIUM: 0.3,
+                SignalIntensity.NATURAL: 0.4,
+            }
+
+        pairs = []
+        n_seeds = len(seeds)
+
+        # Calculate counts for each intensity
+        intensity_counts = {}
+        remaining = n_seeds
+        for intensity, ratio in distribution.items():
+            count = int(n_seeds * ratio)
+            intensity_counts[intensity] = count
+            remaining -= count
+
+        # Distribute remaining to highest ratio
+        if remaining > 0:
+            max_intensity = max(distribution, key=distribution.get)
+            intensity_counts[max_intensity] += remaining
+
+        # Generate pairs at each intensity
+        seed_idx = 0
+        for intensity, count in intensity_counts.items():
+            for _ in range(count):
+                if seed_idx >= n_seeds:
+                    break
+                pair = await self.generate(seeds[seed_idx], analysis, intensity)
+                pairs.append(pair)
+                seed_idx += 1
+
         return pairs
 
     def _format_target_components(
@@ -283,42 +389,3 @@ class ContrastPairGenerator(PairGeneratorProtocol):
                 lines.append(f"- {factor}: {strategy}")
 
         return "\n".join(lines)
-
-    def _parse_json(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response.
-
-        With JSON response format enabled, the LLM should return valid JSON directly.
-        Falls back to markdown extraction if needed for compatibility.
-        """
-        content = content.strip()
-
-        # Primary: Direct JSON parse (expected with response_format)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Extract from markdown code block if present
-        if "```" in content:
-            parts = content.split("```")
-            for i, part in enumerate(parts):
-                if i % 2 == 1:  # Odd indices are inside code blocks
-                    part = part.strip()
-                    if part.startswith(("json", "JSON")):
-                        part = part[4:].strip()
-                    try:
-                        return json.loads(part)
-                    except json.JSONDecodeError:
-                        continue
-
-        # Fallback: Find JSON object boundaries
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(content[start:end])
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning("Failed to parse pair generation response")
-        return {}

@@ -16,6 +16,7 @@ from vector_forge.contrast.protocols import (
     BehaviorAnalysis,
     Seed,
 )
+from vector_forge.contrast.utils import parse_llm_json
 from vector_forge.core.protocols import Message
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
@@ -32,67 +33,58 @@ SEED_GENERATION_PROMPT = '''Generate high-quality training scenarios for steerin
 {behavior_description}
 {core_definition}
 
-## WHAT THIS IS NOT (Critical - avoid confusing with these)
+## THE BEHAVIORAL TEST (Critical - scenarios must implement this)
+{behavioral_test}
+
+## WHAT THIS IS NOT (avoid confusing with these)
 {negative_examples}
 
 ## BEHAVIOR COMPONENTS
 {components_description}
 
-## EXISTING REALISTIC SCENARIOS (from behavior analysis)
+## EXISTING SCENARIOS (use as inspiration)
 {existing_scenarios}
-
-## TRIGGER CONDITIONS
-{trigger_conditions}
-
-## CONFOUNDS TO CONTROL
-{confounds}
 
 ---
 
-Generate {count} diverse, high-quality scenarios for creating contrast pairs.
-
-## CRITICAL: REALISM REQUIREMENT
-
-Your scenarios must feel like REAL deployment situations, not artificial tests.
-- NO obviously contrived setups
-- NO scenarios that scream "this is a test case"
-- Think: Would a real user in real life actually send this message?
-
-Good scenario: "User shares their startup idea and asks for feedback"
-Bad scenario: "User says 2+2=5 and asks if they are right" (too obvious)
+Generate {count} diverse scenarios for creating contrast pairs.
 
 ## SCENARIO REQUIREMENTS
 
-Each scenario should:
-1. **NATURALLY** trigger the behavior (not forced)
-2. Allow **CLEAR** contrast between exhibiting and not exhibiting
-3. **CONTROL** for confounding factors
-4. Target **SPECIFIC** behavior components
-5. **VARY** in context, formality, emotional tone, and domain
+Each scenario must:
+1. **Implement the behavioral test** - create a situation where the distinguishing variable can vary
+2. **Allow clear contrast** - possible to show clear presence vs absence of behavior
+3. **Feel realistic** - like something that would occur in real deployment
+4. **Be diverse** - cover different contexts and situations relevant to this behavior
 
-## OUTPUT FORMAT
+## KEY PRINCIPLE
 
-For each scenario, provide:
-- scenario: The realistic situation setup
-- context: Who is the user? What's their state? What are the stakes?
-- target_components: Which specific behavior components this tests
+The scenario creates a situation. The contrast will be in HOW THE MODEL RESPONDS.
+Focus on creating situations where the distinguishing variable naturally comes into play.
+
+## OUTPUT
+
+For each scenario:
+- scenario: The situation setup
+- context: Relevant context about the user/situation
+- target_components: Which behavior components this tests
 - expected_contrast_strength: How clear can the contrast be (1-10)
-- example_prompt: A concrete, realistic example prompt
+- example_prompt: A concrete example of what the user might say
 
 Return JSON:
 {{
   "scenarios": [
     {{
-      "scenario": "User shares their creative work seeking feedback",
-      "context": "Amateur writer who put significant effort into their work and is emotionally invested",
-      "target_components": ["excessive_praise", "avoiding_criticism"],
+      "scenario": "description of the situation",
+      "context": "relevant context",
+      "target_components": ["component names"],
       "expected_contrast_strength": 8,
-      "example_prompt": "I just finished writing my first short story! It took me three months. Would you mind reading it and telling me what you think?"
+      "example_prompt": "example user message"
     }}
   ]
 }}
 
-Generate diverse scenarios covering different aspects and contexts.'''
+Generate diverse scenarios that implement the behavioral test in different contexts.'''
 
 
 SEED_SCORING_PROMPT = '''Score these scenarios for training data quality.
@@ -207,11 +199,10 @@ class SeedGenerator(SeedGeneratorProtocol):
         prompt = SEED_GENERATION_PROMPT.format(
             behavior_description=analysis.description,
             core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
+            behavioral_test=self._format_behavioral_test(analysis),
             negative_examples=self._format_negative_examples(analysis),
             components_description=self._format_components(analysis),
             existing_scenarios=self._format_existing_scenarios(analysis),
-            trigger_conditions=self._format_list(analysis.trigger_conditions),
-            confounds=self._format_confounds(analysis),
             count=target_count,
         )
 
@@ -267,7 +258,7 @@ class SeedGenerator(SeedGeneratorProtocol):
                     response_format=JSON_RESPONSE_FORMAT,
                 )
 
-                data = self._parse_json(response.content)
+                data = parse_llm_json(response.content)
                 seeds = self._extract_seeds(data)
 
                 if seeds:
@@ -384,7 +375,7 @@ class SeedGenerator(SeedGeneratorProtocol):
                     response_format=JSON_RESPONSE_FORMAT,
                 )
 
-                data = self._parse_json(response.content)
+                data = parse_llm_json(response.content)
 
                 # Validate we got scores
                 if "scores" in data and data["scores"]:
@@ -421,6 +412,22 @@ class SeedGenerator(SeedGeneratorProtocol):
                 for i, seed in enumerate(seeds)
             ]
         }
+
+    def _format_behavioral_test(self, analysis: BehaviorAnalysis) -> str:
+        """Format behavioral test for prompt."""
+        if not analysis.behavioral_test:
+            return "No behavioral test specified - focus on creating scenarios where the behavior can clearly vary."
+
+        bt = analysis.behavioral_test
+        return f"""Distinguishing Variable: {bt.distinguishing_variable}
+
+Test Description: {bt.description}
+- User action that triggers: {bt.user_action}
+- Model faces choice: {bt.model_choice}
+- If behavior PRESENT: {bt.present_response_pattern}
+- If behavior ABSENT: {bt.absent_response_pattern}
+
+Scenarios should create situations where this test naturally applies."""
 
     def _format_components(self, analysis: BehaviorAnalysis) -> str:
         """Format behavior components for prompt."""
@@ -470,50 +477,6 @@ class SeedGenerator(SeedGeneratorProtocol):
         if not items:
             return "None specified"
         return "\n".join(f"- {item}" for item in items)
-
-    def _parse_json(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response.
-
-        With JSON response format enabled, the LLM should return valid JSON directly.
-        Falls back to markdown extraction if needed for compatibility.
-
-        Args:
-            content: Raw LLM response content.
-
-        Returns:
-            Parsed JSON as dictionary.
-
-        Raises:
-            json.JSONDecodeError: If parsing fails.
-        """
-        content = content.strip()
-
-        # Primary: Direct JSON parse (expected with response_format)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Extract from markdown code block if present
-        if "```" in content:
-            parts = content.split("```")
-            for i, part in enumerate(parts):
-                if i % 2 == 1:  # Odd indices are inside code blocks
-                    part = part.strip()
-                    if part.startswith(("json", "JSON")):
-                        part = part[4:].strip()
-                    try:
-                        return json.loads(part)
-                    except json.JSONDecodeError:
-                        continue
-
-        # Fallback: Find JSON object boundaries
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(content[start:end])
-
-        raise json.JSONDecodeError("No valid JSON found", content, 0)
 
     def _extract_seeds(self, data: Dict[str, Any]) -> List[Seed]:
         """Extract seeds from parsed response data."""

@@ -509,9 +509,9 @@ class CreateTaskScreen(Screen):
 
                     with ParamSection("VALIDATION"):
                         yield ParamRow("Min Quality", "inp-min-quality", "6.0", "contrast score")
-                        yield ParamRow("Min DST", "inp-min-dst", "7.0", "behavior score")
-                        yield ParamRow("Max SRC", "inp-max-src", "3.0", "behavior score")
-                        yield ParamRow("Min Distance", "inp-min-dist", "0.3", "semantic")
+                        yield ParamRow("Min Dimension", "inp-min-dim", "6.0", "score 0-10")
+                        yield ParamRow("Min Structural", "inp-min-struct", "7.0", "score 0-10")
+                        yield ParamRow("Min Semantic", "inp-min-semantic", "4.0", "score 0-10")
 
                 # Row 3: Parallelism & Evaluation
                 with Horizontal(classes="params-row"):
@@ -746,9 +746,9 @@ class CreateTaskScreen(Screen):
 
         # Update validation fields
         self.query_one("#inp-min-quality", Input).value = str(contrast.min_contrast_quality)
-        self.query_one("#inp-min-dst", Input).value = str(contrast.min_dst_score)
-        self.query_one("#inp-max-src", Input).value = str(contrast.max_src_score)
-        self.query_one("#inp-min-dist", Input).value = str(contrast.min_semantic_distance)
+        self.query_one("#inp-min-dim", Input).value = str(contrast.min_dimension_score)
+        self.query_one("#inp-min-struct", Input).value = str(contrast.min_structural_score)
+        self.query_one("#inp-min-semantic", Input).value = str(contrast.min_semantic_score)
 
         # Update evaluation fields
         eval_cfg = cfg.evaluation
@@ -799,9 +799,9 @@ class CreateTaskScreen(Screen):
 
         # Update validation fields
         self.query_one("#inp-min-quality", Input).value = str(contrast.min_contrast_quality)
-        self.query_one("#inp-min-dst", Input).value = str(contrast.min_dst_score)
-        self.query_one("#inp-max-src", Input).value = str(contrast.max_src_score)
-        self.query_one("#inp-min-dist", Input).value = str(contrast.min_semantic_distance)
+        self.query_one("#inp-min-dim", Input).value = str(contrast.min_dimension_score)
+        self.query_one("#inp-min-struct", Input).value = str(contrast.min_structural_score)
+        self.query_one("#inp-min-semantic", Input).value = str(contrast.min_semantic_score)
 
     def _compute_layers_for_strategy(self, strategy: str, num_layers: int) -> list[int]:
         """Compute target layers for a given strategy and model size."""
@@ -900,9 +900,9 @@ class CreateTaskScreen(Screen):
             max_regeneration_attempts=int(self.query_one("#inp-max-regen", Input).value or "2"),
             max_concurrent_generations=int(self.query_one("#inp-generations", Input).value or "16"),
             min_contrast_quality=float(self.query_one("#inp-min-quality", Input).value or "6.0"),
-            min_dst_score=float(self.query_one("#inp-min-dst", Input).value or "7.0"),
-            max_src_score=float(self.query_one("#inp-max-src", Input).value or "3.0"),
-            min_semantic_distance=float(self.query_one("#inp-min-dist", Input).value or "0.3"),
+            min_dimension_score=float(self.query_one("#inp-min-dim", Input).value or "6.0"),
+            min_structural_score=float(self.query_one("#inp-min-struct", Input).value or "7.0"),
+            min_semantic_score=float(self.query_one("#inp-min-semantic", Input).value or "4.0"),
         )
 
         # Get target model (required)

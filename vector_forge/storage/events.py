@@ -411,10 +411,16 @@ class ContrastPairValidatedEvent(BaseModel):
     event_type: Literal["contrast.pair_validated"] = "contrast.pair_validated"
     pair_id: str
     is_valid: bool
-    dst_score: float
-    src_score: float
-    semantic_distance: float
     contrast_quality: float
+    # Dimension-specific scores (-1 = not evaluated)
+    dimension_score: float = -1.0
+    marker_score: float = -1.0
+    boundary_score: float = -1.0
+    intensity_score: float = -1.0
+    structural_score: float = -1.0
+    semantic_score: float = -1.0
+    # Additional info
+    weakest_dimension: Optional[str] = None
     rejection_reason: Optional[str] = None
 
 

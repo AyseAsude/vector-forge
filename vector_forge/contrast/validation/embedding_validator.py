@@ -31,7 +31,7 @@ class EmbeddingContrastValidator(ContrastValidatorProtocol):
         >>> validator = EmbeddingContrastValidator(min_distance=0.3)
         >>> result = await validator.validate(pair, analysis)
         >>> if not result.is_valid:
-        ...     print(f"Too similar: {result.semantic_distance}")
+        ...     print(f"Too similar: {result.semantic_score}")
     """
 
     def __init__(
@@ -76,7 +76,7 @@ class EmbeddingContrastValidator(ContrastValidatorProtocol):
             analysis: Behavior analysis (not used by this validator).
 
         Returns:
-            ValidationResult with semantic distance information.
+            ValidationResult with semantic_score set.
         """
         try:
             # Encode both texts
@@ -91,12 +91,9 @@ class EmbeddingContrastValidator(ContrastValidatorProtocol):
                 logger.warning("Zero norm embedding detected")
                 return ValidationResult(
                     is_valid=False,
-                    dst_behavior_score=-1,
-                    src_behavior_score=-1,
-                    semantic_distance=0.0,
                     contrast_quality=0.0,
-                    confounds_detected=["empty_embedding"],
                     reasoning="One or both texts produced zero embedding",
+                    semantic_score=0.0,
                 )
 
             similarity = float(np.dot(emb_dst, emb_src) / (norm_dst * norm_src))
@@ -104,9 +101,9 @@ class EmbeddingContrastValidator(ContrastValidatorProtocol):
 
             is_valid = distance >= self._min_distance
 
-            # Map distance to quality score (0-10)
+            # Map distance to score (0-10)
             # distance of 0.3 = 6, distance of 0.5 = 8, distance of 0.7 = 10
-            contrast_quality = min(10.0, (distance / 0.7) * 10.0)
+            semantic_score = min(10.0, (distance / 0.7) * 10.0)
 
             reasoning = f"Semantic distance: {distance:.3f}"
             if not is_valid:
@@ -114,30 +111,21 @@ class EmbeddingContrastValidator(ContrastValidatorProtocol):
 
             return ValidationResult(
                 is_valid=is_valid,
-                dst_behavior_score=-1,  # Not evaluated by this validator
-                src_behavior_score=-1,  # Not evaluated by this validator
-                semantic_distance=distance,
-                contrast_quality=contrast_quality,
-                confounds_detected=[],
+                contrast_quality=semantic_score,
                 reasoning=reasoning,
+                semantic_score=semantic_score,
             )
 
         except Exception as e:
             logger.error(f"Embedding validation failed: {e}")
             return ValidationResult(
                 is_valid=False,
-                dst_behavior_score=-1,
-                src_behavior_score=-1,
-                semantic_distance=0.0,
                 contrast_quality=0.0,
-                confounds_detected=["embedding_error"],
-                reasoning=f"Embedding validation error: {str(e)}",
+                reasoning=f"Embedding error: {e}",
+                semantic_score=0.0,
             )
 
-    def compute_batch_distances(
-        self,
-        pairs: list[ContrastPair],
-    ) -> list[float]:
+    def compute_batch_distances(self, pairs: list[ContrastPair]) -> list[float]:
         """Compute semantic distances for multiple pairs efficiently.
 
         Args:

@@ -67,26 +67,18 @@ class CompositeContrastValidator(ContrastValidatorProtocol):
             logger.warning("No validators configured")
             return ValidationResult(
                 is_valid=True,
-                dst_behavior_score=-1,
-                src_behavior_score=-1,
-                semantic_distance=-1,
                 contrast_quality=5.0,
-                confounds_detected=[],
                 reasoning="No validators configured",
             )
 
         # Initialize with empty result
         combined_result = ValidationResult(
             is_valid=True,
-            dst_behavior_score=-1,
-            src_behavior_score=-1,
-            semantic_distance=-1,
-            contrast_quality=0,
-            confounds_detected=[],
+            contrast_quality=0.0,
             reasoning="",
         )
 
-        for i, validator in enumerate(self._validators):
+        for validator in self._validators:
             validator_name = validator.__class__.__name__
 
             try:
@@ -108,9 +100,13 @@ class CompositeContrastValidator(ContrastValidatorProtocol):
 
             except Exception as e:
                 logger.error(f"Validator {validator_name} raised exception: {e}")
-                combined_result.is_valid = False
-                combined_result.confounds_detected.append(f"{validator_name}_error")
-                combined_result.reasoning += f" | {validator_name} error: {str(e)}"
+                # Create error result and merge
+                error_result = ValidationResult(
+                    is_valid=False,
+                    contrast_quality=0.0,
+                    reasoning=f"{validator_name} error: {e}",
+                )
+                combined_result = merge_validation_results(combined_result, error_result)
 
                 if self._fail_fast:
                     return combined_result
