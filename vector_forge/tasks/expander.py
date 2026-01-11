@@ -17,6 +17,7 @@ from typing import List, Optional, Protocol, TYPE_CHECKING
 
 from vector_forge.constants import DEFAULT_MODEL
 from vector_forge.core.behavior import BehaviorSpec
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 
 if TYPE_CHECKING:
     from vector_forge.contrast.protocols import (
@@ -280,6 +281,7 @@ class BehaviorExpander:
             messages,
             model=self._model,
             temperature=0.7,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._parse_response(response, description)

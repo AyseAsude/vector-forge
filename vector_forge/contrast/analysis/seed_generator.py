@@ -17,9 +17,13 @@ from vector_forge.contrast.protocols import (
     Seed,
 )
 from vector_forge.core.protocols import Message
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
+
+# Default retry configuration
+DEFAULT_MAX_RETRIES = 3
 
 
 SEED_GENERATION_PROMPT = '''Generate high-quality training scenarios for steering vector extraction.
@@ -160,6 +164,7 @@ class SeedGenerator(SeedGeneratorProtocol):
         min_quality_score: float = 6.0,
         temperature: float = 0.8,
         max_tokens: Optional[int] = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
     ):
         """Initialize the seed generator.
 
@@ -168,11 +173,13 @@ class SeedGenerator(SeedGeneratorProtocol):
             min_quality_score: Minimum score to keep a seed.
             temperature: Generation temperature.
             max_tokens: Maximum tokens for response (None = provider default).
+            max_retries: Maximum retry attempts for generation on JSON parse failures.
         """
         self._llm = llm_client
         self._min_quality = min_quality_score
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_retries = max_retries
 
     async def generate(
         self,
@@ -182,7 +189,8 @@ class SeedGenerator(SeedGeneratorProtocol):
         """Generate quality seeds for the behavior.
 
         Generates more candidates than needed, scores them, and returns
-        the top seeds meeting quality threshold.
+        the top seeds meeting quality threshold. Includes retry logic
+        for handling JSON parse failures.
 
         Args:
             analysis: Behavior analysis to base seeds on.
@@ -207,24 +215,14 @@ class SeedGenerator(SeedGeneratorProtocol):
             count=target_count,
         )
 
-        response = await self._llm.complete(
-            messages=[Message(role="user", content=prompt)],
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
-        )
-
-        try:
-            data = self._parse_response(response.content)
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Failed to parse seed generation response: {e}")
-            return []
-
-        seeds = self._extract_seeds(data)
-        logger.info(f"Generated {len(seeds)} candidate seeds")
+        # Attempt generation with retries
+        seeds = await self._generate_with_retry(prompt)
 
         if not seeds:
-            logger.warning("No seeds generated")
+            logger.warning("No seeds generated after all retry attempts")
             return []
+
+        logger.info(f"Generated {len(seeds)} candidate seeds")
 
         # Score and filter seeds
         scored_seeds = await self.score_seeds(seeds, analysis)
@@ -243,12 +241,64 @@ class SeedGenerator(SeedGeneratorProtocol):
 
         return result
 
+    async def _generate_with_retry(self, prompt: str) -> List[Seed]:
+        """Generate seeds with retry logic on JSON parse failures.
+
+        If JSON parsing fails after auto-repair, retries the entire
+        generation from scratch up to max_retries times.
+
+        Args:
+            prompt: The generation prompt.
+
+        Returns:
+            List of extracted seeds, or empty list if all attempts fail.
+        """
+        last_error: Optional[Exception] = None
+
+        for attempt in range(self._max_retries):
+            if attempt > 0:
+                logger.info(f"Retry attempt {attempt + 1}/{self._max_retries} for seed generation")
+
+            try:
+                response = await self._llm.complete(
+                    messages=[Message(role="user", content=prompt)],
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
+                    response_format=JSON_RESPONSE_FORMAT,
+                )
+
+                data = self._parse_json(response.content)
+                seeds = self._extract_seeds(data)
+
+                if seeds:
+                    if attempt > 0:
+                        logger.info(f"Seed generation succeeded on attempt {attempt + 1}")
+                    return seeds
+
+                # No seeds extracted but parsing succeeded - might be empty response
+                logger.warning(f"Attempt {attempt + 1}: Parsed response but no seeds extracted")
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    f"Attempt {attempt + 1}/{self._max_retries}: "
+                    f"JSON parse failed: {e}"
+                )
+            except Exception as e:
+                last_error = e
+                logger.error(f"Attempt {attempt + 1}/{self._max_retries}: Unexpected error: {e}")
+
+        if last_error:
+            logger.error(f"All {self._max_retries} generation attempts failed. Last error: {last_error}")
+
+        return []
+
     async def score_seeds(
         self,
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
     ) -> List[Tuple[Seed, float]]:
-        """Score seeds by quality.
+        """Score seeds by quality with retry logic.
 
         Args:
             seeds: Seeds to score.
@@ -279,18 +329,8 @@ class SeedGenerator(SeedGeneratorProtocol):
             scenarios_json=json.dumps(scenarios_for_scoring, indent=2),
         )
 
-        response = await self._llm.complete(
-            messages=[Message(role="user", content=prompt)],
-            temperature=0.3,  # Lower temp for consistent scoring
-            max_tokens=self._max_tokens,
-        )
-
-        try:
-            data = self._parse_response(response.content)
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Failed to parse scoring response: {e}")
-            # Return seeds with default scores
-            return [(seed, seed.expected_contrast_strength) for seed in seeds]
+        # Attempt scoring with retries
+        data = await self._score_with_retry(prompt, seeds)
 
         # Build scored list
         scored: List[Tuple[Seed, float]] = []
@@ -315,6 +355,72 @@ class SeedGenerator(SeedGeneratorProtocol):
         scored.sort(key=lambda x: x[1], reverse=True)
 
         return scored
+
+    async def _score_with_retry(
+        self,
+        prompt: str,
+        seeds: List[Seed],
+    ) -> Dict[str, Any]:
+        """Score seeds with retry logic on JSON parse failures.
+
+        Args:
+            prompt: The scoring prompt.
+            seeds: Seeds being scored (for fallback).
+
+        Returns:
+            Parsed scoring data, or fallback data if all attempts fail.
+        """
+        last_error: Optional[Exception] = None
+
+        for attempt in range(self._max_retries):
+            if attempt > 0:
+                logger.info(f"Retry attempt {attempt + 1}/{self._max_retries} for seed scoring")
+
+            try:
+                response = await self._llm.complete(
+                    messages=[Message(role="user", content=prompt)],
+                    temperature=0.3,  # Lower temp for consistent scoring
+                    max_tokens=self._max_tokens,
+                    response_format=JSON_RESPONSE_FORMAT,
+                )
+
+                data = self._parse_json(response.content)
+
+                # Validate we got scores
+                if "scores" in data and data["scores"]:
+                    if attempt > 0:
+                        logger.info(f"Seed scoring succeeded on attempt {attempt + 1}")
+                    return data
+
+                logger.warning(f"Attempt {attempt + 1}: Parsed response but no scores found")
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    f"Attempt {attempt + 1}/{self._max_retries}: "
+                    f"JSON parse failed for scoring: {e}"
+                )
+            except Exception as e:
+                last_error = e
+                logger.error(f"Attempt {attempt + 1}/{self._max_retries}: Unexpected error: {e}")
+
+        # All attempts failed - return fallback with default scores
+        if last_error:
+            logger.warning(
+                f"All {self._max_retries} scoring attempts failed. "
+                f"Using default scores. Last error: {last_error}"
+            )
+
+        # Build fallback scores using expected_contrast_strength
+        return {
+            "scores": [
+                {
+                    "scenario_index": i,
+                    "overall": seed.expected_contrast_strength,
+                }
+                for i, seed in enumerate(seeds)
+            ]
+        }
 
     def _format_components(self, analysis: BehaviorAnalysis) -> str:
         """Format behavior components for prompt."""
@@ -365,36 +471,47 @@ class SeedGenerator(SeedGeneratorProtocol):
             return "None specified"
         return "\n".join(f"- {item}" for item in items)
 
-    def _parse_response(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response."""
+    def _parse_json(self, content: str) -> Dict[str, Any]:
+        """Parse JSON from LLM response.
+
+        With JSON response format enabled, the LLM should return valid JSON directly.
+        Falls back to markdown extraction if needed for compatibility.
+
+        Args:
+            content: Raw LLM response content.
+
+        Returns:
+            Parsed JSON as dictionary.
+
+        Raises:
+            json.JSONDecodeError: If parsing fails.
+        """
         content = content.strip()
 
-        # Try direct JSON parse
+        # Primary: Direct JSON parse (expected with response_format)
         try:
             return json.loads(content)
         except json.JSONDecodeError:
             pass
 
-        # Try extracting from markdown code block
+        # Fallback: Extract from markdown code block if present
         if "```" in content:
             parts = content.split("```")
-            for part in parts:
-                part = part.strip()
-                if part.startswith("json"):
-                    part = part[4:].strip()
-                try:
-                    return json.loads(part)
-                except json.JSONDecodeError:
-                    continue
+            for i, part in enumerate(parts):
+                if i % 2 == 1:  # Odd indices are inside code blocks
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        return json.loads(part)
+                    except json.JSONDecodeError:
+                        continue
 
-        # Try finding JSON object
+        # Fallback: Find JSON object boundaries
         start = content.find("{")
         end = content.rfind("}") + 1
         if start >= 0 and end > start:
-            try:
-                return json.loads(content[start:end])
-            except json.JSONDecodeError:
-                pass
+            return json.loads(content[start:end])
 
         raise json.JSONDecodeError("No valid JSON found", content, 0)
 

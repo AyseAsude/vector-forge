@@ -1,11 +1,13 @@
 """Contrastive datapoint generation strategy."""
 
+import json
 from typing import List, Any
 
 from steering_vectors import TrainingDatapoint
 
 from vector_forge.core.behavior import BehaviorSpec
-from vector_forge.core.protocols import LLMClient
+from vector_forge.core.protocols import LLMClient, Message
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.strategies.datapoint.base import BaseDatapointStrategy
 
 
@@ -95,9 +97,6 @@ class ContrastiveStrategy(BaseDatapointStrategy):
         Uses a batch prompt to generate all completions at once,
         reducing API calls.
         """
-        from vector_forge.core.protocols import Message
-        import json
-
         system_prompt = f"""You are generating training data for behavior extraction.
 
 TARGET BEHAVIOR: {behavior.description}
@@ -112,27 +111,43 @@ For each prompt, generate:
 {"Examples of NO behavior (for src):" if behavior.negative_examples else ""}
 {chr(10).join(f"- {ex}" for ex in (behavior.negative_examples or [])[:3])}
 
-Return a JSON array with objects containing: prompt, dst_completion, src_completion"""
+Return a JSON object with a "completions" key containing an array of objects with: prompt, dst_completion, src_completion"""
 
         user_prompt = "Generate completions for these prompts:\n\n"
         for i, prompt in enumerate(prompts):
             user_prompt += f"{i + 1}. {prompt}\n"
 
-        response = await llm_client.complete([
-            Message(role="system", content=system_prompt),
-            Message(role="user", content=user_prompt),
-        ])
+        response = await llm_client.complete(
+            [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt),
+            ],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
         # Parse response
         try:
-            results = json.loads(response.content)
+            data = json.loads(response.content)
+            results = data.get("completions", data) if isinstance(data, dict) else data
         except json.JSONDecodeError:
+            # Fallback: try markdown extraction
             content = response.content
             if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                results = json.loads(content.strip())
+                parts = content.split("```")
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:
+                        part = part.strip()
+                        if part.startswith(("json", "JSON")):
+                            part = part[4:].strip()
+                        try:
+                            data = json.loads(part)
+                            results = data.get("completions", data) if isinstance(data, dict) else data
+                            break
+                        except json.JSONDecodeError:
+                            continue
+                else:
+                    # Fall back to individual generation
+                    return await self.generate(behavior, prompts, llm_client)
             else:
                 # Fall back to individual generation
                 return await self.generate(behavior, prompts, llm_client)

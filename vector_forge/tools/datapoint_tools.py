@@ -1,12 +1,14 @@
 """Tools for generating and managing training datapoints."""
 
+import json
 from typing import Any, Dict, List, Optional
 
 from steering_vectors import TrainingDatapoint
 
-from vector_forge.core.protocols import ToolResult
+from vector_forge.core.protocols import ToolResult, Message
 from vector_forge.core.state import ExtractionState
 from vector_forge.core.behavior import BehaviorSpec
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
 from vector_forge.tools.base import BaseTool
 
@@ -81,24 +83,37 @@ Generate prompts that:
 3. Vary in length and complexity
 4. Would naturally elicit the behavior when the model exhibits it
 
-Return ONLY a JSON array of prompt strings, no explanation."""
+Return a JSON object with a "prompts" key containing an array of prompt strings."""
 
-        response = await self._llm.complete([Message(role="user", content=prompt)])
+        response = await self._llm.complete(
+            [Message(role="user", content=prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
         # Parse JSON response
-        import json
         try:
-            prompts = json.loads(response.content)
+            data = json.loads(response.content)
+            prompts = data.get("prompts", data) if isinstance(data, dict) else data
             if not isinstance(prompts, list):
                 prompts = [prompts]
         except json.JSONDecodeError:
-            # Try to extract from markdown code block
+            # Fallback: try markdown extraction
             content = response.content
             if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                prompts = json.loads(content.strip())
+                parts = content.split("```")
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:
+                        part = part.strip()
+                        if part.startswith(("json", "JSON")):
+                            part = part[4:].strip()
+                        try:
+                            data = json.loads(part)
+                            prompts = data.get("prompts", data) if isinstance(data, dict) else data
+                            break
+                        except json.JSONDecodeError:
+                            continue
+                else:
+                    return {"success": False, "error": "Failed to parse prompts from LLM response"}
             else:
                 return {"success": False, "error": "Failed to parse prompts from LLM response"}
 
@@ -188,28 +203,40 @@ For EACH prompt, generate:
 - dst_completion: A completion that CLEARLY EXHIBITS the behavior
 {"- src_completion: A completion that clearly DOES NOT exhibit the behavior" if generate_src else ""}
 
-Return a JSON array with one object per prompt:
-[
+Return a JSON object with a "completions" key containing an array of objects:
+{{"completions": [
   {{"prompt_index": 1, "dst_completion": "...", {"\"src_completion\": \"...\"" if generate_src else ""}}},
   ...
-]
+]}}"""
 
-Only return the JSON array, no explanation."""
+        response = await self._llm.complete(
+            [Message(role="user", content=llm_prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
-        response = await self._llm.complete([Message(role="user", content=llm_prompt)])
-
-        import json
         try:
-            results = json.loads(response.content)
+            data = json.loads(response.content)
+            results = data.get("completions", data) if isinstance(data, dict) else data
             if not isinstance(results, list):
                 results = [results]
         except json.JSONDecodeError:
+            # Fallback: try markdown extraction
             content = response.content
             if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                results = json.loads(content.strip())
+                parts = content.split("```")
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:
+                        part = part.strip()
+                        if part.startswith(("json", "JSON")):
+                            part = part[4:].strip()
+                        try:
+                            data = json.loads(part)
+                            results = data.get("completions", data) if isinstance(data, dict) else data
+                            break
+                        except json.JSONDecodeError:
+                            continue
+                else:
+                    return {"success": False, "error": "Failed to parse completions"}
             else:
                 return {"success": False, "error": "Failed to parse completions"}
 

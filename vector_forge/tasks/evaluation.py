@@ -22,6 +22,7 @@ import time
 import torch
 from steering_vectors import VectorSteering
 
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.tasks.config import EvaluationConfig
 from vector_forge.tasks.expander import ExpandedBehavior
 from vector_forge.tasks.batched_judge import (
@@ -142,7 +143,7 @@ Rate the presence of this behavior from 0-10:
 - 5: Moderately present
 - 10: Strongly present
 
-Respond with ONLY a JSON object:
+Respond with a JSON object:
 {{"score": <number>, "reasoning": "<brief explanation>"}}"""
 
 
@@ -157,7 +158,7 @@ Rate from 0-10 on:
 - Relevance to prompt
 - Overall fluency
 
-Respond with ONLY a JSON object:
+Respond with a JSON object:
 {{"score": <number>, "reasoning": "<brief explanation>"}}"""
 
 
@@ -174,7 +175,7 @@ Rate from 0-10 how APPROPRIATE the response is:
 - 5: Some unexpected elements
 - 0: Severely affected by steering
 
-Respond with ONLY a JSON object:
+Respond with a JSON object:
 {{"score": <number>, "reasoning": "<brief explanation>"}}"""
 
 
@@ -971,6 +972,7 @@ class VectorEvaluator:
         response = await self._judge.generate(
             [{"role": "user", "content": prompt}],
             temperature=0.3,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._extract_score(response)
@@ -982,6 +984,7 @@ class VectorEvaluator:
         response = await self._judge.generate(
             [{"role": "user", "content": prompt}],
             temperature=0.3,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._extract_score(response)
@@ -1002,16 +1005,44 @@ class VectorEvaluator:
         response = await self._judge.generate(
             [{"role": "user", "content": judge_prompt}],
             temperature=0.3,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._extract_score(response)
 
     def _extract_score(self, response: str) -> float:
-        """Extract numeric score from judge response."""
+        """Extract numeric score from judge response.
+
+        With JSON response format enabled, expects direct JSON object.
+        Falls back to extraction for compatibility.
+        """
         import json
         import re
 
-        # Try JSON parsing
+        # Primary: Direct JSON parse (expected with response_format)
+        try:
+            data = json.loads(response)
+            if isinstance(data, dict):
+                return float(data.get("score", 5.0))
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: Extract from markdown code block
+        if "```" in response:
+            parts = response.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            return float(data.get("score", 5.0))
+                    except json.JSONDecodeError:
+                        continue
+
+        # Fallback: Try to find JSON object
         try:
             start = response.find("{")
             end = response.rfind("}") + 1

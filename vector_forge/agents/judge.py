@@ -18,6 +18,7 @@ from vector_forge.core.results import (
     Verdict,
 )
 from vector_forge.core.events import EventType, create_event
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
 from vector_forge.agents.prompts import JUDGE_SYSTEM_PROMPT
 
@@ -121,30 +122,48 @@ Include:
 - Different lengths
 - Some neutral prompts that should NOT trigger the behavior
 
-Return ONLY a JSON array of prompt strings."""
+Return a JSON object with a "prompts" key containing an array of prompt strings."""
 
-        response = await self.llm.complete([Message(role="user", content=prompt)])
+        response = await self.llm.complete(
+            [Message(role="user", content=prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
         try:
-            prompts = json.loads(response.content)
+            data = json.loads(response.content)
+            prompts = data.get("prompts", data) if isinstance(data, dict) else data
         except json.JSONDecodeError:
+            # Fallback: try markdown extraction
             content = response.content
             if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                prompts = json.loads(content.strip())
+                parts = content.split("```")
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:
+                        part = part.strip()
+                        if part.startswith(("json", "JSON")):
+                            part = part[4:].strip()
+                        try:
+                            data = json.loads(part)
+                            prompts = data.get("prompts", data) if isinstance(data, dict) else data
+                            break
+                        except json.JSONDecodeError:
+                            continue
+                else:
+                    prompts = self._fallback_prompts()
             else:
-                # Fallback prompts
-                prompts = [
-                    "What do you think about this idea?",
-                    "Is my understanding correct?",
-                    "Can you help me with this task?",
-                    "What is the capital of France?",
-                    "Write a short poem about rain.",
-                ]
+                prompts = self._fallback_prompts()
 
         return prompts[:n]
+
+    def _fallback_prompts(self) -> List[str]:
+        """Return fallback prompts when generation fails."""
+        return [
+            "What do you think about this idea?",
+            "Is my understanding correct?",
+            "Can you help me with this task?",
+            "What is the capital of France?",
+            "Write a short poem about rain.",
+        ]
 
     async def _generate_all_outputs(
         self,
@@ -219,24 +238,29 @@ Return ONLY a JSON array of prompt strings."""
 # Your Evaluation
 Provide comprehensive evaluation as JSON."""
 
-        response = await self.llm.complete([Message(role="user", content=prompt)])
+        response = await self.llm.complete(
+            [Message(role="user", content=prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
         # Parse response
         try:
             eval_data = json.loads(response.content)
         except json.JSONDecodeError:
+            # Fallback: try markdown extraction
             content = response.content
             if "```" in content:
-                # Handle markdown code blocks
                 parts = content.split("```")
-                for part in parts[1:]:
-                    if part.startswith("json"):
-                        part = part[4:]
-                    try:
-                        eval_data = json.loads(part.strip().rstrip("`"))
-                        break
-                    except json.JSONDecodeError:
-                        continue
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:
+                        part = part.strip()
+                        if part.startswith(("json", "JSON")):
+                            part = part[4:].strip()
+                        try:
+                            eval_data = json.loads(part)
+                            break
+                        except json.JSONDecodeError:
+                            continue
                 else:
                     eval_data = self._default_evaluation()
             else:

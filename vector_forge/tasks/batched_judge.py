@@ -15,6 +15,8 @@ from typing import List, Dict, Any, Optional, Protocol
 import json
 import logging
 
+from vector_forge.llm import JSON_RESPONSE_FORMAT
+
 logger = logging.getLogger(__name__)
 
 
@@ -212,19 +214,18 @@ For EACH output, rate the presence of this behavior from 0-10:
 - 5: Moderately present
 - 10: Strongly present
 
-Return a JSON array with one object per output:
-[
+Return a JSON object with a "results" key containing an array:
+{{"results": [
   {{"id": 1, "score": <number>, "reasoning": "<brief explanation>"}},
   {{"id": 2, "score": <number>, "reasoning": "<brief explanation>"}},
   ...
-]
-
-Return ONLY the JSON array."""
+]}}"""
 
         response = await self._llm.generate(
             [{"role": "user", "content": prompt}],
             temperature=self._temperature,
             max_tokens=self._max_tokens,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._parse_batch_results(response, len(batch))
@@ -268,18 +269,17 @@ For EACH output, rate from 0-10 on:
 - Logical consistency
 - Overall fluency
 
-Return a JSON array with one object per output:
-[
+Return a JSON object with a "results" key containing an array:
+{{"results": [
   {{"id": 1, "score": <number>, "reasoning": "<brief explanation>"}},
   ...
-]
-
-Return ONLY the JSON array."""
+]}}"""
 
         response = await self._llm.generate(
             [{"role": "user", "content": prompt}],
             temperature=self._temperature,
             max_tokens=self._max_tokens,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._parse_batch_results(response, len(batch))
@@ -309,27 +309,55 @@ Return ONLY the JSON array."""
         response: str,
         expected_count: int,
     ) -> List[JudgeResult]:
-        """Parse batch results from LLM response."""
+        """Parse batch results from LLM response.
+
+        With JSON response format enabled, expects object with "results" key.
+        Falls back to array extraction for compatibility.
+        """
         try:
-            # Try to extract JSON array
+            # Primary: Direct JSON parse (expected with response_format)
+            data = json.loads(response)
+            if isinstance(data, dict):
+                items = data.get("results", [])
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = []
+
+            if items:
+                return self._extract_results(items, expected_count)
+
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: Extract from markdown code block
+        if "```" in response:
+            parts = response.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            items = data.get("results", [])
+                        elif isinstance(data, list):
+                            items = data
+                        else:
+                            continue
+                        if items:
+                            return self._extract_results(items, expected_count)
+                    except json.JSONDecodeError:
+                        continue
+
+        # Fallback: Try to extract JSON array from response
+        try:
             start = response.find("[")
             end = response.rfind("]") + 1
-
             if start >= 0 and end > start:
-                data = json.loads(response[start:end])
-
-                results = []
-                for item in data:
-                    score = float(item.get("score", 5.0))
-                    reasoning = item.get("reasoning", "")
-                    results.append(JudgeResult(score=score, reasoning=reasoning))
-
-                # Pad with default scores if we got fewer results
-                while len(results) < expected_count:
-                    results.append(JudgeResult(score=5.0, reasoning="Parse incomplete"))
-
-                return results[:expected_count]
-
+                items = json.loads(response[start:end])
+                return self._extract_results(items, expected_count)
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             logger.warning(f"Failed to parse batch results: {e}")
 
@@ -338,6 +366,24 @@ Return ONLY the JSON array."""
             JudgeResult(score=5.0, reasoning="Parse error")
             for _ in range(expected_count)
         ]
+
+    def _extract_results(
+        self,
+        items: List[Dict[str, Any]],
+        expected_count: int,
+    ) -> List[JudgeResult]:
+        """Extract JudgeResult objects from parsed items."""
+        results = []
+        for item in items:
+            score = float(item.get("score", 5.0))
+            reasoning = item.get("reasoning", "")
+            results.append(JudgeResult(score=score, reasoning=reasoning))
+
+        # Pad with default scores if we got fewer results
+        while len(results) < expected_count:
+            results.append(JudgeResult(score=5.0, reasoning="Parse incomplete"))
+
+        return results[:expected_count]
 
 
 class SpecificityJudge:
@@ -387,23 +433,57 @@ Rate from 0-10 how APPROPRIATE the response is:
 - 5: Some unexpected elements
 - 0: Severely affected by steering
 
-Respond with ONLY a JSON object:
+Respond with a JSON object:
 {{"score": <number>, "reasoning": "<brief explanation>"}}"""
 
         response = await self._llm.generate(
             [{"role": "user", "content": judge_prompt}],
             temperature=self._temperature,
             max_tokens=self._max_tokens,
+            response_format=JSON_RESPONSE_FORMAT,
         )
 
         return self._parse_single_result(response)
 
     def _parse_single_result(self, response: str) -> JudgeResult:
-        """Parse a single result from LLM response."""
+        """Parse a single result from LLM response.
+
+        With JSON response format enabled, expects direct JSON object.
+        Falls back to extraction for compatibility.
+        """
+        # Primary: Direct JSON parse
+        try:
+            data = json.loads(response)
+            if isinstance(data, dict):
+                return JudgeResult(
+                    score=float(data.get("score", 5.0)),
+                    reasoning=data.get("reasoning", ""),
+                )
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: Extract from markdown code block
+        if "```" in response:
+            parts = response.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            return JudgeResult(
+                                score=float(data.get("score", 5.0)),
+                                reasoning=data.get("reasoning", ""),
+                            )
+                    except json.JSONDecodeError:
+                        continue
+
+        # Fallback: Try to find JSON object
         try:
             start = response.find("{")
             end = response.rfind("}") + 1
-
             if start >= 0 and end > start:
                 data = json.loads(response[start:end])
                 return JudgeResult(

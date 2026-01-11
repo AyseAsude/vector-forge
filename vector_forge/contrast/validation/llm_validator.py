@@ -17,6 +17,7 @@ from vector_forge.contrast.protocols import (
     ValidationResult,
 )
 from vector_forge.core.protocols import Message
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -211,9 +212,10 @@ class LLMContrastValidator(ContrastValidatorProtocol):
                 messages=[Message(role="user", content=prompt)],
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
+                response_format=JSON_RESPONSE_FORMAT,
             )
 
-            data = self._parse_response(response.content)
+            data = self._parse_json(response.content)
 
         except Exception as e:
             logger.error(f"LLM validation failed: {e}")
@@ -306,29 +308,34 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         return "\n".join(lines)
 
 
-    def _parse_response(self, content: str) -> Dict[str, Any]:
-        """Parse JSON from LLM response."""
+    def _parse_json(self, content: str) -> Dict[str, Any]:
+        """Parse JSON from LLM response.
+
+        With JSON response format enabled, the LLM should return valid JSON directly.
+        Falls back to markdown extraction if needed for compatibility.
+        """
         content = content.strip()
 
-        # Try direct JSON parse
+        # Primary: Direct JSON parse (expected with response_format)
         try:
             return json.loads(content)
         except json.JSONDecodeError:
             pass
 
-        # Try extracting from markdown code block
+        # Fallback: Extract from markdown code block if present
         if "```" in content:
             parts = content.split("```")
-            for part in parts:
-                part = part.strip()
-                if part.startswith("json"):
-                    part = part[4:].strip()
-                try:
-                    return json.loads(part)
-                except json.JSONDecodeError:
-                    continue
+            for i, part in enumerate(parts):
+                if i % 2 == 1:  # Odd indices are inside code blocks
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        return json.loads(part)
+                    except json.JSONDecodeError:
+                        continue
 
-        # Try finding JSON object
+        # Fallback: Find JSON object boundaries
         start = content.find("{")
         end = content.rfind("}") + 1
         if start >= 0 and end > start:

@@ -1,12 +1,15 @@
 """Tools for evaluating steering vectors."""
 
+import json
 from typing import Any, Dict, List, Optional
 
 from steering_vectors import VectorSteering
 
+from vector_forge.core.protocols import Message
 from vector_forge.core.state import ExtractionState
 from vector_forge.core.config import PipelineConfig
 from vector_forge.core.behavior import BehaviorSpec
+from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.tools.base import BaseTool
 
 
@@ -207,26 +210,18 @@ class QuickEvalTool(BaseTool):
         strengths = strengths or budget.quick_eval_strength_levels
 
         # Generate test prompts once for all layers
-        from vector_forge.core.protocols import Message
-        import json
-
         prompt = f"""Generate {budget.quick_eval_prompts} short test prompts for evaluating the behavior: {self._behavior.description}
 
-Return ONLY a JSON array of prompt strings."""
+Return a JSON object with a "prompts" key containing an array of prompt strings."""
 
-        response = await self._llm.complete([Message(role="user", content=prompt)])
+        response = await self._llm.complete(
+            [Message(role="user", content=prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
-        try:
-            test_prompts = json.loads(response.content)
-        except json.JSONDecodeError:
-            content = response.content
-            if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                test_prompts = json.loads(content.strip())
-            else:
-                return {"success": False, "error": "Failed to generate test prompts"}
+        test_prompts = self._parse_prompts(response.content)
+        if test_prompts is None:
+            return {"success": False, "error": "Failed to generate test prompts"}
 
         # Evaluate each layer
         layer_results = {}
@@ -298,19 +293,14 @@ Return JSON object with layer numbers as keys:
   ...
 }}"""
 
-        score_response = await self._llm.complete([Message(role="user", content=score_prompt)])
+        score_response = await self._llm.complete(
+            [Message(role="user", content=score_prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
-        try:
-            all_scores = json.loads(score_response.content)
-        except json.JSONDecodeError:
-            content = score_response.content
-            if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                all_scores = json.loads(content.strip())
-            else:
-                all_scores = {str(l): {"behavior_strength": 5, "coherence": 5, "notes": "Parse error"} for l in layers}
+        all_scores = self._parse_json(score_response.content)
+        if all_scores is None:
+            all_scores = {str(l): {"behavior_strength": 5, "coherence": 5, "notes": "Parse error"} for l in layers}
 
         # Normalize keys to integers and build results
         evaluations = {}
@@ -339,6 +329,76 @@ Return JSON object with layer numbers as keys:
             "num_layers": len(layers),
             "num_samples_per_layer": len(test_prompts) * budget.quick_eval_generations_per_prompt,
         }
+
+    def _parse_prompts(self, content: str) -> Optional[List[str]]:
+        """Parse prompts from LLM response.
+
+        Expects JSON object with "prompts" key or direct array.
+        """
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return data.get("prompts", [])
+            elif isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: try markdown extraction
+        if "```" in content:
+            parts = content.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            return data.get("prompts", [])
+                        elif isinstance(data, list):
+                            return data
+                    except json.JSONDecodeError:
+                        continue
+
+        return None
+
+    def _parse_json(self, content: str) -> Optional[Dict[str, Any]]:
+        """Parse JSON object from LLM response."""
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: try markdown extraction
+        if "```" in content:
+            parts = content.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            return data
+                    except json.JSONDecodeError:
+                        continue
+
+        # Fallback: try to find JSON object
+        try:
+            start = content.find("{")
+            end = content.rfind("}") + 1
+            if start >= 0 and end > start:
+                data = json.loads(content[start:end])
+                if isinstance(data, dict):
+                    return data
+        except json.JSONDecodeError:
+            pass
+
+        return None
 
 
 class TestSpecificityTool(BaseTool):
@@ -392,32 +452,24 @@ class TestSpecificityTool(BaseTool):
 
         # Generate neutral prompts if not provided
         if not unrelated_prompts:
-            from vector_forge.core.protocols import Message
-
             prompt = f"""Generate 5 prompts that test neutral behaviors unrelated to: {self._behavior.description}
 
 These should be factual questions, simple tasks, or topics where the model's behavior should NOT change.
 
-Return ONLY a JSON array of prompt strings."""
+Return a JSON object with a "prompts" key containing an array of prompt strings."""
 
-            response = await self._llm.complete([Message(role="user", content=prompt)])
+            response = await self._llm.complete(
+                [Message(role="user", content=prompt)],
+                response_format=JSON_RESPONSE_FORMAT,
+            )
 
-            import json
-            try:
-                unrelated_prompts = json.loads(response.content)
-            except json.JSONDecodeError:
-                content = response.content
-                if "```" in content:
-                    content = content.split("```")[1]
-                    if content.startswith("json"):
-                        content = content[4:]
-                    unrelated_prompts = json.loads(content.strip())
-                else:
-                    unrelated_prompts = [
-                        "What is the capital of France?",
-                        "Write a haiku about rain.",
-                        "Explain photosynthesis briefly.",
-                    ]
+            unrelated_prompts = self._parse_prompts(response.content)
+            if unrelated_prompts is None:
+                unrelated_prompts = [
+                    "What is the capital of France?",
+                    "Write a haiku about rain.",
+                    "Explain photosynthesis briefly.",
+                ]
 
         # Compare outputs
         vector = self._state.vectors[layer]
@@ -447,9 +499,6 @@ Return ONLY a JSON array of prompt strings."""
             })
 
         # Get LLM to judge specificity
-        import json
-        from vector_forge.core.protocols import Message
-
         judge_prompt = f"""Compare baseline vs steered outputs for prompts unrelated to the target behavior.
 Target behavior (should NOT appear here): {self._behavior.description}
 
@@ -462,19 +511,14 @@ Score specificity 0-10:
 
 Return JSON with: specificity_score, affected_prompts (list), notes"""
 
-        response = await self._llm.complete([Message(role="user", content=judge_prompt)])
+        response = await self._llm.complete(
+            [Message(role="user", content=judge_prompt)],
+            response_format=JSON_RESPONSE_FORMAT,
+        )
 
-        try:
-            result = json.loads(response.content)
-        except json.JSONDecodeError:
-            content = response.content
-            if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-                result = json.loads(content.strip())
-            else:
-                result = {"specificity_score": 5, "affected_prompts": [], "notes": "Parse error"}
+        result = self._parse_json(response.content)
+        if result is None:
+            result = {"specificity_score": 5, "affected_prompts": [], "notes": "Parse error"}
 
         return {
             "layer": layer,
@@ -483,3 +527,73 @@ Return JSON with: specificity_score, affected_prompts (list), notes"""
             "notes": result.get("notes", ""),
             "comparisons": comparisons,
         }
+
+    def _parse_prompts(self, content: str) -> Optional[List[str]]:
+        """Parse prompts from LLM response.
+
+        Expects JSON object with "prompts" key or direct array.
+        """
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return data.get("prompts", [])
+            elif isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: try markdown extraction
+        if "```" in content:
+            parts = content.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            return data.get("prompts", [])
+                        elif isinstance(data, list):
+                            return data
+                    except json.JSONDecodeError:
+                        continue
+
+        return None
+
+    def _parse_json(self, content: str) -> Optional[Dict[str, Any]]:
+        """Parse JSON object from LLM response."""
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: try markdown extraction
+        if "```" in content:
+            parts = content.split("```")
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    part = part.strip()
+                    if part.startswith(("json", "JSON")):
+                        part = part[4:].strip()
+                    try:
+                        data = json.loads(part)
+                        if isinstance(data, dict):
+                            return data
+                    except json.JSONDecodeError:
+                        continue
+
+        # Fallback: try to find JSON object
+        try:
+            start = content.find("{")
+            end = content.rfind("}") + 1
+            if start >= 0 and end > start:
+                data = json.loads(content[start:end])
+                if isinstance(data, dict):
+                    return data
+        except json.JSONDecodeError:
+            pass
+
+        return None
