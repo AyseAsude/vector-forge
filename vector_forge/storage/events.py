@@ -83,7 +83,8 @@ class LLMResponseEvent(BaseModel):
     content: Optional[str] = None
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     finish_reason: str = "stop"
-    usage: Optional[Dict[str, int]] = None
+    # Usage can contain nested dicts (token details) and floats (cost) from providers
+    usage: Optional[Dict[str, Any]] = None
     latency_ms: float = 0.0
     error: Optional[str] = None
 
