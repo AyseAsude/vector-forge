@@ -514,9 +514,10 @@ class BehaviorAnalyzerProtocol(Protocol):
 
 @runtime_checkable
 class SeedGeneratorProtocol(Protocol):
-    """Protocol for generating quality seeds.
+    """Protocol for generating seeds for contrast pair generation.
 
-    Implementations generate and score seeds based on behavior analysis.
+    Seeds are generated in one shot. Pair validation is the real quality
+    gate - no separate scoring step is required.
     """
 
     async def generate(
@@ -524,30 +525,14 @@ class SeedGeneratorProtocol(Protocol):
         analysis: BehaviorAnalysis,
         count: int,
     ) -> List[Seed]:
-        """Generate quality seeds for the behavior.
+        """Generate seeds for the behavior.
 
         Args:
             analysis: Behavior analysis to base seeds on.
             count: Number of seeds to generate.
 
         Returns:
-            List of quality seeds, sorted by quality score.
-        """
-        ...
-
-    async def score_seeds(
-        self,
-        seeds: List[Seed],
-        analysis: BehaviorAnalysis,
-    ) -> List[Tuple[Seed, float]]:
-        """Score seeds by quality.
-
-        Args:
-            seeds: Seeds to score.
-            analysis: Behavior analysis for context.
-
-        Returns:
-            List of (seed, score) tuples, sorted by score descending.
+            List of seeds with quality_score set from expected_contrast_strength.
         """
         ...
 

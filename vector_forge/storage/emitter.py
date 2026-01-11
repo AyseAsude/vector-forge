@@ -266,17 +266,13 @@ class EventEmitter:
     def emit_seed_generation_completed(
         self,
         total_generated: int,
-        total_filtered: int,
         avg_quality: float,
-        min_quality_threshold: float,
     ) -> None:
         """Emit seed generation batch completed event."""
         self.emit(
             SeedGenerationCompletedEvent(
                 total_generated=total_generated,
-                total_filtered=total_filtered,
                 avg_quality=avg_quality,
-                min_quality_threshold=min_quality_threshold,
             ),
             source="seed_generator",
         )

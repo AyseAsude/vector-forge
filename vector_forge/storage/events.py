@@ -453,9 +453,7 @@ class SeedGenerationCompletedEvent(BaseModel):
 
     event_type: Literal["seed.generation_completed"] = "seed.generation_completed"
     total_generated: int
-    total_filtered: int
     avg_quality: float
-    min_quality_threshold: float
 
 
 class SeedAssignedEvent(BaseModel):

@@ -94,10 +94,6 @@ class ContrastPipelineConfig:
     max_regeneration_attempts: int = 2
     """Maximum attempts to regenerate a failed pair."""
 
-    # Seed quality
-    min_seed_quality: float = 6.0
-    """Minimum quality score for seeds."""
-
     # Generation settings
     generation_temperature: float = 0.7
     """Temperature for pair generation."""
@@ -142,7 +138,6 @@ class ContrastPipelineConfig:
             core_seeds_per_sample=20,
             unique_seeds_per_sample=5,
             max_regeneration_attempts=1,
-            min_seed_quality=5.0,
         )
 
     @classmethod
@@ -153,7 +148,6 @@ class ContrastPipelineConfig:
             core_seeds_per_sample=50,
             unique_seeds_per_sample=15,
             max_regeneration_attempts=3,
-            min_seed_quality=7.0,
             min_dimension_score=7.0,
             min_structural_score=8.0,
             min_semantic_score=5.0,
@@ -251,10 +245,7 @@ class ContrastPipeline:
 
         # Initialize components (Dependency Injection)
         self._analyzer = BehaviorAnalyzer(llm_client)
-        self._seed_generator = SeedGenerator(
-            llm_client,
-            min_quality_score=self._config.min_seed_quality,
-        )
+        self._seed_generator = SeedGenerator(llm_client)
         self._pair_generator = ContrastPairGenerator(
             llm_client,
             temperature=self._config.generation_temperature,
@@ -388,9 +379,7 @@ class ContrastPipeline:
         self._emit(
             "emit_seed_generation_completed",
             total_generated=len(all_seeds),
-            total_filtered=total_seeds_needed - len(all_seeds),
             avg_quality=avg_quality,
-            min_quality_threshold=self._config.min_seed_quality,
         )
 
         # Step 3: Split seeds into core and unique pools
