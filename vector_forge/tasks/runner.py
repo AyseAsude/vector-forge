@@ -5,9 +5,9 @@ optimization-based steering vector approach from steering-vectors library.
 
 Architecture:
 - Uses SteeringOptimizer for gradient-based vector extraction
-- Supports multiple layer strategies with dynamic layer detection
+- Profile-based memory management (measures actual usage, not estimates)
+- Memory-aware scheduling with OOM protection
 - Full reproducibility via comprehensive result tracking
-- Complete event sourcing for reproducibility and debugging
 """
 
 from dataclasses import dataclass, field
@@ -37,143 +37,6 @@ from steering_vectors.optimization.callbacks import (
     EarlyStoppingCallback,
 )
 
-
-# ============================================================================
-# Memory Estimation
-# ============================================================================
-
-
-class MemoryEstimator:
-    """Estimates GPU memory requirements for steering vector optimization.
-
-    Memory usage per concurrent extraction depends on:
-    - Model size (parameters × dtype size)
-    - Batch size (more sequences per forward pass = more activations)
-    - Gradient checkpointing (enabled = lower memory, we assume it's on)
-
-    Constants derived empirically on A100-40GB with Llama-3.1-8B (15GB):
-    - batch_size=16: ~7.4 GB per extraction
-    - batch_size=8: ~3.8 GB per extraction
-    - batch_size=4: ~3.0 GB per extraction
-
-    Formula: memory_gb = BASE_OVERHEAD + model_gb × (RATIO + BATCH_FACTOR × batch_size)
-
-    This scales properly for:
-    - Small models (1-3B): BASE_OVERHEAD ensures minimum allocation
-    - Medium models (7-14B): Linear scaling with model size
-    - Large models (30-70B): Same linear scaling, auto-limits concurrency
-    """
-
-    # Fixed overhead per extraction (optimizer states, hooks, CUDA context)
-    BASE_OVERHEAD_GB: float = 0.5
-
-    # Base activation memory as fraction of model size (with gradient checkpointing)
-    BASE_RATIO: float = 0.10
-
-    # Additional memory per batch element (as fraction of model size)
-    BATCH_FACTOR: float = 0.025
-
-    # Safety margin - only use this fraction of calculated available memory
-    # Accounts for CUDA fragmentation, PyTorch overhead, and estimation errors
-    SAFETY_MARGIN: float = 0.70
-
-    # Minimum free GPU memory (GB) required before allowing any extraction
-    MIN_FREE_GB: float = 4.0
-
-    # Absolute minimum memory per extraction (GB) regardless of model size
-    MIN_PER_EXTRACTION_GB: float = 1.5
-
-    @classmethod
-    def get_model_size_gb(cls, model: PreTrainedModel) -> float:
-        """Calculate model size in GB from parameters."""
-        try:
-            total_bytes = sum(
-                p.numel() * p.element_size() for p in model.parameters()
-            )
-            return total_bytes / (1024**3)
-        except Exception:
-            return 0.0
-
-    @classmethod
-    def estimate_per_extraction_gb(
-        cls,
-        model_size_gb: float,
-        batch_size: int,
-    ) -> float:
-        """Estimate memory needed per concurrent extraction.
-
-        Args:
-            model_size_gb: Model size in GB.
-            batch_size: Optimization batch size (sequences per forward pass).
-
-        Returns:
-            Estimated GB per extraction.
-        """
-        # Scaling component based on model size and batch size
-        ratio = cls.BASE_RATIO + (cls.BATCH_FACTOR * batch_size)
-        scaling = model_size_gb * ratio
-
-        # Total = fixed overhead + scaling component
-        estimated = cls.BASE_OVERHEAD_GB + scaling
-
-        return max(cls.MIN_PER_EXTRACTION_GB, estimated)
-
-    @classmethod
-    def get_safe_concurrency(
-        cls,
-        model: PreTrainedModel,
-        batch_size: int,
-        max_concurrent: int,
-    ) -> int:
-        """Calculate safe number of concurrent extractions.
-
-        Args:
-            model: The model being used for extraction.
-            batch_size: Optimization batch size.
-            max_concurrent: Maximum allowed concurrency (from config).
-
-        Returns:
-            Safe number of concurrent extractions (at least 1).
-        """
-        if not torch.cuda.is_available():
-            return max_concurrent
-
-        try:
-            # Get GPU memory state
-            props = torch.cuda.get_device_properties(0)
-            total_gb = props.total_memory / (1024**3)
-            reserved_gb = torch.cuda.memory_reserved(0) / (1024**3)
-            free_gb = total_gb - reserved_gb
-
-            # Check minimum free memory
-            if free_gb < cls.MIN_FREE_GB:
-                logger.warning(
-                    f"Low GPU memory: {free_gb:.1f}GB free, "
-                    f"need {cls.MIN_FREE_GB}GB minimum"
-                )
-                return 1
-
-            # Estimate memory per extraction
-            model_size_gb = cls.get_model_size_gb(model)
-            per_extraction_gb = cls.estimate_per_extraction_gb(model_size_gb, batch_size)
-
-            # Calculate safe concurrency with safety margin
-            available_gb = free_gb * cls.SAFETY_MARGIN
-            safe = max(1, int(available_gb / per_extraction_gb))
-            safe = min(safe, max_concurrent)
-
-            logger.info(
-                f"Memory estimation: {total_gb:.1f}GB total, {free_gb:.1f}GB free, "
-                f"model={model_size_gb:.1f}GB, batch_size={batch_size}, "
-                f"~{per_extraction_gb:.1f}GB/extraction -> safe_concurrency={safe}"
-            )
-
-            return safe
-
-        except Exception as e:
-            logger.warning(f"Memory estimation failed: {e}, defaulting to 1")
-            return 1
-
 from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
 from vector_forge.tasks.sample import ExtractionSample
 from vector_forge.tasks.task import ExtractionTask, TaskResult, SampleResult
@@ -183,6 +46,12 @@ from vector_forge.tasks.adapter import (
     ContrastToTrainingAdapter,
     OptimizationResultData,
     DatapointSerializer,
+)
+from vector_forge.tasks.gpu_memory import (
+    ExtractionMemoryProfiler,
+    MemoryAwareSemaphore,
+    OOMHandler,
+    clear_gpu_memory,
 )
 from vector_forge.contrast.protocols import ValidatedPair, SampleDataset
 
@@ -301,9 +170,9 @@ class TaskRunner:
     for high-quality steering vector extraction.
 
     Features:
-    - Smart concurrency: Adjusts parallelism based on GPU memory
-    - Memory cleanup: Clears CUDA cache between extractions
-    - Batched optimization: Uses efficient batched forward passes
+    - Profile-based memory management (measures actual usage, not estimates)
+    - Memory-aware scheduling with automatic OOM recovery
+    - Batched optimization for efficient forward passes
 
     Example:
         >>> runner = TaskRunner(backend, llm, max_concurrent=8)
@@ -342,6 +211,10 @@ class TaskRunner:
             gradient_checkpointing=True,
         )
 
+        # Memory management components
+        self._memory_profiler = ExtractionMemoryProfiler(self._sv_backend)
+        self._oom_handler = OOMHandler()
+
         # Cache model info
         self._num_layers = self._sv_backend.get_num_layers()
         self._hidden_dim = self._sv_backend.get_hidden_dim()
@@ -350,14 +223,6 @@ class TaskRunner:
             f"TaskRunner initialized: {self._num_layers} layers, "
             f"hidden_dim={self._hidden_dim}"
         )
-
-    def _clear_gpu_memory(self) -> None:
-        """Clear GPU memory between extractions."""
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
 
     def on_progress(self, callback: Callable[[RunnerProgress], None]) -> None:
         """Register a progress callback."""
@@ -467,30 +332,44 @@ class TaskRunner:
         task: ExtractionTask,
         sample_datasets: Dict[int, SampleDataset],
     ) -> List[SampleResult]:
-        """Run all extractions with smart concurrency control.
+        """Run all extractions with profile-based memory management.
 
-        Uses dynamic concurrency based on available GPU memory to prevent OOM.
-        Falls back to sequential execution if GPU memory is limited.
+        Uses actual memory profiling to determine safe concurrency, with
+        memory-aware scheduling and automatic OOM recovery.
         """
-        # Determine safe concurrency based on GPU memory and batch size
+        adapter = ContrastToTrainingAdapter()
         batch_size = task.config.optimization.batch_size
-        safe_concurrency = MemoryEstimator.get_safe_concurrency(
-            model=self._backend.model,
-            batch_size=batch_size,
-            max_concurrent=self._max_extractions,
+
+        # Prepare sample datapoints for profiling
+        profile_datapoints = self._get_profile_datapoints(
+            task, sample_datasets, adapter
         )
+
+        # Profile actual memory usage (cached after first call)
+        memory_profile = self._memory_profiler.profile(
+            datapoints=profile_datapoints,
+            batch_size=batch_size,
+            layer=self._num_layers // 2,
+        )
+
+        # Create memory-aware semaphore based on profiled memory
+        safe_concurrency = min(
+            memory_profile.safe_concurrent_extractions,
+            self._max_extractions,
+        )
+        semaphore = MemoryAwareSemaphore(
+            memory_per_extraction_gb=memory_profile.memory_per_extraction_gb,
+            max_concurrent=safe_concurrency,
+        )
+
         logger.info(
             f"Running {len(task.samples)} extractions with concurrency: {safe_concurrency} "
-            f"(configured max: {self._max_extractions}, batch_size: {batch_size})"
+            f"(profiled: {memory_profile.memory_per_extraction_gb:.1f}GB/extraction, "
+            f"free: {memory_profile.free_memory_gb:.1f}GB)"
         )
 
-        semaphore = asyncio.Semaphore(safe_concurrency)
-        results: List[SampleResult] = []
         completed = 0
         started_at = time.time()
-
-        # Convert datasets to datapoints
-        adapter = ContrastToTrainingAdapter()
 
         async def extract_one(
             sample: ExtractionSample,
@@ -498,10 +377,10 @@ class TaskRunner:
         ) -> SampleResult:
             nonlocal completed
 
-            # Clear GPU memory before acquiring semaphore
-            self._clear_gpu_memory()
-
             async with semaphore:
+                # Clear GPU memory after acquiring slot
+                clear_gpu_memory()
+
                 start_time = time.time()
 
                 # Get dataset for this sample
@@ -549,24 +428,16 @@ class TaskRunner:
                         datapoints, task.config.datapoints_per_sample
                     )
 
-                # Emit datapoint events for complete traceability
-                for dp in datapoints:
-                    # TrainingDatapoint uses dst_completions/src_completions (lists)
-                    dst = dp.dst_completions[0] if dp.dst_completions else ""
-                    src = dp.src_completions[0] if dp.src_completions else None
-                    self._emit(
-                        "emit_datapoint_added",
-                        datapoint_id=self._generate_id("dp"),
-                        prompt=dp.prompt[:500] if dp.prompt else "",
-                        positive_completion=dst[:500] if dst else "",
-                        negative_completion=src[:500] if src else None,
-                        domain=f"sample_{sample_idx}",
-                        format_type="contrast_pair",
-                    )
+                # Emit datapoint events for traceability
+                self._emit_datapoint_events(datapoints, sample_idx)
 
                 try:
-                    extraction = await self._extract_vector(
-                        sample, datapoints, task.config
+                    # Run extraction with OOM protection
+                    extraction = await self._oom_handler.run_with_protection(
+                        lambda: self._extract_vector_sync(
+                            sample, datapoints, task.config
+                        ),
+                        cleanup_fn=clear_gpu_memory,
                     )
                     extraction_time = time.time() - start_time
 
@@ -594,11 +465,12 @@ class TaskRunner:
                     )
 
                 completed += 1
+                failed_count = 0 if result.is_valid else 1
                 self._report_progress(
                     total=len(task.samples),
                     extractions=completed,
                     evaluations=0,
-                    failed=sum(1 for r in results if not r.is_valid),
+                    failed=failed_count,
                     phase="extracting",
                     started=started_at,
                 )
@@ -617,24 +489,68 @@ class TaskRunner:
 
         return list(results)
 
-    async def _extract_vector(
+    def _get_profile_datapoints(
+        self,
+        task: ExtractionTask,
+        sample_datasets: Dict[int, SampleDataset],
+        adapter: ContrastToTrainingAdapter,
+    ) -> List[TrainingDatapoint]:
+        """Get a small set of datapoints for memory profiling.
+
+        Uses the first available sample's data to profile memory usage.
+        """
+        for idx, sample in enumerate(task.samples):
+            dataset = sample_datasets.get(idx)
+            if dataset and dataset.valid_pairs:
+                datapoints = adapter.convert_with_bootstrap(
+                    dataset.valid_pairs[:3],  # Use subset for profiling
+                    ratio=1.0,
+                    seed=sample.config.seed,
+                )
+                if datapoints:
+                    return datapoints[:4]  # Limit to 4 datapoints
+
+        # Fallback: create minimal dummy datapoints
+        logger.warning("No valid datapoints found for profiling, using dummy data")
+        return [
+            TrainingDatapoint(
+                prompt="Test prompt for memory profiling.",
+                dst_completions=["Positive response."],
+                src_completions=["Negative response."],
+            )
+            for _ in range(2)
+        ]
+
+    def _emit_datapoint_events(
+        self,
+        datapoints: List[TrainingDatapoint],
+        sample_idx: int,
+    ) -> None:
+        """Emit events for datapoints (extracted for cleaner code)."""
+        for dp in datapoints:
+            dst = dp.dst_completions[0] if dp.dst_completions else ""
+            src = dp.src_completions[0] if dp.src_completions else None
+            self._emit(
+                "emit_datapoint_added",
+                datapoint_id=self._generate_id("dp"),
+                prompt=dp.prompt[:500] if dp.prompt else "",
+                positive_completion=dst[:500] if dst else "",
+                negative_completion=src[:500] if src else None,
+                domain=f"sample_{sample_idx}",
+                format_type="contrast_pair",
+            )
+
+    def _extract_vector_sync(
         self,
         sample: ExtractionSample,
         datapoints: List[TrainingDatapoint],
         config: TaskConfig,
     ) -> ExtractionResult:
-        """Extract a steering vector using optimization.
+        """Synchronous vector extraction (called by OOMHandler).
 
-        Args:
-            sample: The extraction sample configuration.
-            datapoints: Training datapoints.
-            config: Task configuration.
-
-        Returns:
-            ExtractionResult with vector and metadata.
+        This is the core optimization logic, separated from async wrapper.
         """
-        start_time = time.time()
-        sample_idx = sample.config.seed % 1000  # Use seed as sample identifier
+        sample_idx = sample.config.seed % 1000
 
         if not datapoints:
             self._emit(
@@ -655,13 +571,15 @@ class TaskRunner:
                 error="No datapoints provided",
             )
 
+        start_time = time.time()
+
         # Set random seed for reproducibility
         torch.manual_seed(sample.config.seed)
 
         # Determine target layer
         layer = self._get_target_layer(sample)
 
-        # Build optimization config with batching settings
+        # Build optimization config
         opt_config = config.optimization
         sv_config = SVOptimizationConfig(
             lr=sample.config.get_lr(opt_config.lr),
@@ -706,7 +624,7 @@ class TaskRunner:
             patience=opt_config.convergence_patience,
         ))
 
-        # Create optimizer
+        # Create optimizer and run
         steering = VectorSteering()
         optimizer = SteeringOptimizer(
             backend=self._sv_backend,
@@ -716,13 +634,7 @@ class TaskRunner:
         )
 
         try:
-            # Run optimization (synchronous, wrap in executor for async)
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: optimizer.optimize(datapoints, layer=layer),
-            )
-
+            result = optimizer.optimize(datapoints, layer=layer)
             duration = time.time() - start_time
 
             # Emit optimization completed event
@@ -732,7 +644,7 @@ class TaskRunner:
                 layer=layer,
                 final_loss=result.final_loss,
                 iterations=result.iterations,
-                loss_history=history_callback.losses[:50],  # Limit to first 50 for storage
+                loss_history=history_callback.losses[:50],
                 datapoints_used=len(datapoints),
                 duration_seconds=duration,
                 success=True,
@@ -772,6 +684,31 @@ class TaskRunner:
                 error=str(e),
             )
             raise
+
+    async def _extract_vector(
+        self,
+        sample: ExtractionSample,
+        datapoints: List[TrainingDatapoint],
+        config: TaskConfig,
+    ) -> ExtractionResult:
+        """Extract a steering vector using optimization (async wrapper).
+
+        This is an async wrapper around _extract_vector_sync for use in
+        contexts that need async compatibility (e.g., run_single_extraction).
+
+        Args:
+            sample: The extraction sample configuration.
+            datapoints: Training datapoints.
+            config: Task configuration.
+
+        Returns:
+            ExtractionResult with vector and metadata.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._extract_vector_sync(sample, datapoints, config),
+        )
 
     def _get_target_layer(self, sample: ExtractionSample) -> int:
         """Determine target layer based on sample configuration."""
