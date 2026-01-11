@@ -100,6 +100,10 @@ class VectorForgeApp(App):
 
     def on_mount(self) -> None:
         """Initialize app on mount."""
+        # Configure CUDA memory allocator early to prevent fragmentation
+        from vector_forge.tasks.gpu_memory import configure_cuda_memory
+        configure_cuda_memory()
+
         # Use Textual's built-in gruvbox theme
         self.theme = DEFAULT_THEME
 

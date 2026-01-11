@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, List, Optional, TypeVar
 
@@ -23,6 +24,24 @@ if TYPE_CHECKING:
     from steering_vectors import HuggingFaceBackend, TrainingDatapoint
 
 logger = logging.getLogger(__name__)
+
+
+def configure_cuda_memory() -> None:
+    """Configure CUDA memory allocator for better performance.
+
+    Sets PYTORCH_CUDA_ALLOC_CONF to reduce fragmentation and improve
+    memory utilization. Should be called at startup before any CUDA ops.
+    """
+    # Enable expandable segments to reduce fragmentation
+    # This is the fix suggested by PyTorch for OOM errors with fragmentation
+    current = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
+
+    if "expandable_segments" not in current:
+        new_settings = "expandable_segments:True"
+        if current:
+            new_settings = f"{current},{new_settings}"
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = new_settings
+        logger.info(f"Set PYTORCH_CUDA_ALLOC_CONF={new_settings}")
 
 T = TypeVar("T")
 

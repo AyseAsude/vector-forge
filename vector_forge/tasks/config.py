@@ -316,9 +316,9 @@ class ContrastConfig(BaseModel):
 
     # Parallelism
     max_concurrent_generations: int = Field(
-        default=16,
+        default=64,
         ge=1,
-        le=64,
+        le=128,
         description="Maximum concurrent LLM API calls for pair generation",
     )
 
@@ -358,7 +358,6 @@ class ContrastConfig(BaseModel):
             min_dst_score=8.0,
             max_src_score=2.0,
             min_contrast_quality=7.0,
-            max_concurrent_generations=8,
         )
 
     @classmethod
@@ -639,19 +638,21 @@ class TaskConfig(BaseModel):
 
     # Parallelism control
     # NOTE: MemoryEstimator automatically limits concurrency based on GPU memory
-    # and batch size. Higher values here allow more parallelism on larger GPUs.
+    # and extraction method. CAA allows much higher concurrency than gradient.
+    # For CAA: max 128 concurrent extractions (forward-only, light memory)
+    # For Gradient: max 32 concurrent extractions (forward+backward, heavy memory)
     max_concurrent_extractions: int = Field(
-        default=16,
+        default=128,
         ge=1,
-        le=32,
+        le=256,
         description="Maximum parallel extraction workers (auto-limited by GPU memory)",
     )
 
     max_concurrent_evaluations: int = Field(
-        default=16,
+        default=64,
         ge=1,
-        le=64,
-        description="Maximum parallel evaluation generations",
+        le=128,
+        description="Maximum parallel LLM API calls for evaluation",
     )
 
     # Evaluation settings
@@ -718,7 +719,6 @@ class TaskConfig(BaseModel):
             optimization=OptimizationConfig.fast(),
             contrast=ContrastConfig.fast(),
             datapoints_per_sample=25,
-            max_concurrent_extractions=16,  # Auto-limited by MemoryEstimator
             evaluation=EvaluationConfig.fast(),
             top_k=2,
         )
@@ -730,7 +730,6 @@ class TaskConfig(BaseModel):
             optimization=OptimizationConfig.standard(),
             contrast=ContrastConfig.standard(),
             datapoints_per_sample=50,
-            max_concurrent_extractions=16,  # Auto-limited by MemoryEstimator
         )
 
     @classmethod
@@ -748,8 +747,6 @@ class TaskConfig(BaseModel):
             optimization=OptimizationConfig.thorough(),
             contrast=ContrastConfig.thorough(),
             datapoints_per_sample=80,
-            max_concurrent_extractions=16,  # Auto-limited by MemoryEstimator
-            max_concurrent_evaluations=32,
             evaluation=EvaluationConfig.thorough(),
             top_k=8,
         )
