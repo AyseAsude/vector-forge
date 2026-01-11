@@ -17,6 +17,7 @@ import json
 import logging
 
 from vector_forge.llm import JSON_RESPONSE_FORMAT
+from vector_forge.core.concurrency import get_llm_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -149,21 +150,21 @@ class BatchedJudge:
             batching_strategy: Strategy for grouping outputs.
             temperature: LLM temperature for consistency.
             max_tokens: Max tokens for judge response (None = provider default).
-            max_concurrent: Maximum concurrent LLM API calls.
+            max_concurrent: Maximum concurrent LLM API calls (deprecated, uses global config).
         """
         self._llm = llm_client
         self._strategy = batching_strategy
         self._temperature = temperature
         self._max_tokens = max_tokens
-        self._max_concurrent = max_concurrent
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        # Note: max_concurrent is deprecated; we use the shared semaphore
 
     def _get_semaphore(self) -> asyncio.Semaphore:
-        """Get or create semaphore for current event loop."""
-        # Create semaphore lazily to ensure it's in the right event loop
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self._max_concurrent)
-        return self._semaphore
+        """Get the shared LLM semaphore from the concurrency manager.
+
+        Using a shared semaphore ensures all LLM calls across all judges
+        respect the same rate limit, preventing API throttling.
+        """
+        return get_llm_semaphore()
 
     async def judge_behavior_batch(
         self,
@@ -432,17 +433,26 @@ class SpecificityJudge:
         max_tokens: Optional[int] = None,
         max_concurrent: int = 64,
     ):
+        """Initialize the specificity judge.
+
+        Args:
+            llm_client: LLM client for generating judgments.
+            temperature: LLM temperature for consistency.
+            max_tokens: Max tokens for judge response (None = provider default).
+            max_concurrent: Maximum concurrent LLM API calls (deprecated, uses global config).
+        """
         self._llm = llm_client
         self._temperature = temperature
         self._max_tokens = max_tokens
-        self._max_concurrent = max_concurrent
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        # Note: max_concurrent is deprecated; we use the shared semaphore
 
     def _get_semaphore(self) -> asyncio.Semaphore:
-        """Get or create semaphore for current event loop."""
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self._max_concurrent)
-        return self._semaphore
+        """Get the shared LLM semaphore from the concurrency manager.
+
+        Using a shared semaphore ensures all LLM calls across all judges
+        respect the same rate limit, preventing API throttling.
+        """
+        return get_llm_semaphore()
 
     async def judge_specificity_batch(
         self,

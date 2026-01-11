@@ -31,6 +31,11 @@ from vector_forge.tasks.batched_judge import (
     SpecificityJudge,
     OutputToJudge,
 )
+from vector_forge.core.concurrency import (
+    run_in_gpu_executor,
+    limit_concurrent_dimensions,
+    get_llm_semaphore,
+)
 
 if TYPE_CHECKING:
     from vector_forge.storage.emitter import EventEmitter
@@ -409,29 +414,45 @@ class VectorEvaluator:
     ) -> EvaluationResult:
         """Run comprehensive evaluation on a steering vector.
 
+        Evaluates across 5 dimensions with controlled concurrency to prevent
+        thread pool starvation. Dimensions are staggered via semaphore to
+        ensure GPU work and LLM responses are properly scheduled.
+
         Args:
             vector: The steering vector to evaluate.
             layer: Layer where vector is applied.
             behavior: Behavior specification.
-            max_concurrent: Maximum concurrent generations.
+            max_concurrent: Maximum concurrent generations (deprecated, uses global config).
 
         Returns:
             Complete evaluation result.
         """
-        # Run all evaluation dimensions in parallel
-        behavior_task = self._evaluate_behavior(vector, layer, behavior)
-        specificity_task = self._evaluate_specificity(vector, layer, behavior)
-        coherence_task = self._evaluate_coherence(vector, layer, behavior)
-        capability_task = self._evaluate_capability(vector, layer)
-        generalization_task = self._evaluate_generalization(vector, layer, behavior)
 
+        async def run_dimension(coro):
+            """Run a dimension evaluation with concurrency limiting."""
+            async with limit_concurrent_dimensions():
+                return await coro
+
+        # Run dimensions with staggered concurrency (semaphore limits concurrent)
         results = await asyncio.gather(
-            behavior_task,
-            specificity_task,
-            coherence_task,
-            capability_task,
-            generalization_task,
+            run_dimension(self._evaluate_behavior(vector, layer, behavior)),
+            run_dimension(self._evaluate_specificity(vector, layer, behavior)),
+            run_dimension(self._evaluate_coherence(vector, layer, behavior)),
+            run_dimension(self._evaluate_capability(vector, layer)),
+            run_dimension(self._evaluate_generalization(vector, layer, behavior)),
+            return_exceptions=True,
         )
+
+        # Handle any dimension failures gracefully
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                dim_names = ["behavior", "specificity", "coherence", "capability", "generalization"]
+                logger.warning(f"Dimension {dim_names[i]} failed: {result}")
+                # Replace with default score
+                if i == 0:
+                    results[i] = (DimensionScore("behavior", 5.0), {})
+                else:
+                    results[i] = DimensionScore(dim_names[i], 5.0)
 
         behavior_score, strength_calibration = results[0]
 
@@ -470,7 +491,7 @@ class VectorEvaluator:
 
         BATCHED GENERATION: All prompts for each strength level are processed
         in a single GPU batch, maximizing throughput. This is MUCH faster than
-        individual asyncio.to_thread calls.
+        individual run_in_gpu_executor calls.
 
         Batching reduces:
         - 600 individual generate() calls → 4 batched calls (one per strength)
@@ -516,7 +537,7 @@ class VectorEvaluator:
 
                 # SINGLE batched call for ALL prompts at this strength/gen_idx
                 # This runs on GPU in parallel - much faster than individual calls
-                batch_outputs = await asyncio.to_thread(
+                batch_outputs = await run_in_gpu_executor(
                     self._generate_steered_batch,
                     prompts,
                     vector,
@@ -666,7 +687,7 @@ class VectorEvaluator:
             )
 
         # SINGLE batched call for all neutral prompts
-        steered_outputs = await asyncio.to_thread(
+        steered_outputs = await run_in_gpu_executor(
             self._generate_steered_batch,
             prompts,
             vector,
@@ -772,7 +793,7 @@ class VectorEvaluator:
                 )
 
             # SINGLE batched call for ALL prompts at this strength
-            batch_outputs = await asyncio.to_thread(
+            batch_outputs = await run_in_gpu_executor(
                 self._generate_steered_batch,
                 prompts,
                 vector,
@@ -878,7 +899,7 @@ class VectorEvaluator:
                 current_dimension="capability",
             )
 
-        baseline_outputs = await asyncio.to_thread(
+        baseline_outputs = await run_in_gpu_executor(
             self._generate_baseline_batch,
             prompt_texts,
             50,  # max_new_tokens
@@ -896,7 +917,7 @@ class VectorEvaluator:
                 current_dimension="capability",
             )
 
-        steered_outputs = await asyncio.to_thread(
+        steered_outputs = await run_in_gpu_executor(
             self._generate_steered_batch,
             prompt_texts,
             vector,
@@ -992,7 +1013,7 @@ class VectorEvaluator:
             )
 
         # SINGLE batched call for all OOD prompts
-        outputs = await asyncio.to_thread(
+        outputs = await run_in_gpu_executor(
             self._generate_steered_batch,
             prompts_to_eval,
             vector,

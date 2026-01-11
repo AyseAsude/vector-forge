@@ -47,6 +47,10 @@ from vector_forge.tasks.config import (
     AggregationStrategy,
     ExtractionMethod,
 )
+from vector_forge.core.concurrency import (
+    get_concurrency_manager,
+    limit_concurrent_evaluations,
+)
 from vector_forge.tasks.sample import ExtractionSample
 from vector_forge.tasks.task import ExtractionTask, TaskResult, SampleResult
 from vector_forge.tasks.evaluation import VectorEvaluator
@@ -974,97 +978,104 @@ class TaskRunner:
         started_at = time.time()
 
         async def evaluate_one(result: SampleResult) -> Optional[Exception]:
-            """Evaluate a single result, returning None on success or Exception on failure."""
+            """Evaluate a single result, returning None on success or Exception on failure.
+
+            Uses limit_concurrent_evaluations() to prevent thread pool starvation
+            from too many concurrent GPU operations.
+            """
             nonlocal completed
-            start_time = time.time()
-            eval_id = self._generate_id("eval")
-            sample_idx = result.sample.config.seed % 1000
 
-            # Set evaluation ID for event tracking within evaluator
-            evaluator.set_evaluation_id(eval_id)
+            # Limit concurrent evaluations to prevent thread pool starvation
+            async with limit_concurrent_evaluations():
+                start_time = time.time()
+                eval_id = self._generate_id("eval")
+                sample_idx = result.sample.config.seed % 1000
 
-            # Emit evaluation started event
-            self._emit(
-                "emit_evaluation_started",
-                evaluation_id=eval_id,
-                eval_type="comprehensive",
-                vector_id=f"vector_{sample_idx}",
-                layer=result.layer,
-                strength_levels=config.evaluation.strength_levels,
-                num_prompts=config.evaluation.behavior_prompts,
-                dimensions=["behavior", "specificity", "coherence", "capability", "generalization"],
-            )
+                # Set evaluation ID for event tracking within evaluator
+                evaluator.set_evaluation_id(eval_id)
 
-            try:
-                evaluation = await evaluator.evaluate(
-                    result.vector,
-                    result.layer,
-                    behavior,
-                    config.max_concurrent_evaluations,
-                )
-
-                result.evaluation = evaluation
-                result.overall_score = evaluation.overall_score
-                result.scores = evaluation.scores_dict
-                result.recommended_strength = evaluation.recommended_strength
-                result.evaluation_time_seconds = time.time() - start_time
-
-                # Emit evaluation completed event
+                # Emit evaluation started event
                 self._emit(
-                    "emit_evaluation_completed",
+                    "emit_evaluation_started",
                     evaluation_id=eval_id,
-                    scores=evaluation.scores_dict,
-                    dimension_scores={
-                        "behavior": evaluation.behavior_score.score if evaluation.behavior_score else 0,
-                        "specificity": evaluation.specificity_score.score if evaluation.specificity_score else 0,
-                        "coherence": evaluation.coherence_score.score if evaluation.coherence_score else 0,
-                        "capability": evaluation.capability_score.score if evaluation.capability_score else 0,
-                        "generalization": evaluation.generalization_score.score if evaluation.generalization_score else 0,
-                    },
-                    recommended_strength=evaluation.recommended_strength,
-                    verdict="passed" if evaluation.overall_score > 0.5 else "needs_refinement",
-                    citations=None,
-                    recommendations=None,
-                    raw_judge_output=getattr(evaluation, 'raw_output', None),
-                    duration_seconds=time.time() - start_time,
-                    total_generations=evaluator._generation_count,
-                    total_judge_calls=evaluator._judge_call_count,
+                    eval_type="comprehensive",
+                    vector_id=f"vector_{sample_idx}",
+                    layer=result.layer,
+                    strength_levels=config.evaluation.strength_levels,
+                    num_prompts=config.evaluation.behavior_prompts,
+                    dimensions=["behavior", "specificity", "coherence", "capability", "generalization"],
                 )
 
-                completed += 1
-                self._report_progress(
-                    total=len(results),
-                    extractions=len(results),
-                    evaluations=completed,
-                    failed=len(results) - len(valid_results),
-                    phase="evaluating",
-                    started=started_at,
-                )
-                return None
+                try:
+                    evaluation = await evaluator.evaluate(
+                        result.vector,
+                        result.layer,
+                        behavior,
+                        config.max_concurrent_evaluations,
+                    )
 
-            except Exception as e:
-                logger.warning(f"Evaluation failed for sample {sample_idx}: {e}")
-                # Emit failed evaluation event
-                self._emit(
-                    "emit_evaluation_completed",
-                    evaluation_id=eval_id,
-                    scores={},
-                    recommended_strength=1.0,
-                    verdict="failed",
-                    citations=None,
-                    recommendations=None,
-                    raw_judge_output=f"Error: {str(e)}",
-                )
-                completed += 1
-                self._report_progress(
-                    total=len(results),
-                    extractions=len(results),
-                    evaluations=completed,
-                    failed=len(results) - len(valid_results),
-                    phase="evaluating",
-                    started=started_at,
-                )
-                return e
+                    result.evaluation = evaluation
+                    result.overall_score = evaluation.overall_score
+                    result.scores = evaluation.scores_dict
+                    result.recommended_strength = evaluation.recommended_strength
+                    result.evaluation_time_seconds = time.time() - start_time
+
+                    # Emit evaluation completed event
+                    self._emit(
+                        "emit_evaluation_completed",
+                        evaluation_id=eval_id,
+                        scores=evaluation.scores_dict,
+                        dimension_scores={
+                            "behavior": evaluation.behavior_score.score if evaluation.behavior_score else 0,
+                            "specificity": evaluation.specificity_score.score if evaluation.specificity_score else 0,
+                            "coherence": evaluation.coherence_score.score if evaluation.coherence_score else 0,
+                            "capability": evaluation.capability_score.score if evaluation.capability_score else 0,
+                            "generalization": evaluation.generalization_score.score if evaluation.generalization_score else 0,
+                        },
+                        recommended_strength=evaluation.recommended_strength,
+                        verdict="passed" if evaluation.overall_score > 0.5 else "needs_refinement",
+                        citations=None,
+                        recommendations=None,
+                        raw_judge_output=getattr(evaluation, 'raw_output', None),
+                        duration_seconds=time.time() - start_time,
+                        total_generations=evaluator._generation_count,
+                        total_judge_calls=evaluator._judge_call_count,
+                    )
+
+                    completed += 1
+                    self._report_progress(
+                        total=len(results),
+                        extractions=len(results),
+                        evaluations=completed,
+                        failed=len(results) - len(valid_results),
+                        phase="evaluating",
+                        started=started_at,
+                    )
+                    return None
+
+                except Exception as e:
+                    logger.warning(f"Evaluation failed for sample {sample_idx}: {e}")
+                    # Emit failed evaluation event
+                    self._emit(
+                        "emit_evaluation_completed",
+                        evaluation_id=eval_id,
+                        scores={},
+                        recommended_strength=1.0,
+                        verdict="failed",
+                        citations=None,
+                        recommendations=None,
+                        raw_judge_output=f"Error: {str(e)}",
+                    )
+                    completed += 1
+                    self._report_progress(
+                        total=len(results),
+                        extractions=len(results),
+                        evaluations=completed,
+                        failed=len(results) - len(valid_results),
+                        phase="evaluating",
+                        started=started_at,
+                    )
+                    return e
 
         # Use return_exceptions=True to prevent one failure from cancelling others
         eval_results = await asyncio.gather(
