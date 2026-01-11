@@ -541,6 +541,7 @@ class DashboardScreen(Screen):
         Binding("1", "noop", "Dashboard", show=False),  # Current screen
         Binding("2", "go_samples", "Samples", key_display="2"),
         Binding("3", "go_logs", "Logs", key_display="3"),
+        Binding("4", "go_chat", "Chat", key_display="4"),
         Binding("tab", "cycle", "Next Screen"),
         # List navigation
         Binding("j", "next", "Next", show=False),
@@ -756,6 +757,9 @@ class DashboardScreen(Screen):
 
     def action_go_logs(self) -> None:
         self.app.switch_screen("logs")
+
+    def action_go_chat(self) -> None:
+        self.app.switch_screen("chat")
 
     def action_cycle(self) -> None:
         self.app.switch_screen("samples")

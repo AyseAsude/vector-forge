@@ -720,6 +720,7 @@ class SamplesScreen(Screen):
         Binding("1", "go_dashboard", "Dashboard", key_display="1"),
         Binding("2", "noop", "Samples", show=False),
         Binding("3", "go_logs", "Logs", key_display="3"),
+        Binding("4", "go_chat", "Chat", key_display="4"),
         Binding("tab", "cycle", "Next Screen"),
         # List navigation
         Binding("j", "cursor_down", "Next", show=False),
@@ -824,6 +825,9 @@ class SamplesScreen(Screen):
 
     def action_go_logs(self) -> None:
         self.app.switch_screen("logs")
+
+    def action_go_chat(self) -> None:
+        self.app.switch_screen("chat")
 
     def action_cycle(self) -> None:
         self.app.switch_screen("logs")

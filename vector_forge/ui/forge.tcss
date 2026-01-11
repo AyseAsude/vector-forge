@@ -203,3 +203,40 @@ Input {
 Input:focus {
     border: none;
 }
+
+/* ============================================================================
+ * Chat Screen
+ * ============================================================================ */
+
+ChatScreen #content {
+    height: 1fr;
+}
+
+/* Chat message types with distinct colors */
+ChatMessageWidget.-user {
+    border-left: wide $accent;
+    padding-left: 1;
+}
+
+ChatMessageWidget.-baseline {
+    border-left: wide $warning;
+    padding-left: 1;
+}
+
+ChatMessageWidget.-steered {
+    border-left: wide $success;
+    padding-left: 1;
+}
+
+ChatMessageWidget.-streaming {
+    opacity: 0.8;
+}
+
+/* TextArea in chat input */
+ChatInput TextArea {
+    height: auto;
+    min-height: 1;
+    max-height: 5;
+    border: none;
+    background: $background;
+}

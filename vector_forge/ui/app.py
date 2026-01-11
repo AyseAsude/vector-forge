@@ -34,6 +34,7 @@ from vector_forge.ui.screens.dashboard import DashboardScreen
 from vector_forge.ui.screens.samples import SamplesScreen
 from vector_forge.ui.screens.logs import LogsScreen
 from vector_forge.ui.screens.create_task import CreateTaskScreen
+from vector_forge.ui.screens.chat import ChatScreen
 from vector_forge.ui.watcher import (
     NewEvents,
     EventStreamWatcher,
@@ -63,6 +64,7 @@ class VectorForgeApp(App):
         "samples": SamplesScreen,
         "logs": LogsScreen,
         "create_task": CreateTaskScreen,
+        "chat": ChatScreen,
     }
 
     BINDINGS = [
@@ -369,7 +371,7 @@ class VectorForgeApp(App):
         """Switch to a different screen."""
         if screen_name == "create_task":
             self.push_screen(screen_name)
-        elif screen_name in ("dashboard", "samples", "logs"):
+        elif screen_name in ("dashboard", "samples", "logs", "chat"):
             current = getattr(self.screen, "name", None)
             if current is None:
                 current = type(self.screen).__name__.lower().replace("screen", "")
@@ -419,6 +421,7 @@ class VectorForgeApp(App):
                     behavior_name=behavior_name,
                     behavior_description=description,
                     model=message.config.extractor_model,
+                    target_model=message.config.target_model,
                     status=ExtractionStatus.RUNNING,
                     phase=Phase.INITIALIZING,
                     max_outer_iterations=message.config.num_samples,
@@ -463,6 +466,7 @@ class VectorForgeApp(App):
             behavior_name=behavior_name,
             behavior_description=description,
             model=message.config.extractor_model,
+            target_model=message.config.target_model,
             status=ExtractionStatus.PENDING,
             phase=Phase.INITIALIZING,
             max_outer_iterations=message.config.num_samples,

@@ -53,6 +53,14 @@ class MessageRole(str, Enum):
     TOOL = "tool"
 
 
+class ChatMessageType(str, Enum):
+    """Type of chat message for comparison UI."""
+
+    USER = "user"
+    BASELINE = "baseline"  # Unsteered model response
+    STEERED = "steered"  # Steered model response
+
+
 @dataclass
 class ToolCall:
     """A tool call made by an agent."""
@@ -212,7 +220,8 @@ class ExtractionUIState:
     id: str
     behavior_name: str
     behavior_description: str
-    model: str = ""
+    model: str = ""  # Extractor model (API)
+    target_model: str = ""  # Target model for steering (local HF model)
     status: ExtractionStatus = ExtractionStatus.PENDING
     phase: Phase = Phase.INITIALIZING
 
@@ -291,6 +300,169 @@ class ExtractionUIState:
             self.selected_agent_id = agent_id
 
 
+# ============================================================================
+# Chat UI State
+# ============================================================================
+
+
+@dataclass
+class VectorInfo:
+    """Metadata for a layer's steering vector.
+
+    Used in the chat UI to display available vectors from an extraction.
+    """
+
+    layer: int
+    score: float
+    vector_path: str  # Relative path within session (e.g., "vectors/layer_16_v001.pt")
+    is_best: bool = False
+
+    @property
+    def display_label(self) -> str:
+        """Format for display in vector list."""
+        best_marker = " · best" if self.is_best else ""
+        return f"L{self.layer} · {self.score:.2f}{best_marker}"
+
+
+@dataclass
+class ChatMessage:
+    """A message in the chat conversation.
+
+    Supports three types: user input, baseline response, and steered response.
+    """
+
+    id: str
+    message_type: ChatMessageType
+    content: str
+    timestamp: float
+    is_streaming: bool = False
+
+    # For steered messages, track which layer/strength was used
+    layer: Optional[int] = None
+    strength: Optional[float] = None
+
+    @property
+    def time_str(self) -> str:
+        """Format timestamp as HH:MM:SS."""
+        dt = datetime.fromtimestamp(self.timestamp)
+        return dt.strftime("%H:%M:%S")
+
+    @property
+    def type_label(self) -> str:
+        """Get display label for message type."""
+        if self.message_type == ChatMessageType.USER:
+            return "USER"
+        elif self.message_type == ChatMessageType.BASELINE:
+            return "BASELINE"
+        else:
+            layer_info = f"L{self.layer}" if self.layer else ""
+            str_info = f"str={self.strength}" if self.strength else ""
+            extra = f" ({layer_info}, {str_info})" if layer_info else ""
+            return f"STEERED{extra}"
+
+
+@dataclass
+class ChatSession:
+    """A chat session with conversation history.
+
+    Linked to a specific extraction for vector context.
+    """
+
+    id: str
+    extraction_id: str  # Links to ExtractionUIState
+    messages: List[ChatMessage] = field(default_factory=list)
+
+    # Generation settings
+    selected_layer: Optional[int] = None
+    strength: float = 1.0
+    temperature: float = 0.7
+    max_tokens: int = 256
+
+    # Timing
+    created_at: Optional[float] = None
+
+    def add_message(
+        self,
+        message_type: ChatMessageType,
+        content: str,
+        layer: Optional[int] = None,
+        strength: Optional[float] = None,
+    ) -> ChatMessage:
+        """Add a message to the session."""
+        import uuid
+
+        msg = ChatMessage(
+            id=f"chat_{uuid.uuid4().hex[:8]}",
+            message_type=message_type,
+            content=content,
+            timestamp=time.time(),
+            layer=layer,
+            strength=strength,
+        )
+        self.messages.append(msg)
+        return msg
+
+    @property
+    def last_message(self) -> Optional[ChatMessage]:
+        """Get the most recent message."""
+        return self.messages[-1] if self.messages else None
+
+    def get_conversation_history(self) -> List[Dict[str, str]]:
+        """Get conversation as list of dicts for LLM context.
+
+        Returns only user and steered messages (not baseline duplicates).
+        """
+        history = []
+        for msg in self.messages:
+            if msg.message_type == ChatMessageType.USER:
+                history.append({"role": "user", "content": msg.content})
+            elif msg.message_type == ChatMessageType.STEERED:
+                history.append({"role": "assistant", "content": msg.content})
+        return history
+
+
+@dataclass
+class ChatUIState:
+    """UI state for the chat screen.
+
+    Uses the selected extraction from UIState.selected_id for vector context.
+    """
+
+    # Chat sessions per extraction (extraction_id -> session)
+    sessions: Dict[str, ChatSession] = field(default_factory=dict)
+
+    # Available vectors from selected extraction
+    available_vectors: List[VectorInfo] = field(default_factory=list)
+
+    # Generation state
+    is_generating: bool = False
+    model_loaded: bool = False
+    model_loading: bool = False
+
+    def get_or_create_session(self, extraction_id: str) -> ChatSession:
+        """Get or create a chat session for an extraction."""
+        if extraction_id not in self.sessions:
+            import uuid
+
+            self.sessions[extraction_id] = ChatSession(
+                id=f"chat_{uuid.uuid4().hex[:8]}",
+                extraction_id=extraction_id,
+                created_at=time.time(),
+            )
+        return self.sessions[extraction_id]
+
+    @property
+    def selected_vector(self) -> Optional[VectorInfo]:
+        """Get the currently selected vector (best by default)."""
+        if not self.available_vectors:
+            return None
+        # Return first selected or best
+        for v in self.available_vectors:
+            if v.is_best:
+                return v
+        return self.available_vectors[0] if self.available_vectors else None
+
+
 @dataclass
 class UIState:
     """Global UI state container."""
@@ -303,6 +475,9 @@ class UIState:
 
     # Global log entries
     logs: List[LogEntry] = field(default_factory=list)
+
+    # Chat state
+    chat: ChatUIState = field(default_factory=ChatUIState)
 
     # UI preferences
     log_filter: str = ""

@@ -234,6 +234,7 @@ def apply_event_to_state(
             config = payload.get("config", {})
             extraction.max_outer_iterations = config.get("num_samples", 16)
             extraction.model = config.get("extractor_model", "")
+            extraction.target_model = config.get("target_model", "")
             state.extractions[session_id] = extraction
             if state.selected_id is None:
                 state.selected_id = session_id

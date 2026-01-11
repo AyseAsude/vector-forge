@@ -127,11 +127,28 @@ class SessionLoader:
         elif session_info.final_score is not None:
             evaluation.overall = session_info.final_score
 
+        # Load config for model info
+        model = ""
+        target_model = ""
+        try:
+            store = self._session_service.get_session_store(session_info.session_id)
+            config_path = store.session_path / "config.json"
+            if config_path.exists():
+                import json
+                with open(config_path) as f:
+                    config = json.load(f)
+                    model = config.get("extractor_model", "")
+                    target_model = config.get("target_model", "")
+        except Exception:
+            pass
+
         # Create extraction
         extraction = ExtractionUIState(
             id=session_info.session_id,
             behavior_name=replayed.behavior_name if replayed and replayed.behavior_name else session_info.behavior,
             behavior_description=replayed.behavior_description if replayed else "",
+            model=model,
+            target_model=target_model,
             status=status,
             phase=phase,
             progress=progress,

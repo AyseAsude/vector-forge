@@ -7,6 +7,7 @@ from vector_forge.ui.screens.create_task import CreateTaskScreen
 from vector_forge.ui.screens.model_selector import ModelSelectorScreen
 from vector_forge.ui.screens.add_model import AddModelScreen
 from vector_forge.ui.screens.target_model_selector import TargetModelSelectorScreen
+from vector_forge.ui.screens.chat import ChatScreen
 
 __all__ = [
     "DashboardScreen",
@@ -16,4 +17,5 @@ __all__ = [
     "ModelSelectorScreen",
     "AddModelScreen",
     "TargetModelSelectorScreen",
+    "ChatScreen",
 ]

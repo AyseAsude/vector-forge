@@ -573,6 +573,7 @@ class LogsScreen(Screen):
         Binding("1", "go_dashboard", "Dashboard", key_display="1"),
         Binding("2", "go_samples", "Samples", key_display="2"),
         Binding("3", "noop", "Logs", show=False),  # Current screen
+        Binding("4", "go_chat", "Chat", key_display="4"),
         Binding("tab", "cycle", "Next Screen"),
         # Log navigation
         Binding("/", "focus_search", "Search"),
@@ -720,8 +721,11 @@ class LogsScreen(Screen):
     def action_go_samples(self) -> None:
         self.app.switch_screen("samples")
 
+    def action_go_chat(self) -> None:
+        self.app.switch_screen("chat")
+
     def action_cycle(self) -> None:
-        self.app.switch_screen("dashboard")
+        self.app.switch_screen("chat")
 
     def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()

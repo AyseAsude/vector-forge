@@ -58,17 +58,18 @@ class TmuxBar(Widget):
 
     def on_click(self, event) -> None:
         # Check which tab was clicked based on x position
-        tabs = self.query_one("#bar-tabs", Static)
+        # Tab widths: " tasks " (7), " samples " (9), " logs " (6), " chat " (6)
+        # Positions: tasks 0-7, samples 7-16, logs 16-22, chat 22-28
         if event.y == 0:
-            # Calculate rough positions
             x = event.x
-            # "tasks" is ~7 chars, "samples" is ~9 chars, "logs" is ~6 chars
-            if x < 8:
+            if x < 7:
                 self._switch_to("dashboard")
-            elif x < 18:
+            elif x < 16:
                 self._switch_to("samples")
-            elif x < 25:
+            elif x < 22:
                 self._switch_to("logs")
+            else:
+                self._switch_to("chat")
 
     def _switch_to(self, screen: str) -> None:
         if screen != self._active:
@@ -85,6 +86,7 @@ class TmuxBar(Widget):
             ("tasks", "dashboard"),
             ("samples", "samples"),
             ("logs", "logs"),
+            ("chat", "chat"),
         ]
 
         parts = []
