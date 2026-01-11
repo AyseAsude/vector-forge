@@ -274,22 +274,11 @@ class VectorSelector(Vertical):
 
         vector_list = self.query_one("#vector-list", VerticalScroll)
 
-        # Build vector info from extraction evaluation
-        # In a real implementation, we'd query the session store for all layer vectors
-        # For now, use the evaluation metrics as a proxy
+        # Load vectors from session store if not cached
         vectors = state.chat.available_vectors
 
         if not vectors:
-            # Create placeholder vectors based on evaluation
-            best_layer = extraction.evaluation.best_layer or 16
-            vectors = [
-                VectorInfo(
-                    layer=best_layer,
-                    score=extraction.evaluation.overall,
-                    vector_path=f"vectors/final.pt",
-                    is_best=True,
-                ),
-            ]
+            vectors = self._load_vectors_from_session(extraction_id, extraction)
             state.chat.available_vectors = vectors
 
         # Deduplicate by layer (keep first occurrence)
@@ -379,3 +368,60 @@ class VectorSelector(Vertical):
     def selected_layer(self) -> int | None:
         """Get the currently selected layer."""
         return self._selected_layer
+
+    def _load_vectors_from_session(
+        self, extraction_id: str, extraction
+    ) -> list[VectorInfo]:
+        """Load all vectors from session store."""
+        try:
+            from vector_forge.services.session import SessionService
+            from vector_forge.storage import SessionReplayer
+
+            service = SessionService()
+            store = service.get_session_store(extraction_id)
+            replayer = SessionReplayer(store)
+            replayed = replayer.reconstruct_state()
+
+            if not replayed or not replayed.vectors:
+                # Fallback to best layer only
+                return self._create_fallback_vectors(extraction)
+
+            # Convert replayed vectors to VectorInfo
+            vectors = []
+            best_layer = replayed.best_layer
+            best_score = replayed.best_score
+
+            for layer, rv in sorted(replayed.vectors.items()):
+                # Use optimization metrics or evaluation score
+                score = rv.optimization_metrics.get("final_loss", 0.0)
+                # If we have best_score and this is the best layer, use it
+                if layer == best_layer and best_score > 0:
+                    score = best_score
+
+                vectors.append(
+                    VectorInfo(
+                        layer=layer,
+                        score=score,
+                        vector_path=rv.vector_ref,
+                        is_best=(layer == best_layer),
+                    )
+                )
+
+            # Sort by layer
+            vectors.sort(key=lambda v: v.layer)
+            return vectors if vectors else self._create_fallback_vectors(extraction)
+
+        except Exception:
+            return self._create_fallback_vectors(extraction)
+
+    def _create_fallback_vectors(self, extraction) -> list[VectorInfo]:
+        """Create fallback vector list from evaluation metrics."""
+        best_layer = extraction.evaluation.best_layer or 16
+        return [
+            VectorInfo(
+                layer=best_layer,
+                score=extraction.evaluation.overall,
+                vector_path="vectors/final.pt",
+                is_best=True,
+            )
+        ]

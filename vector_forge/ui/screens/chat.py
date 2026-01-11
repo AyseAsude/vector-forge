@@ -53,6 +53,13 @@ class ConversationPanel(Vertical):
         content-align: center middle;
         color: $foreground-muted;
     }
+
+    ConversationPanel .hint-bar {
+        height: 1;
+        padding: 0 1;
+        color: $foreground-muted;
+        background: $surface;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -65,6 +72,7 @@ class ConversationPanel(Vertical):
 
         yield VerticalScroll(classes="message-stream", id="message-stream")
         yield ChatInput(id="chat-input")
+        yield Static("ctrl+enter send · enter newline", classes="hint-bar", id="hint-bar")
 
     def _is_at_bottom(self) -> bool:
         """Check if scroll is at bottom."""

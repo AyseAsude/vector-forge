@@ -1,18 +1,17 @@
-"""Chat input widget with text area and send button."""
+"""Chat input widget for message composition."""
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import TextArea, Button, Static
+from textual.widgets import TextArea
 
 
 class ChatInput(Widget):
-    """Input area for chat messages with send button.
+    """Multi-line input for chat messages.
 
-    Supports:
-    - Multi-line text input
-    - Send button click
+    Features:
+    - Auto-expanding textarea
     - Ctrl+Enter to send
     - Disabled state during generation
     """
@@ -20,16 +19,14 @@ class ChatInput(Widget):
     DEFAULT_CSS = """
     ChatInput {
         height: auto;
-        min-height: 3;
-        max-height: 8;
-        padding: 1 2;
-        background: $surface;
-        border-top: solid $surface-lighten-1;
+        margin-top: 1;
+        padding: 1 1;
+        background: $background;
     }
 
-    ChatInput Horizontal {
+    ChatInput .input-box {
         height: auto;
-        min-height: 1;
+        background: transparent;
     }
 
     ChatInput TextArea {
@@ -37,36 +34,18 @@ class ChatInput(Widget):
         min-height: 1;
         max-height: 5;
         width: 1fr;
-        background: $background;
+        background: transparent;
         border: none;
-        padding: 0 1;
+        padding: 0;
     }
 
     ChatInput TextArea:focus {
-        background: $background;
-    }
-
-    ChatInput #send-btn {
-        width: 8;
-        height: 3;
-        min-height: 3;
-        background: $accent;
-        color: $background;
+        background: transparent;
         border: none;
-        margin-left: 1;
     }
 
-    ChatInput #send-btn:hover {
-        background: $accent 80%;
-    }
-
-    ChatInput #send-btn.-disabled {
-        background: $surface-lighten-1;
-        color: $foreground-muted;
-    }
-
-    ChatInput .placeholder {
-        color: $foreground-muted;
+    ChatInput TextArea .text-area--cursor-line {
+        background: transparent;
     }
     """
 
@@ -82,21 +61,12 @@ class ChatInput(Widget):
         self._enabled = True
 
     def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield TextArea(
-                "",
-                id="chat-textarea",
-            )
-            yield Button("Send", id="send-btn")
+        with Vertical(classes="input-box"):
+            yield TextArea("", id="chat-textarea")
 
     def on_mount(self) -> None:
         """Focus input on mount."""
         self.query_one("#chat-textarea", TextArea).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle send button click."""
-        if event.button.id == "send-btn" and self._enabled:
-            self._submit()
 
     def on_key(self, event) -> None:
         """Handle keyboard shortcuts."""
@@ -118,16 +88,13 @@ class ChatInput(Widget):
     def set_enabled(self, enabled: bool) -> None:
         """Enable or disable the input."""
         self._enabled = enabled
-        btn = self.query_one("#send-btn", Button)
         text_area = self.query_one("#chat-textarea", TextArea)
 
         if enabled:
-            btn.remove_class("-disabled")
-            btn.disabled = False
+            self.remove_class("-disabled")
             text_area.disabled = False
         else:
-            btn.add_class("-disabled")
-            btn.disabled = True
+            self.add_class("-disabled")
             text_area.disabled = True
 
     def focus_input(self) -> None:
