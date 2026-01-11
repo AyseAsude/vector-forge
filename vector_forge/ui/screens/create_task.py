@@ -18,6 +18,8 @@ from vector_forge.tasks.config import (
     ExtractionMethod,
     CAAConfig,
     TournamentConfig,
+    SignalFilterMode,
+    ExtractionIntensity,
 )
 from vector_forge.storage.models import (
     ModelConfig,
@@ -406,6 +408,10 @@ class CreateTaskScreen(Screen):
         self._elimination_rounds = 2
         self._elimination_rate = 0.75  # Default 75% elimination per round
 
+        # Signal filtering options (NEW)
+        self._signal_filter_mode = "off"  # "off", "threshold", "top_k"
+        self._extraction_intensity = "all"  # "all", "high_signal", "maximum"
+
         # Preferences and model managers
         self._preferences = PreferencesManager()
         self._model_manager = ModelConfigManager()
@@ -488,6 +494,28 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("outliers", "keep", "Keep All", id="out-keep")
 
                 yield ParamRow("Threshold", "inp-outlier-threshold", "3.0", "std devs", id="outlier-threshold-row")
+
+                # Signal filtering options (NEW)
+                yield Static("SIGNAL FILTERING", classes="sub-section")
+
+                with Horizontal(classes="option-row"):
+                    yield Static("Signal Filter", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("signal_filter", "off", "Off", selected=True, id="sig-off")
+                        yield OptionPill("signal_filter", "threshold", "Threshold", id="sig-threshold")
+                        yield OptionPill("signal_filter", "top_k", "Top-K", id="sig-topk")
+
+                with Vertical(id="signal-params"):
+                    yield ParamRow("Min Signal", "inp-min-signal", "6.0", "score 1-10", id="min-signal-row")
+                    yield ParamRow("Top K Pairs", "inp-topk-pairs", "30", "pairs/sample", id="topk-pairs-row")
+                    yield ParamRow("Min Confound", "inp-min-confound", "5.0", "score 1-10", id="min-confound-row")
+
+                with Horizontal(classes="option-row"):
+                    yield Static("Extraction Int.", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("ext_intensity", "all", "All", selected=True, id="ext-all")
+                        yield OptionPill("ext_intensity", "high_signal", "High Signal", id="ext-high")
+                        yield OptionPill("ext_intensity", "maximum", "Maximum", id="ext-max")
 
             # Parameters section
             yield Static("PARAMETERS", classes="main-section")
@@ -600,6 +628,7 @@ class CreateTaskScreen(Screen):
         """Set initial visibility based on default extraction method."""
         self._update_extraction_visibility()
         self._update_tournament_visibility()
+        self._update_signal_params_visibility()
 
     def on_profile_card_selected(self, event: ProfileCard.Selected) -> None:
         self._profile = event.profile
@@ -656,6 +685,30 @@ class CreateTaskScreen(Screen):
                 if pill.group == "elimination":
                     pill.set_selected(pill.value == event.value)
             self._update_tournament_preview()
+        elif event.group == "signal_filter":
+            self._signal_filter_mode = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "signal_filter":
+                    pill.set_selected(pill.value == event.value)
+            self._update_signal_params_visibility()
+        elif event.group == "ext_intensity":
+            self._extraction_intensity = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "ext_intensity":
+                    pill.set_selected(pill.value == event.value)
+
+    def _update_signal_params_visibility(self) -> None:
+        """Show/hide signal filter params based on mode."""
+        try:
+            min_signal_row = self.query_one("#min-signal-row")
+            topk_pairs_row = self.query_one("#topk-pairs-row")
+
+            # Show min_signal when mode is "threshold"
+            min_signal_row.display = self._signal_filter_mode == "threshold"
+            # Show topk_pairs when mode is "top_k"
+            topk_pairs_row.display = self._signal_filter_mode == "top_k"
+        except Exception:
+            pass
 
     def _update_extraction_visibility(self) -> None:
         """Show/hide UI elements based on extraction method."""
@@ -1107,7 +1160,7 @@ class CreateTaskScreen(Screen):
         }
         extraction_method = extraction_map.get(self._extraction_method, ExtractionMethod.CAA)
 
-        # Build CAA config
+        # Build CAA config with signal filtering
         outlier_threshold_str = self.query_one("#inp-outlier-threshold", Input).value.strip()
         outlier_threshold = 3.0
         if outlier_threshold_str:
@@ -1115,9 +1168,40 @@ class CreateTaskScreen(Screen):
                 outlier_threshold = float(outlier_threshold_str)
             except ValueError:
                 pass
+
+        # Map signal filter mode
+        signal_mode_map = {
+            "off": SignalFilterMode.OFF,
+            "threshold": SignalFilterMode.THRESHOLD,
+            "top_k": SignalFilterMode.TOP_K,
+        }
+        signal_filter_mode = signal_mode_map.get(
+            self._signal_filter_mode, SignalFilterMode.OFF
+        )
+
+        # Map extraction intensity
+        ext_intensity_map = {
+            "all": ExtractionIntensity.ALL,
+            "high_signal": ExtractionIntensity.HIGH_SIGNAL,
+            "maximum": ExtractionIntensity.MAXIMUM,
+        }
+        extraction_intensity = ext_intensity_map.get(
+            self._extraction_intensity, ExtractionIntensity.ALL
+        )
+
+        # Parse signal filtering values
+        min_signal = float(self.query_one("#inp-min-signal", Input).value or "6.0")
+        top_k_pairs = int(self.query_one("#inp-topk-pairs", Input).value or "30")
+        min_confound = float(self.query_one("#inp-min-confound", Input).value or "5.0")
+
         caa_config = CAAConfig(
             remove_extreme_outliers=self._remove_outliers,
             outlier_std_threshold=outlier_threshold,
+            signal_filter_mode=signal_filter_mode,
+            min_behavioral_signal=min_signal,
+            top_k_pairs=top_k_pairs,
+            min_confound_score=min_confound,
+            extraction_intensity=extraction_intensity,
         )
 
         # Build tournament config

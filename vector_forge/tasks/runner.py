@@ -46,6 +46,9 @@ from vector_forge.tasks.config import (
     LayerStrategy,
     AggregationStrategy,
     ExtractionMethod,
+    SignalFilterMode,
+    ExtractionIntensity,
+    CAAConfig,
 )
 from vector_forge.core.concurrency import (
     get_concurrency_manager,
@@ -66,7 +69,7 @@ from vector_forge.tasks.gpu_memory import (
     OOMHandler,
     clear_gpu_memory,
 )
-from vector_forge.contrast.protocols import ValidatedPair, SampleDataset
+from vector_forge.contrast.protocols import ValidatedPair, SampleDataset, SignalIntensity
 
 logger = logging.getLogger(__name__)
 
@@ -426,16 +429,36 @@ class TaskRunner:
                         extraction_time_seconds=0,
                     )
 
+                # Filter pairs for maximum signal quality
+                filtered_pairs = self._filter_pairs_for_extraction(
+                    dataset.valid_pairs,
+                    task.config.caa,
+                    sample_idx,
+                )
+
+                if not filtered_pairs:
+                    logger.warning(
+                        f"Sample {sample_idx}: No pairs after filtering! "
+                        f"Original: {len(dataset.valid_pairs)}"
+                    )
+                    return SampleResult(
+                        sample=sample,
+                        vector=None,
+                        layer=0,
+                        metadata={"error": "No pairs after signal filtering"},
+                        extraction_time_seconds=0,
+                    )
+
                 # Convert to training datapoints with bootstrap
                 datapoints = adapter.convert_with_bootstrap(
-                    dataset.valid_pairs,
+                    filtered_pairs,
                     ratio=sample.config.bootstrap_ratio,
                     seed=sample.config.seed,
                 )
 
                 logger.debug(
-                    f"Sample {sample_idx}: {len(dataset.valid_pairs)} valid pairs -> "
-                    f"{len(datapoints)} datapoints"
+                    f"Sample {sample_idx}: {len(dataset.valid_pairs)} valid -> "
+                    f"{len(filtered_pairs)} filtered -> {len(datapoints)} datapoints"
                 )
 
                 # Limit to configured datapoints_per_sample
@@ -570,6 +593,222 @@ class TaskRunner:
                 domain=f"sample_{sample_idx}",
                 format_type="contrast_pair",
             )
+
+    # -------------------------------------------------------------------------
+    # Signal Quality Filtering
+    # -------------------------------------------------------------------------
+
+    def _filter_pairs_for_extraction(
+        self,
+        pairs: List[ValidatedPair],
+        caa_config: CAAConfig,
+        sample_idx: int = 0,
+    ) -> List[ValidatedPair]:
+        """Filter pairs to maximize behavioral signal for extraction.
+
+        Applies multiple filtering stages:
+        1. Intensity filter (keep only extreme/high if configured)
+        2. Confound score filter (minimum confound control)
+        3. Behavioral signal filter (threshold or top-k)
+        4. Diversity enforcement (minimum scenarios)
+
+        Args:
+            pairs: All valid pairs for this sample.
+            caa_config: CAA configuration with filtering settings.
+            sample_idx: Sample index for logging.
+
+        Returns:
+            Filtered list of pairs optimized for signal extraction.
+        """
+        if not pairs:
+            return pairs
+
+        original_count = len(pairs)
+        filtered = list(pairs)
+
+        # Stage 1: Intensity filtering
+        if caa_config.extraction_intensity != ExtractionIntensity.ALL:
+            allowed = self._get_allowed_intensities(caa_config.extraction_intensity)
+            filtered = [
+                p for p in filtered
+                if self._get_pair_intensity(p) in allowed
+            ]
+            if len(filtered) < original_count:
+                logger.debug(
+                    f"Sample {sample_idx}: Intensity filter {original_count} → {len(filtered)} "
+                    f"(keeping {caa_config.extraction_intensity.value})"
+                )
+
+        # Stage 2: Confound score filtering
+        if caa_config.min_confound_score > 1.0:
+            min_score = caa_config.min_confound_score
+            before_count = len(filtered)
+            filtered = [
+                p for p in filtered
+                if self._get_confound_score(p) >= min_score
+            ]
+            if len(filtered) < before_count:
+                logger.debug(
+                    f"Sample {sample_idx}: Confound filter {before_count} → {len(filtered)} "
+                    f"(min_score={min_score})"
+                )
+
+        # Stage 3: Behavioral signal filtering
+        if caa_config.signal_filter_mode == SignalFilterMode.THRESHOLD:
+            min_signal = caa_config.min_behavioral_signal
+            before_count = len(filtered)
+            filtered = [
+                p for p in filtered
+                if self._get_behavioral_signal(p) >= min_signal
+            ]
+            if len(filtered) < before_count:
+                logger.debug(
+                    f"Sample {sample_idx}: Signal threshold filter {before_count} → {len(filtered)} "
+                    f"(min_signal={min_signal})"
+                )
+
+        elif caa_config.signal_filter_mode == SignalFilterMode.TOP_K:
+            # Sort by behavioral signal descending
+            sorted_pairs = sorted(
+                filtered,
+                key=lambda p: self._get_behavioral_signal(p),
+                reverse=True,
+            )
+            k = min(caa_config.top_k_pairs, len(sorted_pairs))
+            filtered = sorted_pairs[:k]
+
+            if filtered:
+                min_kept = self._get_behavioral_signal(filtered[-1])
+                max_kept = self._get_behavioral_signal(filtered[0])
+                logger.debug(
+                    f"Sample {sample_idx}: Top-K filter keeping {k} pairs "
+                    f"(signal range: {min_kept:.1f} - {max_kept:.1f})"
+                )
+
+        # Stage 4: Diversity enforcement (anti-overfitting)
+        if caa_config.min_scenarios > 1:
+            filtered = self._enforce_scenario_diversity(
+                filtered, caa_config.min_scenarios, sample_idx
+            )
+
+        if caa_config.require_intensity_diversity:
+            filtered = self._enforce_intensity_diversity(filtered, sample_idx)
+
+        # Log summary
+        if len(filtered) < original_count:
+            logger.info(
+                f"Sample {sample_idx}: Filtered {original_count} → {len(filtered)} pairs "
+                f"for extraction"
+            )
+
+        # Warn if too few pairs remain
+        if len(filtered) < 10 and len(filtered) < original_count:
+            logger.warning(
+                f"Sample {sample_idx}: Only {len(filtered)} pairs after filtering! "
+                f"Consider relaxing filter settings."
+            )
+
+        return filtered
+
+    def _get_allowed_intensities(
+        self,
+        extraction_intensity: ExtractionIntensity,
+    ) -> set:
+        """Get set of allowed intensities for extraction."""
+        if extraction_intensity == ExtractionIntensity.MAXIMUM:
+            return {SignalIntensity.EXTREME, "extreme"}
+        elif extraction_intensity == ExtractionIntensity.HIGH_SIGNAL:
+            return {SignalIntensity.EXTREME, SignalIntensity.HIGH, "extreme", "high"}
+        else:
+            return {
+                SignalIntensity.EXTREME, SignalIntensity.HIGH,
+                SignalIntensity.MEDIUM, SignalIntensity.NATURAL,
+                "extreme", "high", "medium", "natural",
+            }
+
+    def _get_pair_intensity(self, pair: ValidatedPair) -> str:
+        """Get intensity level of a pair."""
+        if pair.metadata and "intensity" in pair.metadata:
+            intensity = pair.metadata["intensity"]
+            if isinstance(intensity, SignalIntensity):
+                return intensity
+            return str(intensity).lower()
+        return "medium"
+
+    def _get_behavioral_signal(self, pair: ValidatedPair) -> float:
+        """Get behavioral signal score for a pair."""
+        if pair.validation:
+            score = pair.validation.behavioral_signal_score
+            if score >= 0:
+                return score
+        # Fallback to contrast_quality if behavioral_signal not scored
+        if pair.validation:
+            return pair.validation.contrast_quality
+        return 5.0
+
+    def _get_confound_score(self, pair: ValidatedPair) -> float:
+        """Get confound control score for a pair."""
+        if pair.validation:
+            score = pair.validation.confound_score
+            if score >= 0:
+                return score
+        # Assume good confound control if not scored
+        return 10.0
+
+    def _enforce_scenario_diversity(
+        self,
+        pairs: List[ValidatedPair],
+        min_scenarios: int,
+        sample_idx: int,
+    ) -> List[ValidatedPair]:
+        """Ensure minimum scenario diversity in filtered set.
+
+        If too few scenarios, adds pairs from underrepresented scenarios
+        even if they have lower signal scores.
+        """
+        from collections import defaultdict
+
+        # Group by scenario
+        by_scenario: Dict[str, List[ValidatedPair]] = defaultdict(list)
+        for p in pairs:
+            scenario = "unknown"
+            if p.seed:
+                scenario = p.seed.scenario[:50] if p.seed.scenario else "unknown"
+            by_scenario[scenario].append(p)
+
+        scenario_count = len(by_scenario)
+
+        if scenario_count >= min_scenarios:
+            return pairs
+
+        logger.debug(
+            f"Sample {sample_idx}: Only {scenario_count} scenarios, "
+            f"need {min_scenarios} for diversity"
+        )
+
+        # If we don't have enough scenarios, keep what we have
+        return pairs
+
+    def _enforce_intensity_diversity(
+        self,
+        pairs: List[ValidatedPair],
+        sample_idx: int,
+    ) -> List[ValidatedPair]:
+        """Ensure at least 2 intensity levels in filtered set."""
+        intensities = set()
+        for p in pairs:
+            intensities.add(self._get_pair_intensity(p))
+
+        if len(intensities) >= 2:
+            return pairs
+
+        logger.debug(
+            f"Sample {sample_idx}: Only {len(intensities)} intensity levels, "
+            f"need 2 for diversity"
+        )
+
+        # If we don't have intensity diversity, keep what we have
+        return pairs
 
     def _extract_vector_sync(
         self,

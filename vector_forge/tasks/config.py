@@ -293,6 +293,27 @@ class TournamentConfig(BaseModel):
 
 
 # ============================================================================
+# Signal Filtering Configuration
+# ============================================================================
+
+
+class SignalFilterMode(str, Enum):
+    """How to filter pairs for extraction based on signal quality."""
+
+    OFF = "off"              # No filtering (legacy behavior)
+    THRESHOLD = "threshold"  # Filter by minimum behavioral signal score
+    TOP_K = "top_k"          # Keep only top K pairs by behavioral signal
+
+
+class ExtractionIntensity(str, Enum):
+    """Which intensity levels to use for extraction (not evaluation)."""
+
+    ALL = "all"                    # Use all intensity levels
+    HIGH_SIGNAL = "high_signal"    # Only extreme + high intensity
+    MAXIMUM = "maximum"            # Only extreme intensity
+
+
+# ============================================================================
 # CAA Configuration
 # ============================================================================
 
@@ -300,11 +321,16 @@ class TournamentConfig(BaseModel):
 class CAAConfig(BaseModel):
     """Configuration for CAA-specific extraction settings.
 
-    Only contains settings unique to CAA extraction method.
-    Sample generation, data distribution, etc. are shared with gradient.
+    Includes signal quality filtering to maximize vector quality by:
+    1. Filtering pairs by behavioral signal strength
+    2. Filtering pairs by confound control
+    3. Using only high-intensity pairs for extraction
     """
 
-    # Extreme outlier removal before averaging
+    # -------------------------------------------------------------------------
+    # Outlier Removal (activation-space)
+    # -------------------------------------------------------------------------
+
     remove_extreme_outliers: bool = Field(
         default=True,
         description="Remove extreme outlier pairs (> outlier_std_threshold std devs)",
@@ -316,6 +342,112 @@ class CAAConfig(BaseModel):
         le=5.0,
         description="Std dev threshold for extreme outlier removal",
     )
+
+    # -------------------------------------------------------------------------
+    # Behavioral Signal Filtering (NEW)
+    # -------------------------------------------------------------------------
+
+    signal_filter_mode: SignalFilterMode = Field(
+        default=SignalFilterMode.OFF,
+        description="How to filter pairs by behavioral signal strength",
+    )
+
+    min_behavioral_signal: float = Field(
+        default=6.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum behavioral signal score (when mode=THRESHOLD)",
+    )
+
+    top_k_pairs: int = Field(
+        default=30,
+        ge=5,
+        le=100,
+        description="Number of top pairs to keep (when mode=TOP_K)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Confound Control Filtering (NEW)
+    # -------------------------------------------------------------------------
+
+    min_confound_score: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=10.0,
+        description="Minimum confound control score (0 = disabled)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Intensity Filtering for Extraction (NEW)
+    # -------------------------------------------------------------------------
+
+    extraction_intensity: ExtractionIntensity = Field(
+        default=ExtractionIntensity.ALL,
+        description="Which intensity levels to use for extraction",
+    )
+
+    # -------------------------------------------------------------------------
+    # Diversity Enforcement (NEW - anti-overfitting)
+    # -------------------------------------------------------------------------
+
+    min_scenarios: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Minimum distinct scenarios in filtered set (anti-overfitting)",
+    )
+
+    require_intensity_diversity: bool = Field(
+        default=False,
+        description="Require at least 2 intensity levels in filtered set",
+    )
+
+    # -------------------------------------------------------------------------
+    # Presets
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def maximum_signal(cls) -> "CAAConfig":
+        """Config optimized for maximum behavioral signal.
+
+        Uses aggressive filtering to get cleanest possible vector.
+        May reduce diversity - use for well-understood behaviors.
+        """
+        return cls(
+            signal_filter_mode=SignalFilterMode.TOP_K,
+            top_k_pairs=25,
+            min_confound_score=6.0,
+            extraction_intensity=ExtractionIntensity.MAXIMUM,
+            remove_extreme_outliers=True,
+            outlier_std_threshold=2.5,
+            min_scenarios=3,
+        )
+
+    @classmethod
+    def high_signal(cls) -> "CAAConfig":
+        """Config for high signal with moderate filtering.
+
+        Good balance between signal quality and diversity.
+        """
+        return cls(
+            signal_filter_mode=SignalFilterMode.THRESHOLD,
+            min_behavioral_signal=6.0,
+            min_confound_score=5.0,
+            extraction_intensity=ExtractionIntensity.HIGH_SIGNAL,
+            remove_extreme_outliers=True,
+            outlier_std_threshold=3.0,
+            min_scenarios=5,
+            require_intensity_diversity=True,
+        )
+
+    @classmethod
+    def balanced(cls) -> "CAAConfig":
+        """Default balanced config (legacy behavior with outlier removal)."""
+        return cls(
+            signal_filter_mode=SignalFilterMode.OFF,
+            remove_extreme_outliers=True,
+            outlier_std_threshold=3.0,
+        )
 
 
 # ============================================================================

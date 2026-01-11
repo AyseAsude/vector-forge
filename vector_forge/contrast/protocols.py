@@ -332,6 +332,28 @@ class StructuralCheckResult:
 
 
 @dataclass
+class BehavioralSignalResult:
+    """Result of measuring behavioral signal strength."""
+    score: float  # Overall signal strength 0-10
+    dst_strength: float  # How strongly dst exhibits behavior (0-10)
+    src_strength: float  # How clearly src doesn't exhibit (0-10)
+    reasoning: str = ""
+
+
+@dataclass
+class ConfoundCheckResult:
+    """Result of checking confound control."""
+    score: float  # Overall confound control score 0-10
+    length_ratio: float  # dst_words / src_words (ideal: 0.8-1.2)
+    formality_match: bool
+    helpfulness_match: bool
+    detail_match: bool
+    structure_match: bool
+    main_confound: str = ""  # Primary confound issue if any
+    reasoning: str = ""
+
+
+@dataclass
 class ValidationResult:
     """Result of validating a contrast pair.
 
@@ -350,12 +372,18 @@ class ValidationResult:
     structural_score: float = -1.0 # Well-formed, complete?
     semantic_score: float = -1.0   # Semantic distance (from embedding)
 
+    # NEW: Signal quality scores
+    behavioral_signal_score: float = -1.0  # How strongly pair contrasts on behavior
+    confound_score: float = -1.0           # How well confounds are controlled
+
     # Detailed results from each check (optional)
     dimension_details: Optional[DimensionCheckResult] = None
     marker_details: Optional[MarkerCheckResult] = None
     boundary_details: Optional[BoundaryCheckResult] = None
     intensity_details: Optional[IntensityCheckResult] = None
     structural_details: Optional[StructuralCheckResult] = None
+    behavioral_signal_details: Optional[BehavioralSignalResult] = None
+    confound_details: Optional[ConfoundCheckResult] = None
 
     @property
     def scores(self) -> Dict[str, float]:
@@ -367,6 +395,8 @@ class ValidationResult:
             "intensity": self.intensity_score,
             "structural": self.structural_score,
             "semantic": self.semantic_score,
+            "behavioral_signal": self.behavioral_signal_score,
+            "confound": self.confound_score,
         }
 
     @property
@@ -686,10 +716,14 @@ def merge_validation_results(
         intensity_score=pick_score(current.intensity_score, new.intensity_score),
         structural_score=pick_score(current.structural_score, new.structural_score),
         semantic_score=pick_score(current.semantic_score, new.semantic_score),
+        behavioral_signal_score=pick_score(current.behavioral_signal_score, new.behavioral_signal_score),
+        confound_score=pick_score(current.confound_score, new.confound_score),
         # Merge details (prefer new if available)
         dimension_details=new.dimension_details or current.dimension_details,
         marker_details=new.marker_details or current.marker_details,
         boundary_details=new.boundary_details or current.boundary_details,
         intensity_details=new.intensity_details or current.intensity_details,
         structural_details=new.structural_details or current.structural_details,
+        behavioral_signal_details=new.behavioral_signal_details or current.behavioral_signal_details,
+        confound_details=new.confound_details or current.confound_details,
     )
