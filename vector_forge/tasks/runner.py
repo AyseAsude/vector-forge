@@ -532,9 +532,11 @@ class TaskRunner:
                 return result
 
         # Run all extractions
+        # Use sample.sample_index for dataset lookup to handle filtered samples
+        # (e.g., tournament mode where survivors retain original indices)
         tasks = [
-            extract_one(sample, idx)
-            for idx, sample in enumerate(task.samples)
+            extract_one(sample, sample.sample_index)
+            for sample in task.samples
         ]
         results = await asyncio.gather(*tasks)
 
@@ -553,8 +555,8 @@ class TaskRunner:
 
         Uses the first available sample's data to profile memory usage.
         """
-        for idx, sample in enumerate(task.samples):
-            dataset = sample_datasets.get(idx)
+        for sample in task.samples:
+            dataset = sample_datasets.get(sample.sample_index)
             if dataset and dataset.valid_pairs:
                 datapoints = adapter.convert_with_bootstrap(
                     dataset.valid_pairs[:3],  # Use subset for profiling
