@@ -117,7 +117,7 @@ class LLMResponseRenderer(LogDetailRenderer):
         # Error if present
         error = payload.get("error")
         if error:
-            sections.append(("ERROR", f"[$error]{error}[/]"))
+            sections.append(("ERROR", f"[$error]{self._escape_markup(str(error))}[/]"))
 
         # Content
         content = payload.get("content", "")
@@ -296,7 +296,7 @@ class OptimizationRenderer(LogDetailRenderer):
 
             if not success:
                 error = payload.get("error", "Unknown error")
-                sections.append(("ERROR", f"[$error]{error}[/]"))
+                sections.append(("ERROR", f"[$error]{self._escape_markup(str(error))}[/]"))
 
             # Loss history (if available, show trend)
             loss_history = payload.get("loss_history", [])
@@ -426,10 +426,10 @@ class ToolEventRenderer(LogDetailRenderer):
             sections.append(("RESULT", f"Status: {status}\nCall ID: {call_id}\nLatency: {latency}ms"))
 
             if error:
-                sections.append(("ERROR", f"[$error]{error}[/]"))
+                sections.append(("ERROR", f"[$error]{self._escape_markup(str(error))}[/]"))
 
             if output is not None:
-                output_str = self._format_json(output) if isinstance(output, (dict, list)) else str(output)
+                output_str = self._format_json(output) if isinstance(output, (dict, list)) else self._escape_markup(str(output))
                 sections.append(("OUTPUT", self._truncate(output_str)))
 
         return sections
@@ -523,7 +523,7 @@ class SessionEventRenderer(LogDetailRenderer):
             sections.append(("METRICS", metrics))
 
             if error:
-                sections.append(("ERROR", f"[$error]{error}[/]"))
+                sections.append(("ERROR", f"[$error]{self._escape_markup(str(error))}[/]"))
 
         return sections
 
