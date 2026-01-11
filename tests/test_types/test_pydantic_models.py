@@ -34,6 +34,7 @@ from vector_forge.tasks.config import (
     SampleConfig,
     EvaluationConfig,
     TaskConfig,
+    TournamentConfig,
     LayerStrategy,
     AggregationStrategy,
     ContrastQuality,
@@ -289,25 +290,25 @@ class TestContrastConfigTypes:
         with pytest.raises(ValidationError):
             ContrastConfig(core_pool_size=501)
 
-    def test_min_semantic_distance_constraint_ge_01(self):
-        """Test min_semantic_distance must be >= 0.1."""
+    def test_min_semantic_score_constraint_ge_1(self):
+        """Test min_semantic_score must be >= 1.0."""
         with pytest.raises(ValidationError):
-            ContrastConfig(min_semantic_distance=0.05)
+            ContrastConfig(min_semantic_score=0.5)
 
-    def test_min_semantic_distance_constraint_le_09(self):
-        """Test min_semantic_distance must be <= 0.9."""
+    def test_min_semantic_score_constraint_le_10(self):
+        """Test min_semantic_score must be <= 10.0."""
         with pytest.raises(ValidationError):
-            ContrastConfig(min_semantic_distance=0.95)
+            ContrastConfig(min_semantic_score=10.5)
 
-    def test_min_dst_score_constraint_ge_1(self):
-        """Test min_dst_score must be >= 1."""
+    def test_min_dimension_score_constraint_ge_1(self):
+        """Test min_dimension_score must be >= 1.0."""
         with pytest.raises(ValidationError):
-            ContrastConfig(min_dst_score=0.5)
+            ContrastConfig(min_dimension_score=0.5)
 
-    def test_max_src_score_constraint_le_9(self):
-        """Test max_src_score must be <= 9."""
+    def test_min_contrast_quality_constraint_le_10(self):
+        """Test min_contrast_quality must be <= 10.0."""
         with pytest.raises(ValidationError):
-            ContrastConfig(max_src_score=9.5)
+            ContrastConfig(min_contrast_quality=10.5)
 
     def test_pairs_per_sample_property(self):
         """Test pairs_per_sample computed property."""
@@ -398,10 +399,24 @@ class TestTaskConfigTypes:
         config = TaskConfig(aggregation_strategy=AggregationStrategy.PCA_PRINCIPAL)
         assert config.aggregation_strategy == AggregationStrategy.PCA_PRINCIPAL
 
-    def test_top_k_validator_clamped_to_num_samples(self):
-        """Test top_k is clamped to num_samples."""
-        config = TaskConfig(num_samples=5, top_k=10)
+    def test_top_k_validator_clamped_to_effective_samples(self):
+        """Test top_k is clamped to effective_samples.
+
+        When tournament is disabled, effective_samples = num_samples.
+        When tournament is enabled, effective_samples = tournament.initial_samples.
+        """
+        # With tournament disabled, top_k should clamp to num_samples
+        config = TaskConfig(
+            num_samples=5,
+            top_k=10,
+            tournament=TournamentConfig(enabled=False),
+        )
         assert config.top_k == 5
+
+        # With tournament enabled (default), top_k clamps to tournament.initial_samples
+        config_tournament = TaskConfig(num_samples=5, top_k=10)
+        # Tournament initial_samples is much larger than num_samples
+        assert config_tournament.top_k == 10  # Not clamped since initial_samples > 10
 
     def test_nested_configs_validated(self):
         """Test nested configs are validated."""
