@@ -749,8 +749,8 @@ class SamplesScreen(Screen):
         # Set up periodic time updates
         self.set_interval(1.0, self._tick)
 
-    def on_show(self) -> None:
-        """Re-sync when screen becomes visible."""
+    def on_screen_resume(self) -> None:
+        """Re-sync when screen becomes active again."""
         self._sync()
 
     def refresh_content(self) -> None:
