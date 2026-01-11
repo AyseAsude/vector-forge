@@ -77,7 +77,7 @@ class TestEvaluationBudget:
         assert budget.quick_eval_prompts == 3
         assert budget.quick_eval_generations_per_prompt == 2
         assert budget.thorough_eval_prompts == 10
-        assert len(budget.quick_eval_strength_levels) == 1
+        assert len(budget.quick_eval_strength_levels) == 3  # [0.5, 1.5, 2.5]
 
     def test_standard_preset(self):
         """Test standard evaluation budget preset."""
@@ -90,7 +90,7 @@ class TestEvaluationBudget:
         budget = EvaluationBudget.thorough()
         assert budget.quick_eval_prompts == 10
         assert budget.thorough_eval_prompts == 50
-        assert len(budget.thorough_eval_strength_levels) == 7
+        assert len(budget.thorough_eval_strength_levels) == 8  # Extended range for thorough eval
 
     def test_custom_budget(self):
         """Test creating custom evaluation budget."""

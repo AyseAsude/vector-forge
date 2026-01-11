@@ -322,15 +322,22 @@ class VectorForgeApp(App):
     def _refresh_dashboard_session(self, session_id: str) -> None:
         """Refresh dashboard for a specific session."""
         try:
-            from vector_forge.ui.screens.dashboard import TaskCard
+            from vector_forge.ui.screens.dashboard import TaskCard, DetailsPanel
 
+            state = get_state()
+            extraction = state.extractions.get(session_id)
+            if not extraction:
+                return
+
+            # Update the task card
             for card in self.screen.query(TaskCard):
                 if card.extraction.id == session_id:
-                    state = get_state()
-                    extraction = state.extractions.get(session_id)
-                    if extraction:
-                        card.update_extraction(extraction)
+                    card.update(extraction)
                     break
+
+            # Update details panel if this session is selected
+            if state.selected_id == session_id:
+                self.screen.query_one("#right", DetailsPanel).show(extraction)
         except Exception:
             pass
 

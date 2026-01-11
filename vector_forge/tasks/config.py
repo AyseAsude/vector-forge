@@ -606,22 +606,22 @@ class ContrastConfig(BaseModel):
     # Pool settings
     core_pool_size: int = Field(
         default=80,
-        ge=20,
-        le=500,
+        ge=1,
+        le=1000,
         description="Number of pairs in the shared core pool",
     )
 
     core_seeds_per_sample: int = Field(
         default=40,
-        ge=10,
-        le=200,
+        ge=1,
+        le=500,
         description="How many core seeds each sample uses",
     )
 
     unique_seeds_per_sample: int = Field(
         default=10,
         ge=0,
-        le=50,
+        le=200,
         description="How many unique seeds each sample generates",
     )
 
@@ -658,7 +658,7 @@ class ContrastConfig(BaseModel):
     max_regeneration_attempts: int = Field(
         default=2,
         ge=0,
-        le=5,
+        le=50,
         description="Maximum attempts to regenerate a failed pair",
     )
 
@@ -682,7 +682,7 @@ class ContrastConfig(BaseModel):
     max_concurrent_generations: int = Field(
         default=64,
         ge=1,
-        le=128,
+        le=512,
         description="Maximum concurrent LLM API calls for pair generation",
     )
 

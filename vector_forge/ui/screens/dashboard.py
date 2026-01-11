@@ -268,7 +268,7 @@ class DetailsPanel(Vertical):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._current_extraction_id: str | None = None
-        self._displayed_log_count: int = 0
+        self._displayed_log_timestamps: set[float] = set()
         self._agent_rows: dict[str, AgentRow] = {}
 
     def compose(self) -> ComposeResult:
@@ -298,7 +298,7 @@ class DetailsPanel(Vertical):
             empty_state.display = True
             content_state.display = False
             self._current_extraction_id = None
-            self._displayed_log_count = 0
+            self._displayed_log_timestamps.clear()
             return
 
         # Show content state
@@ -397,16 +397,24 @@ class DetailsPanel(Vertical):
         extraction_changed = ext.id != self._current_extraction_id
         if extraction_changed:
             activity_list.remove_children()
-            self._displayed_log_count = 0
+            self._displayed_log_timestamps.clear()
             self._current_extraction_id = ext.id
 
-        # Get logs for this extraction
+        # Get logs for this extraction (last 10)
         logs = get_state().get_filtered_logs(extraction_id=ext.id)[-10:]
 
-        # Only add new logs (incremental update)
-        if len(logs) > self._displayed_log_count or extraction_changed:
-            start_idx = 0 if extraction_changed else self._displayed_log_count
-            for log in logs[start_idx:]:
+        # Find new logs by timestamp (not displayed yet)
+        new_logs = [
+            log for log in logs
+            if log.timestamp not in self._displayed_log_timestamps
+        ]
+
+        if new_logs:
+            # Remove empty placeholder if present
+            for empty in activity_list.query(".empty"):
+                empty.remove()
+
+            for log in new_logs:
                 safe_message = escape_markup(log.message)
                 # Truncate long messages (same style as LogRow)
                 message = safe_message.replace("\n", " ")
@@ -425,7 +433,8 @@ class DetailsPanel(Vertical):
                     f"{message}"
                 )
                 activity_list.mount(Static(content, classes="log-row"))
-            self._displayed_log_count = len(logs)
+                self._displayed_log_timestamps.add(log.timestamp)
+
             activity_list.scroll_end(animate=False)
 
         # Handle empty state
@@ -433,10 +442,6 @@ class DetailsPanel(Vertical):
             empties = list(activity_list.query(".empty"))
             if not empties:
                 activity_list.mount(Static("[$foreground-muted]No activity yet[/]", classes="empty"))
-        else:
-            # Remove empty message when logs exist
-            for empty in activity_list.query(".empty"):
-                empty.remove()
 
 
 class ConfirmHideTaskScreen(ModalScreen[bool]):

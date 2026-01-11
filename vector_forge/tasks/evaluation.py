@@ -580,12 +580,19 @@ class VectorEvaluator:
             )
 
         # Use rich criteria from behavior analysis (components, markers, boundaries)
-        criteria = behavior.evaluation_criteria if behavior.evaluation_criteria else []
-        # Add component-based criteria for better judging
+        # Deduplicate to avoid repeating the same criteria multiple times
+        criteria = list(dict.fromkeys(behavior.evaluation_criteria or []))
+
+        # Add component-based markers (deduplicated across all components)
         if behavior.components:
+            all_markers: set[str] = set()
             for comp in behavior.components[:3]:  # Top 3 components
                 if comp.markers:
-                    criteria.append(f"Look for markers: {', '.join(comp.markers[:3])}")
+                    all_markers.update(comp.markers[:3])
+            if all_markers:
+                marker_line = f"Look for markers: {', '.join(sorted(all_markers))}"
+                if marker_line not in criteria:
+                    criteria.append(marker_line)
 
         judge_start = time.time()
         results = await self._behavior_judge.judge_behavior_batch(
