@@ -72,7 +72,7 @@ class ConversationPanel(Vertical):
 
         yield VerticalScroll(classes="message-stream", id="message-stream")
         yield ChatInput(id="chat-input")
-        yield Static("enter send · ctrl+enter newline", classes="hint-bar", id="hint-bar")
+        yield Static("enter send · ctrl+n clear", classes="hint-bar", id="hint-bar")
 
     def _is_at_bottom(self) -> bool:
         """Check if scroll is at bottom."""
@@ -122,9 +122,7 @@ class ConversationPanel(Vertical):
         stream.remove_children()
         stream.mount(
             Static(
-                "Send a message to start the conversation.\n\n"
-                "Both baseline (unsteered) and steered\n"
-                "responses will be shown for comparison.",
+                "Send a message to start the conversation.",
                 classes="empty-state",
             )
         )
