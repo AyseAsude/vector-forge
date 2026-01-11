@@ -559,6 +559,10 @@ class CreateTaskScreen(Screen):
 
         yield TmuxBar(active_screen="dashboard")
 
+    def on_mount(self) -> None:
+        """Set initial visibility based on default extraction method."""
+        self._update_extraction_visibility()
+
     def on_profile_card_selected(self, event: ProfileCard.Selected) -> None:
         self._profile = event.profile
         for p in ["quick", "standard", "comprehensive"]:
