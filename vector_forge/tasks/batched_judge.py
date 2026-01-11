@@ -10,6 +10,7 @@ Key design decisions:
 """
 
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Protocol
 import json
@@ -139,6 +140,7 @@ class BatchedJudge:
         batching_strategy: BatchingStrategy,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
+        max_concurrent: int = 64,
     ):
         """Initialize the batched judge.
 
@@ -147,11 +149,21 @@ class BatchedJudge:
             batching_strategy: Strategy for grouping outputs.
             temperature: LLM temperature for consistency.
             max_tokens: Max tokens for judge response (None = provider default).
+            max_concurrent: Maximum concurrent LLM API calls.
         """
         self._llm = llm_client
         self._strategy = batching_strategy
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_concurrent = max_concurrent
+        self._semaphore: Optional[asyncio.Semaphore] = None
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Get or create semaphore for current event loop."""
+        # Create semaphore lazily to ensure it's in the right event loop
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self._max_concurrent)
+        return self._semaphore
 
     async def judge_behavior_batch(
         self,
@@ -172,14 +184,23 @@ class BatchedJudge:
             List of JudgeResult, one per output in original order.
         """
         batches = self._strategy.create_batches(outputs)
-        all_results: Dict[int, JudgeResult] = {}
+        semaphore = self._get_semaphore()
 
-        for batch in batches:
-            batch_results = await self._judge_behavior_single_batch(
-                batch, behavior_name, behavior_definition, evaluation_criteria
-            )
+        async def judge_one_batch(batch: List[OutputToJudge]) -> List[JudgeResult]:
+            async with semaphore:
+                return await self._judge_behavior_single_batch(
+                    batch, behavior_name, behavior_definition, evaluation_criteria
+                )
+
+        # Process all batches concurrently with semaphore limiting
+        batch_results_list = await asyncio.gather(
+            *[judge_one_batch(batch) for batch in batches]
+        )
+
+        # Map results back to outputs
+        all_results: Dict[int, JudgeResult] = {}
+        for batch, batch_results in zip(batches, batch_results_list):
             for output, result in zip(batch, batch_results):
-                # Use a unique key based on output position
                 key = id(output)
                 all_results[key] = result
 
@@ -243,10 +264,20 @@ Return a JSON object with a "results" key containing an array:
             List of JudgeResult, one per output in original order.
         """
         batches = self._strategy.create_batches(outputs)
-        all_results: Dict[int, JudgeResult] = {}
+        semaphore = self._get_semaphore()
 
-        for batch in batches:
-            batch_results = await self._judge_coherence_single_batch(batch)
+        async def judge_one_batch(batch: List[OutputToJudge]) -> List[JudgeResult]:
+            async with semaphore:
+                return await self._judge_coherence_single_batch(batch)
+
+        # Process all batches concurrently with semaphore limiting
+        batch_results_list = await asyncio.gather(
+            *[judge_one_batch(batch) for batch in batches]
+        )
+
+        # Map results back to outputs
+        all_results: Dict[int, JudgeResult] = {}
+        for batch, batch_results in zip(batches, batch_results_list):
             for output, result in zip(batch, batch_results):
                 key = id(output)
                 all_results[key] = result
@@ -399,10 +430,42 @@ class SpecificityJudge:
         llm_client: JudgeLLM,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
+        max_concurrent: int = 64,
     ):
         self._llm = llm_client
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_concurrent = max_concurrent
+        self._semaphore: Optional[asyncio.Semaphore] = None
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Get or create semaphore for current event loop."""
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self._max_concurrent)
+        return self._semaphore
+
+    async def judge_specificity_batch(
+        self,
+        items: List[tuple],  # List of (prompt, output, behavior_name)
+    ) -> List[JudgeResult]:
+        """Judge multiple outputs for specificity concurrently.
+
+        Args:
+            items: List of (prompt, output, behavior_name) tuples.
+
+        Returns:
+            List of JudgeResult, one per item in original order.
+        """
+        semaphore = self._get_semaphore()
+
+        async def judge_one(prompt: str, output: str, behavior_name: str) -> JudgeResult:
+            async with semaphore:
+                return await self._judge_specificity_single(prompt, output, behavior_name)
+
+        results = await asyncio.gather(
+            *[judge_one(p, o, b) for p, o, b in items]
+        )
+        return list(results)
 
     async def judge_specificity(
         self,
@@ -420,6 +483,15 @@ class SpecificityJudge:
         Returns:
             JudgeResult with appropriateness score.
         """
+        return await self._judge_specificity_single(prompt, output, behavior_name)
+
+    async def _judge_specificity_single(
+        self,
+        prompt: str,
+        output: str,
+        behavior_name: str,
+    ) -> JudgeResult:
+        """Internal implementation for judging a single output."""
         judge_prompt = f"""Evaluate whether the model output shows unexpected behavioral changes.
 
 The model was steered to exhibit: {behavior_name}

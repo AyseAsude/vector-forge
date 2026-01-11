@@ -203,6 +203,7 @@ class VectorEvaluator:
         judge_llm: JudgeLLM,
         config: EvaluationConfig,
         event_emitter: Optional["EventEmitter"] = None,
+        max_concurrent_judge_calls: int = 64,
     ) -> None:
         """Initialize the evaluator.
 
@@ -211,11 +212,13 @@ class VectorEvaluator:
             judge_llm: LLM for judging outputs.
             config: Evaluation configuration.
             event_emitter: Optional event emitter for event sourcing.
+            max_concurrent_judge_calls: Maximum concurrent LLM API calls for judging.
         """
         self._backend = model_backend
         self._judge = judge_llm
         self._config = config
         self._emitter = event_emitter
+        self._max_concurrent = max_concurrent_judge_calls
 
         # Evaluation tracking for event sourcing
         self._current_eval_id: Optional[str] = None
@@ -227,15 +230,18 @@ class VectorEvaluator:
             judge_llm,
             ByPromptBatchingStrategy(),
             temperature=0.3,
+            max_concurrent=max_concurrent_judge_calls,
         )
         self._coherence_judge = BatchedJudge(
             judge_llm,
             ByPromptBatchingStrategy(),
             temperature=0.3,
+            max_concurrent=max_concurrent_judge_calls,
         )
         self._specificity_judge = SpecificityJudge(
             judge_llm,
             temperature=0.3,
+            max_concurrent=max_concurrent_judge_calls,
         )
 
     def _emit(self, method_name: str, **kwargs) -> None:
@@ -675,6 +681,7 @@ class VectorEvaluator:
         )
 
         # Phase 2: Judge each output (requires individual context)
+        # Uses batch method with internal semaphore for concurrency control
         if self._current_eval_id:
             self._emit(
                 "emit_evaluation_progress",
@@ -685,19 +692,18 @@ class VectorEvaluator:
                 current_dimension="specificity",
             )
 
-        async def judge_one(prompt: str, output: str) -> float:
-            result = await self._specificity_judge.judge_specificity(
-                prompt, output, behavior.name
-            )
-            self._judge_call_count += 1
-            return result.score
+        # Build batch items: (prompt, output, behavior_name)
+        batch_items = [
+            (p, o, behavior.name) for p, o in zip(prompts, steered_outputs)
+        ]
 
-        # Run all judge calls concurrently (they're LLM API calls, not GPU)
-        tasks = [judge_one(p, o) for p, o in zip(prompts, steered_outputs)]
-        scores = await asyncio.gather(*tasks)
+        # Run all judge calls concurrently with semaphore-limited concurrency
+        results = await self._specificity_judge.judge_specificity_batch(batch_items)
+        scores = [r.score for r in results]
+        self._judge_call_count += len(prompts)
 
         logger.info(
-            f"Specificity eval: {len(prompts)} judge calls completed"
+            f"Specificity eval: {len(prompts)} judge calls completed concurrently"
         )
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
@@ -1001,6 +1007,7 @@ class VectorEvaluator:
         )
 
         # Phase 2: Judge each output (requires individual context)
+        # Uses semaphore for concurrency control
         if self._current_eval_id:
             self._emit(
                 "emit_evaluation_progress",
@@ -1011,12 +1018,16 @@ class VectorEvaluator:
                 current_dimension="generalization",
             )
 
-        async def judge_one(output: str) -> float:
-            score = await self._judge_behavior(output, behavior)
-            self._judge_call_count += 1
-            return score
+        # Use semaphore to limit concurrent judge calls
+        semaphore = asyncio.Semaphore(self._max_concurrent)
 
-        # Run all judge calls concurrently (they're LLM API calls, not GPU)
+        async def judge_one(output: str) -> float:
+            async with semaphore:
+                score = await self._judge_behavior(output, behavior)
+                self._judge_call_count += 1
+                return score
+
+        # Run all judge calls concurrently with semaphore-limited concurrency
         tasks = [judge_one(o) for o in outputs]
         scores = await asyncio.gather(*tasks)
 

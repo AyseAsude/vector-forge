@@ -967,6 +967,7 @@ class TaskRunner:
             self._llm,
             config.evaluation,
             event_emitter=self._emitter,
+            max_concurrent_judge_calls=config.max_concurrent_evaluations,
         )
 
         completed = 0
