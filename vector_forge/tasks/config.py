@@ -20,6 +20,19 @@ class ContrastQuality(str, Enum):
     THOROUGH = "thorough"
 
 
+class IntensityProfile(str, Enum):
+    """Intensity distribution profile for contrast pairs.
+
+    - EXTREME: Heavy on extreme/high intensity for quick direction finding
+    - BALANCED: Default balanced distribution across all intensities
+    - NATURAL: Heavy on natural/medium for production quality generalization
+    """
+
+    EXTREME = "extreme"
+    BALANCED = "balanced"
+    NATURAL = "natural"
+
+
 class LayerStrategy(str, Enum):
     """Strategy for selecting which layers to optimize."""
 
@@ -54,6 +67,226 @@ class TokenPosition(str, Enum):
     MEAN = "mean"  # Mean of all response tokens (default, recommended)
     LAST = "last"  # Last token of response only
     LAST_PROMPT = "last_prompt_token"  # Last token before response
+
+
+class EvalDepth(str, Enum):
+    """Evaluation depth for tournament rounds.
+
+    Each depth level defines a percentage of the full evaluation budget.
+    Quick uses 10% of prompts/inferences, Medium uses 40%, Full uses 100%.
+    """
+
+    QUICK = "quick"  # 10% budget - fast elimination signal
+    MEDIUM = "medium"  # 40% budget - moderate confidence
+    FULL = "full"  # 100% budget - comprehensive evaluation
+
+
+# Budget percentages for each evaluation depth
+EVAL_DEPTH_BUDGET: dict[EvalDepth, float] = {
+    EvalDepth.QUICK: 0.10,  # 10% of full evaluation
+    EvalDepth.MEDIUM: 0.40,  # 40% of full evaluation
+    EvalDepth.FULL: 1.0,  # 100% of full evaluation
+}
+
+# Prompt selection strategy: what percentage comes from "best" vs "random"
+# For quick: 50% best prompts + 50% random (balance signal with diversity)
+# For medium: 60% best + 40% random
+# For full: 100% (all prompts, no selection needed)
+EVAL_DEPTH_BEST_RATIO: dict[EvalDepth, float] = {
+    EvalDepth.QUICK: 0.50,  # Half best, half random
+    EvalDepth.MEDIUM: 0.60,  # 60% best, 40% random
+    EvalDepth.FULL: 1.0,  # N/A - use all
+}
+
+
+# ============================================================================
+# Tournament Configuration
+# ============================================================================
+
+
+class TournamentConfig(BaseModel):
+    """Configuration for tournament/elimination-based extraction.
+
+    Instead of running all samples with equal resources, the tournament
+    system starts with many samples and progressively eliminates weak
+    performers, focusing resources on promising candidates.
+
+    User provides:
+        - elimination_rounds: Number of elimination phases
+        - final_survivors: Samples entering finals
+
+    System calculates:
+        - initial_samples: Based on 75% elimination per round
+        - datapoints per round: Graduated from min to max
+        - eval depth per round: Quick → Medium → Full
+
+    Example flows:
+        rounds=1, survivors=8:  32 → 8 (finals)
+        rounds=2, survivors=16: 256 → 64 → 16 (finals)
+        rounds=3, survivors=32: 2048 → 512 → 128 → 32 (finals)
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable tournament mode",
+    )
+
+    elimination_rounds: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description="Number of elimination phases before finals",
+    )
+
+    final_survivors: int = Field(
+        default=16,
+        ge=4,
+        le=128,
+        description="Number of samples entering finals",
+    )
+
+    elimination_rate: float = Field(
+        default=0.75,
+        ge=0.5,
+        le=0.9,
+        description="Fraction eliminated per round (0.75 = keep top 25%)",
+    )
+
+    # Datapoint progression
+    min_datapoints: int = Field(
+        default=15,
+        ge=5,
+        le=50,
+        description="Datapoints per sample in first round",
+    )
+
+    max_datapoints: int = Field(
+        default=80,
+        ge=20,
+        le=200,
+        description="Datapoints per sample in final round",
+    )
+
+    @property
+    def keep_rate(self) -> float:
+        """Fraction of samples kept per round."""
+        return 1.0 - self.elimination_rate
+
+    @property
+    def initial_samples(self) -> int:
+        """Calculate initial sample count from elimination rounds and survivors."""
+        # Each round keeps (1 - elimination_rate) of samples
+        # So initial = survivors / keep_rate^rounds
+        return int(self.final_survivors / (self.keep_rate ** self.elimination_rounds))
+
+    @property
+    def total_rounds(self) -> int:
+        """Total rounds including finals."""
+        return self.elimination_rounds + 1
+
+    def samples_at_round(self, round_idx: int) -> int:
+        """Get sample count at start of a round (0-indexed).
+
+        Args:
+            round_idx: Round index (0 = first elimination round)
+
+        Returns:
+            Number of samples at start of that round.
+        """
+        return int(self.initial_samples * (self.keep_rate ** round_idx))
+
+    def survivors_after_round(self, round_idx: int) -> int:
+        """Get sample count after elimination in a round.
+
+        Args:
+            round_idx: Round index (0 = first elimination round)
+
+        Returns:
+            Number of survivors after elimination.
+        """
+        if round_idx >= self.elimination_rounds:
+            # Finals - no elimination
+            return self.final_survivors
+        return self.samples_at_round(round_idx + 1)
+
+    def datapoints_at_round(self, round_idx: int) -> int:
+        """Get datapoints per sample for a round (graduated).
+
+        Args:
+            round_idx: Round index (0 = first round)
+
+        Returns:
+            Number of datapoints for samples in this round.
+        """
+        # Linear interpolation from min to max
+        if self.elimination_rounds == 0:
+            return self.max_datapoints
+        progress = round_idx / self.elimination_rounds
+        return int(self.min_datapoints + progress * (self.max_datapoints - self.min_datapoints))
+
+    def eval_depth_at_round(self, round_idx: int) -> EvalDepth:
+        """Get evaluation depth for a round.
+
+        Args:
+            round_idx: Round index (0 = first round)
+
+        Returns:
+            EvalDepth for this round.
+        """
+        if round_idx == 0:
+            return EvalDepth.QUICK
+        elif round_idx < self.elimination_rounds:
+            return EvalDepth.MEDIUM
+        else:
+            return EvalDepth.FULL
+
+    def get_round_summary(self) -> list[dict]:
+        """Get summary of all rounds for display/logging."""
+        rounds = []
+        for i in range(self.total_rounds):
+            is_finals = i >= self.elimination_rounds
+            rounds.append({
+                "round": i + 1,
+                "samples": self.samples_at_round(i),
+                "survivors": self.survivors_after_round(i),
+                "datapoints": self.datapoints_at_round(i),
+                "eval_depth": self.eval_depth_at_round(i).value,
+                "is_finals": is_finals,
+            })
+        return rounds
+
+    @classmethod
+    def quick(cls) -> "TournamentConfig":
+        """Quick tournament: 1 elimination round, 8 survivors (32 initial)."""
+        return cls(
+            enabled=True,
+            elimination_rounds=1,
+            final_survivors=8,
+            min_datapoints=15,
+            max_datapoints=40,
+        )
+
+    @classmethod
+    def standard(cls) -> "TournamentConfig":
+        """Standard tournament: 2 elimination rounds, 16 survivors (256 initial)."""
+        return cls(
+            enabled=True,
+            elimination_rounds=2,
+            final_survivors=16,
+            min_datapoints=15,
+            max_datapoints=60,
+        )
+
+    @classmethod
+    def comprehensive(cls) -> "TournamentConfig":
+        """Comprehensive tournament: 3 elimination rounds, 32 survivors (2048 initial)."""
+        return cls(
+            enabled=True,
+            elimination_rounds=3,
+            final_survivors=32,
+            min_datapoints=15,
+            max_datapoints=80,
+        )
 
 
 # ============================================================================
@@ -415,6 +648,55 @@ class ContrastConfig(BaseModel):
             return cls.thorough()
         return cls.standard()
 
+    # -------------------------------------------------------------------------
+    # Intensity Distribution Presets
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def get_intensity_preset(profile: IntensityProfile) -> dict[str, float]:
+        """Get intensity distribution values for a profile.
+
+        Args:
+            profile: The intensity profile to get values for.
+
+        Returns:
+            Dictionary with intensity_extreme, intensity_high,
+            intensity_medium, intensity_natural values.
+        """
+        presets = {
+            IntensityProfile.EXTREME: {
+                "intensity_extreme": 0.35,
+                "intensity_high": 0.35,
+                "intensity_medium": 0.20,
+                "intensity_natural": 0.10,
+            },
+            IntensityProfile.BALANCED: {
+                "intensity_extreme": 0.10,
+                "intensity_high": 0.20,
+                "intensity_medium": 0.30,
+                "intensity_natural": 0.40,
+            },
+            IntensityProfile.NATURAL: {
+                "intensity_extreme": 0.05,
+                "intensity_high": 0.10,
+                "intensity_medium": 0.30,
+                "intensity_natural": 0.55,
+            },
+        }
+        return presets.get(profile, presets[IntensityProfile.BALANCED])
+
+    def with_intensity_profile(self, profile: IntensityProfile) -> "ContrastConfig":
+        """Return a copy of this config with a different intensity profile.
+
+        Args:
+            profile: The intensity profile to apply.
+
+        Returns:
+            New ContrastConfig with updated intensity values.
+        """
+        intensity_values = self.get_intensity_preset(profile)
+        return self.model_copy(update=intensity_values)
+
 
 # ============================================================================
 # Sample Configuration
@@ -604,6 +886,143 @@ class EvaluationConfig(BaseModel):
             generation_temperature=0.7,
         )
 
+    def scale_to_depth(self, depth: EvalDepth) -> "EvaluationConfig":
+        """Create a scaled copy of this config for a given evaluation depth.
+
+        Scales all prompt counts and strength levels proportionally based on
+        the depth's budget percentage. Used by tournament mode to create
+        lightweight evaluations for early elimination rounds.
+
+        Args:
+            depth: The evaluation depth (QUICK=10%, MEDIUM=40%, FULL=100%).
+
+        Returns:
+            New EvaluationConfig with scaled parameters.
+
+        Example:
+            >>> full_config = EvaluationConfig(behavior_prompts=50)
+            >>> quick_config = full_config.scale_to_depth(EvalDepth.QUICK)
+            >>> quick_config.behavior_prompts  # ~5 (10% of 50)
+        """
+        budget = EVAL_DEPTH_BUDGET[depth]
+
+        if budget >= 1.0:
+            return self.model_copy()
+
+        # Scale prompt counts (with minimums to ensure meaningful evaluation)
+        scaled_behavior = max(5, int(self.behavior_prompts * budget))
+        scaled_specificity = max(5, int(self.specificity_prompts * budget)) if budget >= 0.4 else 0
+        scaled_coherence = max(5, int(self.coherence_prompts * budget)) if budget >= 1.0 else 0
+        scaled_capability = max(3, int(self.capability_prompts * budget)) if budget >= 1.0 else 0
+        scaled_generalization = max(5, int(self.generalization_prompts * budget)) if budget >= 0.4 else 0
+
+        # Scale strength levels - keep subset spread across range
+        scaled_strengths = self._scale_strength_levels(budget)
+
+        # For quick/medium, always use 1 generation per prompt (reduce variance estimation)
+        scaled_generations = 1 if budget < 1.0 else self.behavior_generations_per_prompt
+
+        # Adjust weights for active dimensions only
+        # Quick: behavior only → 100% behavior weight
+        # Medium: behavior + specificity + generalization → rebalance
+        if budget < 0.4:
+            # Quick: behavior only
+            weights = {
+                "behavior_weight": 1.0,
+                "specificity_weight": 0.0,
+                "coherence_weight": 0.0,
+                "capability_weight": 0.0,
+                "generalization_weight": 0.0,
+            }
+        elif budget < 1.0:
+            # Medium: behavior + specificity + generalization
+            weights = {
+                "behavior_weight": 0.50,
+                "specificity_weight": 0.30,
+                "coherence_weight": 0.0,
+                "capability_weight": 0.0,
+                "generalization_weight": 0.20,
+            }
+        else:
+            # Full: use original weights
+            weights = {}
+
+        return self.model_copy(update={
+            "behavior_prompts": scaled_behavior,
+            "behavior_generations_per_prompt": scaled_generations,
+            "specificity_prompts": scaled_specificity,
+            "coherence_prompts": scaled_coherence,
+            "capability_prompts": scaled_capability,
+            "generalization_prompts": scaled_generalization,
+            "strength_levels": scaled_strengths,
+            **weights,
+        })
+
+    def _scale_strength_levels(self, budget: float) -> List[float]:
+        """Scale strength levels based on budget.
+
+        Selects a subset of strength levels that are spread across the range.
+        Always includes 1.0 as the baseline strength.
+
+        Args:
+            budget: The budget fraction (0.0 to 1.0).
+
+        Returns:
+            List of strength levels to use.
+        """
+        if budget >= 1.0:
+            return self.strength_levels
+
+        # Determine how many strengths to use
+        target_count = max(1, int(len(self.strength_levels) * budget))
+
+        if target_count == 1:
+            # Just use 1.0 (or closest to it)
+            return [min(self.strength_levels, key=lambda x: abs(x - 1.0))]
+
+        if target_count >= len(self.strength_levels):
+            return self.strength_levels
+
+        # Select evenly spaced strengths including endpoints
+        sorted_strengths = sorted(self.strength_levels)
+        indices = [
+            int(i * (len(sorted_strengths) - 1) / (target_count - 1))
+            for i in range(target_count)
+        ]
+        selected = [sorted_strengths[i] for i in indices]
+
+        # Ensure 1.0 is included if it exists in original
+        if 1.0 in self.strength_levels and 1.0 not in selected:
+            # Replace the closest one with 1.0
+            closest_idx = min(range(len(selected)), key=lambda i: abs(selected[i] - 1.0))
+            selected[closest_idx] = 1.0
+
+        return sorted(selected)
+
+    @property
+    def estimated_inferences(self) -> int:
+        """Estimate total number of model inferences for this config.
+
+        Useful for comparing evaluation budgets across depths.
+        """
+        behavior_inferences = (
+            self.behavior_prompts *
+            len(self.strength_levels) *
+            self.behavior_generations_per_prompt
+        )
+        specificity_inferences = self.specificity_prompts
+        coherence_inferences = self.coherence_prompts * len(self.strength_levels)
+        capability_inferences = self.capability_prompts * 2  # baseline + steered
+        generalization_inferences = self.generalization_prompts
+
+        return (
+            behavior_inferences +
+            specificity_inferences +
+            coherence_inferences +
+            capability_inferences +
+            generalization_inferences
+        )
+
 
 # ============================================================================
 # Master Task Configuration
@@ -707,6 +1126,12 @@ class TaskConfig(BaseModel):
         description="Evaluation configuration",
     )
 
+    # Tournament/elimination settings
+    tournament: TournamentConfig = Field(
+        default_factory=TournamentConfig,
+        description="Tournament elimination configuration (disabled by default)",
+    )
+
     # Aggregation
     aggregation_strategy: AggregationStrategy = Field(
         default=AggregationStrategy.TOP_K_AVERAGE,
@@ -750,14 +1175,31 @@ class TaskConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_top_k(self) -> "TaskConfig":
-        """Ensure top_k doesn't exceed num_samples."""
-        if self.top_k > self.num_samples:
-            self.top_k = self.num_samples
+        """Ensure top_k doesn't exceed effective sample count."""
+        effective = self.effective_samples
+        if self.top_k > effective:
+            self.top_k = effective
         return self
+
+    @property
+    def effective_samples(self) -> int:
+        """Get effective sample count (tournament initial or num_samples)."""
+        if self.tournament.enabled:
+            return self.tournament.initial_samples
+        return self.num_samples
+
+    @property
+    def is_tournament_mode(self) -> bool:
+        """Check if tournament mode is enabled."""
+        return self.tournament.enabled
+
+    # -------------------------------------------------------------------------
+    # Standard Presets (no tournament)
+    # -------------------------------------------------------------------------
 
     @classmethod
     def quick(cls) -> "TaskConfig":
-        """Quick configuration for testing."""
+        """Quick configuration for testing (no tournament)."""
         return cls(
             num_samples=4,
             num_seeds=2,
@@ -771,8 +1213,9 @@ class TaskConfig(BaseModel):
 
     @classmethod
     def standard(cls) -> "TaskConfig":
-        """Standard configuration for normal use."""
+        """Standard configuration for normal use (no tournament)."""
         return cls(
+            num_samples=16,
             optimization=OptimizationConfig.standard(),
             contrast=ContrastConfig.standard(),
             datapoints_per_sample=50,
@@ -780,7 +1223,7 @@ class TaskConfig(BaseModel):
 
     @classmethod
     def comprehensive(cls) -> "TaskConfig":
-        """Comprehensive configuration for best results."""
+        """Comprehensive configuration for best results (no tournament)."""
         return cls(
             num_samples=32,
             num_seeds=8,
@@ -796,3 +1239,100 @@ class TaskConfig(BaseModel):
             evaluation=EvaluationConfig.thorough(),
             top_k=8,
         )
+
+    # -------------------------------------------------------------------------
+    # Tournament Presets (with progressive elimination)
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def quick_tournament(cls) -> "TaskConfig":
+        """Quick tournament: 32 initial → 8 survivors (1 elimination round).
+
+        ~4x more exploration than quick() for similar compute.
+        """
+        return cls(
+            num_samples=8,  # Final survivors
+            num_seeds=2,
+            layer_strategies=[LayerStrategy.AUTO, LayerStrategy.SWEEP],
+            optimization=OptimizationConfig.fast(),
+            contrast=ContrastConfig.fast(),
+            datapoints_per_sample=40,  # Max for finals
+            evaluation=EvaluationConfig.fast(),
+            tournament=TournamentConfig.quick(),
+            top_k=4,
+        )
+
+    @classmethod
+    def standard_tournament(cls) -> "TaskConfig":
+        """Standard tournament: 256 initial → 16 survivors (2 elimination rounds).
+
+        ~16x more exploration than standard() for similar compute.
+        """
+        return cls(
+            num_samples=16,  # Final survivors
+            num_seeds=4,
+            layer_strategies=[LayerStrategy.AUTO, LayerStrategy.SWEEP, LayerStrategy.MIDDLE],
+            optimization=OptimizationConfig.standard(),
+            contrast=ContrastConfig.standard(),
+            datapoints_per_sample=60,  # Max for finals
+            evaluation=EvaluationConfig.standard(),
+            tournament=TournamentConfig.standard(),
+            top_k=8,
+        )
+
+    @classmethod
+    def comprehensive_tournament(cls) -> "TaskConfig":
+        """Comprehensive tournament: 2048 initial → 32 survivors (3 elimination rounds).
+
+        ~64x more exploration than comprehensive() for similar compute.
+        Best quality but takes longer.
+        """
+        return cls(
+            num_samples=32,  # Final survivors
+            num_seeds=8,
+            layer_strategies=[
+                LayerStrategy.AUTO,
+                LayerStrategy.SWEEP,
+                LayerStrategy.MIDDLE,
+                LayerStrategy.LATE,
+            ],
+            optimization=OptimizationConfig.thorough(),
+            contrast=ContrastConfig.thorough(),
+            datapoints_per_sample=80,  # Max for finals
+            evaluation=EvaluationConfig.thorough(),
+            tournament=TournamentConfig.comprehensive(),
+            top_k=16,
+        )
+
+    # -------------------------------------------------------------------------
+    # Utility Methods
+    # -------------------------------------------------------------------------
+
+    def with_tournament(
+        self,
+        elimination_rounds: int = 2,
+        final_survivors: Optional[int] = None,
+    ) -> "TaskConfig":
+        """Return a copy with tournament mode enabled.
+
+        Args:
+            elimination_rounds: Number of elimination phases.
+            final_survivors: Survivors entering finals (defaults to num_samples).
+
+        Returns:
+            New TaskConfig with tournament enabled.
+        """
+        survivors = final_survivors or self.num_samples
+        return self.model_copy(update={
+            "tournament": TournamentConfig(
+                enabled=True,
+                elimination_rounds=elimination_rounds,
+                final_survivors=survivors,
+            ),
+        })
+
+    def without_tournament(self) -> "TaskConfig":
+        """Return a copy with tournament mode disabled."""
+        return self.model_copy(update={
+            "tournament": TournamentConfig(enabled=False),
+        })

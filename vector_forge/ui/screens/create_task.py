@@ -17,6 +17,7 @@ from vector_forge.tasks.config import (
     EvaluationConfig,
     ExtractionMethod,
     CAAConfig,
+    TournamentConfig,
 )
 from vector_forge.storage.models import (
     ModelConfig,
@@ -398,7 +399,10 @@ class CreateTaskScreen(Screen):
         self._layer_strategy = "auto"
         self._aggregation = "top_k_average"
         self._contrast_quality = "standard"
+        self._intensity_profile = "balanced"
         self._remove_outliers = True
+        self._tournament_enabled = True  # Tournament on by default
+        self._elimination_rounds = 2
 
         # Preferences and model managers
         self._preferences = PreferencesManager()
@@ -513,6 +517,12 @@ class CreateTaskScreen(Screen):
                         yield ParamRow("Min Structural", "inp-min-struct", "7.0", "score 0-10")
                         yield ParamRow("Min Semantic", "inp-min-semantic", "4.0", "score 0-10")
 
+                    with ParamSection("INTENSITY"):
+                        yield ParamRow("Extreme", "inp-intensity-extreme", "0.10", "proportion")
+                        yield ParamRow("High", "inp-intensity-high", "0.20", "proportion")
+                        yield ParamRow("Medium", "inp-intensity-medium", "0.30", "proportion")
+                        yield ParamRow("Natural", "inp-intensity-natural", "0.40", "proportion")
+
                 # Row 3: Parallelism & Evaluation
                 with Horizontal(classes="params-row"):
                     with ParamSection("PARALLELISM"):
@@ -551,6 +561,31 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("contrast", "standard", "Standard", selected=True, id="contrast-standard")
                         yield OptionPill("contrast", "thorough", "Thorough", id="contrast-thorough")
 
+                with Horizontal(classes="option-row"):
+                    yield Static("Intensity", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("intensity", "extreme", "Extreme", id="intensity-extreme")
+                        yield OptionPill("intensity", "balanced", "Balanced", selected=True, id="intensity-balanced")
+                        yield OptionPill("intensity", "natural", "Natural", id="intensity-natural")
+
+                with Horizontal(classes="option-row"):
+                    yield Static("Tournament", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("tournament", "off", "Off", id="tournament-off")
+                        yield OptionPill("tournament", "on", "On", selected=True, id="tournament-on")
+
+                with Vertical(id="tournament-section"):
+                    with Horizontal(classes="option-row"):
+                        yield Static("  Elimination", classes="option-label")
+                        with Horizontal(classes="option-pills"):
+                            yield OptionPill("elimination", "1", "1 Round", id="elimination-1")
+                            yield OptionPill("elimination", "2", "2 Rounds", selected=True, id="elimination-2")
+                            yield OptionPill("elimination", "3", "3 Rounds", id="elimination-3")
+                    with ParamSection("TOURNAMENT"):
+                        yield ParamRow("Final Survivors", "inp-tournament-survivors", "16", "samples entering finals")
+                        yield ParamRow("Min Datapoints", "inp-tournament-min-dp", "15", "datapoints in round 1")
+                        yield ParamRow("Max Datapoints", "inp-tournament-max-dp", "60", "datapoints in finals")
+
         # Footer
         with Horizontal(id="footer"):
             yield Static("", id="status")
@@ -562,6 +597,7 @@ class CreateTaskScreen(Screen):
     def on_mount(self) -> None:
         """Set initial visibility based on default extraction method."""
         self._update_extraction_visibility()
+        self._update_tournament_visibility()
 
     def on_profile_card_selected(self, event: ProfileCard.Selected) -> None:
         self._profile = event.profile
@@ -600,6 +636,24 @@ class CreateTaskScreen(Screen):
                 if pill.group == "contrast":
                     pill.set_selected(pill.value == event.value)
             self._apply_contrast_preset(event.value)
+        elif event.group == "intensity":
+            self._intensity_profile = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "intensity":
+                    pill.set_selected(pill.value == event.value)
+            self._apply_intensity_preset(event.value)
+        elif event.group == "tournament":
+            self._tournament_enabled = (event.value == "on")
+            for pill in self.query(OptionPill):
+                if pill.group == "tournament":
+                    pill.set_selected(pill.value == event.value)
+            self._update_tournament_visibility()
+        elif event.group == "elimination":
+            self._elimination_rounds = int(event.value)
+            for pill in self.query(OptionPill):
+                if pill.group == "elimination":
+                    pill.set_selected(pill.value == event.value)
+            self._update_tournament_preview()
 
     def _update_extraction_visibility(self) -> None:
         """Show/hide UI elements based on extraction method."""
@@ -623,6 +677,32 @@ class CreateTaskScreen(Screen):
         """Show/hide outlier threshold based on remove_outliers setting."""
         try:
             self.query_one("#outlier-threshold-row").display = self._remove_outliers
+        except Exception:
+            pass
+
+    def _update_tournament_visibility(self) -> None:
+        """Show/hide tournament settings based on tournament_enabled."""
+        try:
+            self.query_one("#tournament-section").display = self._tournament_enabled
+        except Exception:
+            pass
+
+    def _update_tournament_preview(self) -> None:
+        """Update tournament preview based on current settings."""
+        try:
+            survivors = int(self.query_one("#inp-tournament-survivors", Input).value or "16")
+            rounds = self._elimination_rounds
+
+            # Calculate initial samples (75% elimination per round)
+            initial = int(survivors / (0.25 ** rounds))
+
+            # Update status or a preview label
+            # For now, just log it
+            import logging
+            logging.getLogger(__name__).debug(
+                f"Tournament preview: {initial} initial → {survivors} survivors "
+                f"over {rounds + 1} rounds"
+            )
         except Exception:
             pass
 
@@ -781,6 +861,44 @@ class CreateTaskScreen(Screen):
             if pill.group == "contrast":
                 pill.set_selected(pill.value == contrast_preset)
 
+        # Update intensity profile pills based on profile
+        intensity_preset = {
+            "quick": "extreme",      # Fast direction finding
+            "standard": "balanced",  # Default balanced
+            "comprehensive": "natural",  # Production quality
+        }.get(profile, "balanced")
+        self._intensity_profile = intensity_preset
+        for pill in self.query(OptionPill):
+            if pill.group == "intensity":
+                pill.set_selected(pill.value == intensity_preset)
+        self._apply_intensity_preset(intensity_preset)
+
+        # Update tournament settings based on profile
+        # All profiles have tournament enabled by default with appropriate rounds
+        tournament_settings = {
+            "quick": {"enabled": True, "rounds": 1, "survivors": 8, "min_dp": 15, "max_dp": 40},
+            "standard": {"enabled": True, "rounds": 2, "survivors": 16, "min_dp": 15, "max_dp": 60},
+            "comprehensive": {"enabled": True, "rounds": 3, "survivors": 32, "min_dp": 15, "max_dp": 80},
+        }
+        t_settings = tournament_settings.get(profile, tournament_settings["standard"])
+
+        self._tournament_enabled = t_settings["enabled"]
+        self._elimination_rounds = t_settings["rounds"]
+
+        # Update tournament pills
+        for pill in self.query(OptionPill):
+            if pill.group == "tournament":
+                pill.set_selected(pill.value == ("on" if t_settings["enabled"] else "off"))
+            if pill.group == "elimination":
+                pill.set_selected(pill.value == str(t_settings["rounds"]))
+
+        # Update tournament input fields
+        self.query_one("#inp-tournament-survivors", Input).value = str(t_settings["survivors"])
+        self.query_one("#inp-tournament-min-dp", Input).value = str(t_settings["min_dp"])
+        self.query_one("#inp-tournament-max-dp", Input).value = str(t_settings["max_dp"])
+
+        self._update_tournament_visibility()
+
     def _apply_contrast_preset(self, preset: str) -> None:
         """Apply a contrast quality preset to the fields."""
         preset_map = {
@@ -802,6 +920,24 @@ class CreateTaskScreen(Screen):
         self.query_one("#inp-min-dim", Input).value = str(contrast.min_dimension_score)
         self.query_one("#inp-min-struct", Input).value = str(contrast.min_structural_score)
         self.query_one("#inp-min-semantic", Input).value = str(contrast.min_semantic_score)
+
+    def _apply_intensity_preset(self, preset: str) -> None:
+        """Apply an intensity profile preset to the fields."""
+        from vector_forge.tasks.config import IntensityProfile, ContrastConfig
+
+        profile_map = {
+            "extreme": IntensityProfile.EXTREME,
+            "balanced": IntensityProfile.BALANCED,
+            "natural": IntensityProfile.NATURAL,
+        }
+        profile = profile_map.get(preset, IntensityProfile.BALANCED)
+        values = ContrastConfig.get_intensity_preset(profile)
+
+        # Update intensity input fields
+        self.query_one("#inp-intensity-extreme", Input).value = str(values["intensity_extreme"])
+        self.query_one("#inp-intensity-high", Input).value = str(values["intensity_high"])
+        self.query_one("#inp-intensity-medium", Input).value = str(values["intensity_medium"])
+        self.query_one("#inp-intensity-natural", Input).value = str(values["intensity_natural"])
 
     def _compute_layers_for_strategy(self, strategy: str, num_layers: int) -> list[int]:
         """Compute target layers for a given strategy and model size."""
@@ -903,6 +1039,11 @@ class CreateTaskScreen(Screen):
             min_dimension_score=float(self.query_one("#inp-min-dim", Input).value or "6.0"),
             min_structural_score=float(self.query_one("#inp-min-struct", Input).value or "7.0"),
             min_semantic_score=float(self.query_one("#inp-min-semantic", Input).value or "4.0"),
+            # Intensity distribution
+            intensity_extreme=float(self.query_one("#inp-intensity-extreme", Input).value or "0.10"),
+            intensity_high=float(self.query_one("#inp-intensity-high", Input).value or "0.20"),
+            intensity_medium=float(self.query_one("#inp-intensity-medium", Input).value or "0.30"),
+            intensity_natural=float(self.query_one("#inp-intensity-natural", Input).value or "0.40"),
         )
 
         # Get target model (required)
@@ -967,6 +1108,15 @@ class CreateTaskScreen(Screen):
             outlier_std_threshold=outlier_threshold,
         )
 
+        # Build tournament config
+        tournament_config = TournamentConfig(
+            enabled=self._tournament_enabled,
+            elimination_rounds=self._elimination_rounds,
+            final_survivors=int(self.query_one("#inp-tournament-survivors", Input).value or "16"),
+            min_datapoints=int(self.query_one("#inp-tournament-min-dp", Input).value or "15"),
+            max_datapoints=int(self.query_one("#inp-tournament-max-dp", Input).value or "60"),
+        )
+
         return TaskConfig(
             extraction_method=extraction_method,
             caa=caa_config,
@@ -982,6 +1132,7 @@ class CreateTaskScreen(Screen):
             aggregation_strategy=aggregation,
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
             evaluation=evaluation_config,
+            tournament=tournament_config,
             extractor_model=extractor_model,
             judge_model=judge_model,
             expander_model=expander_model,
