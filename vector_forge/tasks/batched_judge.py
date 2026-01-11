@@ -10,7 +10,6 @@ Key design decisions:
 """
 
 from abc import ABC, abstractmethod
-import asyncio
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Protocol
 import json
@@ -19,9 +18,6 @@ import logging
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 
 logger = logging.getLogger(__name__)
-
-# Default max concurrent judge calls
-DEFAULT_MAX_CONCURRENT_JUDGES = 64
 
 
 class JudgeLLM(Protocol):
@@ -132,9 +128,6 @@ class BatchedJudge:
     Reduces LLM calls by grouping multiple outputs into single judge calls
     while maintaining evaluation quality through smart batching strategies.
 
-    Batches are processed CONCURRENTLY using asyncio.gather with a semaphore
-    to limit concurrent API calls.
-
     Example:
         >>> judge = BatchedJudge(llm_client, ByPromptBatchingStrategy())
         >>> results = await judge.judge_behavior(outputs, behavior)
@@ -146,7 +139,6 @@ class BatchedJudge:
         batching_strategy: BatchingStrategy,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
-        max_concurrent: int = DEFAULT_MAX_CONCURRENT_JUDGES,
     ):
         """Initialize the batched judge.
 
@@ -155,20 +147,11 @@ class BatchedJudge:
             batching_strategy: Strategy for grouping outputs.
             temperature: LLM temperature for consistency.
             max_tokens: Max tokens for judge response (None = provider default).
-            max_concurrent: Max concurrent LLM calls (default: 64).
         """
         self._llm = llm_client
         self._strategy = batching_strategy
         self._temperature = temperature
         self._max_tokens = max_tokens
-        self._max_concurrent = max_concurrent
-        self._semaphore: Optional[asyncio.Semaphore] = None
-
-    def _get_semaphore(self) -> asyncio.Semaphore:
-        """Get or create semaphore for concurrent limiting."""
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self._max_concurrent)
-        return self._semaphore
 
     async def judge_behavior_batch(
         self,
@@ -178,8 +161,6 @@ class BatchedJudge:
         evaluation_criteria: List[str],
     ) -> List[JudgeResult]:
         """Judge multiple outputs for behavior presence.
-
-        Batches are processed CONCURRENTLY for maximum throughput.
 
         Args:
             outputs: Outputs to judge.
@@ -191,23 +172,15 @@ class BatchedJudge:
             List of JudgeResult, one per output in original order.
         """
         batches = self._strategy.create_batches(outputs)
-        semaphore = self._get_semaphore()
-
-        async def process_batch(batch: List[OutputToJudge]) -> List[tuple]:
-            """Process a single batch with semaphore limiting."""
-            async with semaphore:
-                batch_results = await self._judge_behavior_single_batch(
-                    batch, behavior_name, behavior_definition, evaluation_criteria
-                )
-                return [(id(output), result) for output, result in zip(batch, batch_results)]
-
-        # Process all batches concurrently
-        batch_outputs = await asyncio.gather(*[process_batch(batch) for batch in batches])
-
-        # Flatten and collect results
         all_results: Dict[int, JudgeResult] = {}
-        for batch_result in batch_outputs:
-            for key, result in batch_result:
+
+        for batch in batches:
+            batch_results = await self._judge_behavior_single_batch(
+                batch, behavior_name, behavior_definition, evaluation_criteria
+            )
+            for output, result in zip(batch, batch_results):
+                # Use a unique key based on output position
+                key = id(output)
                 all_results[key] = result
 
         # Return results in original order
@@ -263,8 +236,6 @@ Return a JSON object with a "results" key containing an array:
     ) -> List[JudgeResult]:
         """Judge multiple outputs for coherence.
 
-        Batches are processed CONCURRENTLY for maximum throughput.
-
         Args:
             outputs: Outputs to judge.
 
@@ -272,21 +243,12 @@ Return a JSON object with a "results" key containing an array:
             List of JudgeResult, one per output in original order.
         """
         batches = self._strategy.create_batches(outputs)
-        semaphore = self._get_semaphore()
-
-        async def process_batch(batch: List[OutputToJudge]) -> List[tuple]:
-            """Process a single batch with semaphore limiting."""
-            async with semaphore:
-                batch_results = await self._judge_coherence_single_batch(batch)
-                return [(id(output), result) for output, result in zip(batch, batch_results)]
-
-        # Process all batches concurrently
-        batch_outputs = await asyncio.gather(*[process_batch(batch) for batch in batches])
-
-        # Flatten and collect results
         all_results: Dict[int, JudgeResult] = {}
-        for batch_result in batch_outputs:
-            for key, result in batch_result:
+
+        for batch in batches:
+            batch_results = await self._judge_coherence_single_batch(batch)
+            for output, result in zip(batch, batch_results):
+                key = id(output)
                 all_results[key] = result
 
         return [all_results[id(output)] for output in outputs]
