@@ -248,7 +248,7 @@ class EliminationRunner:
 
             # Update active samples for next round
             active_sample_ids = [
-                r.sample.config.seed % tournament.initial_samples
+                r.sample.sample_index
                 for r in survivors
             ]
 

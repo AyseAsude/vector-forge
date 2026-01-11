@@ -214,7 +214,7 @@ class SampleGenerator:
         Returns:
             SampleSet with quasi-randomly distributed samples.
         """
-        n = n_samples or self._config.num_samples
+        n = n_samples or self._config.effective_samples
 
         try:
             from scipy.stats import qmc

@@ -236,7 +236,7 @@ class ExtractionRunner:
 
             pipeline_result = await contrast_pipeline.run(
                 behavior_description=behavior_description,
-                num_samples=config.num_samples,
+                num_samples=config.effective_samples,
             )
 
             # Log contrast pipeline results
