@@ -13,15 +13,10 @@ from typing import Any, Callable, Dict, List, Optional
 from vector_forge.storage import (
     SessionStore,
     EventEnvelope,
-    LLMRequestEvent,
-    LLMResponseEvent,
-    LLMChunkEvent,
     ToolCallEvent,
     ToolResultEvent,
-    DatapointAddedEvent,
     VectorCreatedEvent,
     VectorSelectedEvent,
-    EvaluationStartedEvent,
     EvaluationCompletedEvent,
     IterationStartedEvent,
     IterationCompletedEvent,
@@ -46,10 +41,18 @@ class ExecutionContext:
 
 
 class EventEmittingLLMClient:
-    """LLM client wrapper that emits events for each call.
+    """LLM client wrapper that configures event emission on the underlying client.
 
-    Supports real-time notification via on_event callback for immediate
-    UI updates without polling.
+    The underlying LiteLLMClient handles event emission with proper model names
+    and request/response tracking. This wrapper configures the store and source
+    on the underlying client so it can emit events correctly.
+
+    Previously this wrapper emitted its own events in addition to the underlying
+    client, causing:
+    - Duplicate request/response events in logs
+    - "unknown" model names (from getattr before underlying client emits)
+
+    Now it just configures the underlying client and passes through calls.
     """
 
     def __init__(
@@ -63,153 +66,30 @@ class EventEmittingLLMClient:
         self._store = store
         self._source = source
         self._on_event = on_event
-        self._request_counter = 0
 
-    def _emit(self, event: Any) -> None:
-        """Emit event and notify callback."""
-        envelope = self._store.append_event(event, source=self._source)
-        if self._on_event:
-            try:
-                self._on_event(envelope)
-            except Exception:
-                pass  # Don't let notification errors break LLM calls
+        # Configure the underlying client's store and source so it can emit events.
+        # LiteLLMClient checks if _store is None before emitting.
+        if hasattr(client, '_store'):
+            client._store = store
+        if hasattr(client, '_source'):
+            client._source = source
 
     async def generate(
         self,
         messages: List[dict],
         **kwargs,
     ) -> str:
-        """Generate with event emission."""
-        self._request_counter += 1
-        request_id = f"{self._source}_{self._request_counter}"
-
-        # Emit request event
-        request_event = LLMRequestEvent(
-            request_id=request_id,
-            model=getattr(self._client, 'model', kwargs.get("model", "unknown")),
-            messages=messages,
-            tools=kwargs.get("tools"),
-            temperature=kwargs.get("temperature"),
-            max_tokens=kwargs.get("max_tokens"),
-        )
-        self._emit(request_event)
-
-        start_time = time.time()
-        try:
-            # Call underlying client
-            response = await self._client.generate(messages, **kwargs)
-
-            # Emit response event
-            latency_ms = int((time.time() - start_time) * 1000)
-            response_event = LLMResponseEvent(
-                request_id=request_id,
-                content=response if isinstance(response, str) else str(response),
-                tool_calls=[],
-                finish_reason="stop",
-                latency_ms=latency_ms,
-                usage={"estimated_tokens": len(str(response)) // 4},
-            )
-            self._emit(response_event)
-
-            return response
-
-        except Exception as e:
-            # Emit error response
-            response_event = LLMResponseEvent(
-                request_id=request_id,
-                content="",
-                finish_reason="error",
-                latency_ms=int((time.time() - start_time) * 1000),
-                usage={},
-                error=str(e),
-            )
-            self._emit(response_event)
-            raise
+        """Generate - delegates to underlying client which handles events."""
+        return await self._client.generate(messages, **kwargs)
 
     async def generate_streaming(
         self,
         messages: List[dict],
         **kwargs,
     ) -> str:
-        """Generate with streaming and real-time chunk events.
-
-        Emits llm.chunk events as tokens arrive for real-time UI display.
-        """
-        self._request_counter += 1
-        request_id = f"{self._source}_{self._request_counter}"
-
-        # Emit request event
-        request_event = LLMRequestEvent(
-            request_id=request_id,
-            model=getattr(self._client, 'model', kwargs.get("model", "unknown")),
-            messages=messages,
-            tools=kwargs.get("tools"),
-            temperature=kwargs.get("temperature"),
-            max_tokens=kwargs.get("max_tokens"),
-        )
-        self._emit(request_event)
-
-        start_time = time.time()
-
-        # Check if underlying client supports streaming
+        """Generate with streaming - delegates to underlying client."""
         if hasattr(self._client, 'generate_streaming'):
-            accumulated = ""
-            chunk_index = 0
-
-            try:
-                # Use litellm streaming
-                import litellm
-                response = await litellm.acompletion(
-                    model=getattr(self._client, 'model', 'unknown'),
-                    messages=messages,
-                    stream=True,
-                    **kwargs,
-                )
-
-                async for chunk in response:
-                    delta = chunk.choices[0].delta
-                    content = getattr(delta, "content", None) or ""
-
-                    if content:
-                        accumulated += content
-
-                        # Emit chunk for real-time display
-                        chunk_event = LLMChunkEvent(
-                            request_id=request_id,
-                            chunk=content,
-                            chunk_index=chunk_index,
-                            accumulated=accumulated,
-                        )
-                        self._emit(chunk_event)
-                        chunk_index += 1
-
-                latency_ms = int((time.time() - start_time) * 1000)
-
-                # Emit final response event
-                response_event = LLMResponseEvent(
-                    request_id=request_id,
-                    content=accumulated,
-                    tool_calls=[],
-                    finish_reason="stop",
-                    latency_ms=latency_ms,
-                    usage={"estimated_tokens": len(accumulated) // 4},
-                )
-                self._emit(response_event)
-
-                return accumulated
-
-            except Exception as e:
-                response_event = LLMResponseEvent(
-                    request_id=request_id,
-                    content="",
-                    finish_reason="error",
-                    latency_ms=int((time.time() - start_time) * 1000),
-                    usage={},
-                    error=str(e),
-                )
-                self._emit(response_event)
-                raise
-
+            return await self._client.generate_streaming(messages, **kwargs)
         else:
             # Fall back to non-streaming
             return await self.generate(messages, **kwargs)
@@ -219,65 +99,13 @@ class EventEmittingLLMClient:
         messages: List,
         **kwargs,
     ):
-        """Complete with event emission (returns full LLMResponse)."""
-        # Convert Message objects to dicts for logging
-        msg_dicts = []
-        for m in messages:
-            if hasattr(m, 'role') and hasattr(m, 'content'):
-                msg_dicts.append({"role": m.role, "content": m.content})
-            elif isinstance(m, dict):
-                msg_dicts.append(m)
-            else:
-                msg_dicts.append({"content": str(m)})
+        """Complete - delegates to underlying client which handles events."""
+        return await self._client.complete(messages, **kwargs)
 
-        # Generate request ID
-        self._request_counter += 1
-        request_id = f"{self._source}_{self._request_counter}"
-
-        # Emit request event
-        request_event = LLMRequestEvent(
-            request_id=request_id,
-            model=getattr(self._client, 'model', kwargs.get("model", "unknown")),
-            messages=msg_dicts,
-            tools=kwargs.get("tools"),
-            temperature=kwargs.get("temperature"),
-            max_tokens=kwargs.get("max_tokens"),
-        )
-        self._emit(request_event)
-
-        start_time = time.time()
-        try:
-            # Call underlying client
-            response = await self._client.complete(messages, **kwargs)
-
-            # Emit response event
-            latency_ms = int((time.time() - start_time) * 1000)
-            content = response.content if hasattr(response, 'content') else str(response)
-            response_event = LLMResponseEvent(
-                request_id=request_id,
-                content=content,
-                tool_calls=[],
-                finish_reason="stop",
-                latency_ms=latency_ms,
-                usage={"estimated_tokens": len(str(content)) // 4},
-            )
-            self._emit(response_event)
-
-            return response
-
-        except Exception as e:
-            # Emit error response
-            response_event = LLMResponseEvent(
-                request_id=request_id,
-                content="",
-                tool_calls=[],
-                finish_reason="error",
-                latency_ms=int((time.time() - start_time) * 1000),
-                usage={},
-                error=str(e),
-            )
-            self._emit(response_event)
-            raise
+    @property
+    def model(self) -> str:
+        """Pass through model property from underlying client."""
+        return getattr(self._client, 'model', 'unknown')
 
 
 class EventEmittingToolRegistry:

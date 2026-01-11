@@ -72,8 +72,10 @@ class LiteLLMClient(BaseLLMClient):
         self,
         config: LLMConfig,
         store: Optional["SessionStore"] = None,
+        source: str = "llm",
     ):
         super().__init__(config, store)
+        self._source = source
 
         # Configure litellm
         if config.api_key:
@@ -297,7 +299,7 @@ class LiteLLMClient(BaseLLMClient):
             },
         )
 
-        self._store.append_event(event, source="llm")
+        self._store.append_event(event, source=self._source)
 
     def _emit_response_event(
         self,
@@ -325,7 +327,7 @@ class LiteLLMClient(BaseLLMClient):
             error=error,
         )
 
-        self._store.append_event(event, source="llm")
+        self._store.append_event(event, source=self._source)
 
     def _emit_chunk_event(
         self,
@@ -347,7 +349,7 @@ class LiteLLMClient(BaseLLMClient):
             accumulated=accumulated,
         )
 
-        self._store.append_event(event, source="llm")
+        self._store.append_event(event, source=self._source)
 
     async def generate_streaming(
         self,
