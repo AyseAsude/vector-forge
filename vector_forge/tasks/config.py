@@ -44,8 +44,50 @@ class AggregationStrategy(str, Enum):
     STRATEGY_GROUPED = "strategy_grouped"
 
 
+class ExtractionMethod(str, Enum):
+    """Method for extracting steering vectors."""
+
+    CAA = "caa"
+    GRADIENT = "gradient"
+    HYBRID = "hybrid"
+
+
+class TokenPosition(str, Enum):
+    """Which token position to extract activations from for CAA."""
+
+    MEAN = "mean"  # Mean of all response tokens (default, recommended)
+    LAST = "last"  # Last token of response only
+    LAST_PROMPT = "last_prompt_token"  # Last token before response
+
+
 # ============================================================================
-# Optimization Configuration (NEW - for steering-vectors library)
+# CAA Configuration
+# ============================================================================
+
+
+class CAAConfig(BaseModel):
+    """Configuration for CAA-specific extraction settings.
+
+    Only contains settings unique to CAA extraction method.
+    Sample generation, data distribution, etc. are shared with gradient.
+    """
+
+    # Extreme outlier removal before averaging
+    remove_extreme_outliers: bool = Field(
+        default=True,
+        description="Remove extreme outlier pairs (> outlier_std_threshold std devs)",
+    )
+
+    outlier_std_threshold: float = Field(
+        default=3.0,
+        ge=2.0,
+        le=5.0,
+        description="Std dev threshold for extreme outlier removal",
+    )
+
+
+# ============================================================================
+# Optimization Configuration (for gradient-based extraction)
 # ============================================================================
 
 
@@ -354,7 +396,13 @@ class SampleConfig(BaseModel):
         description="Specific layers to target when using FIXED strategy",
     )
 
-    # Optimization settings (per-sample overrides)
+    # CAA token position (assigned by generator, cycles through all positions)
+    token_position: TokenPosition = Field(
+        default=TokenPosition.MEAN,
+        description="Token position for CAA extraction (auto-assigned by generator)",
+    )
+
+    # Optimization settings (per-sample overrides, for gradient method)
     lr: Optional[float] = Field(
         default=None,
         gt=0,
@@ -520,24 +568,30 @@ class EvaluationConfig(BaseModel):
 class TaskConfig(BaseModel):
     """Master configuration for an extraction task.
 
-    Combines sample generation, optimization, evaluation, and aggregation settings
-    into a comprehensive task specification.
+    Uses CAA (Contrastive Activation Addition) for steering vector extraction.
+    CAA is fast, reliable, and requires no hyperparameter tuning.
 
     Example:
         >>> config = TaskConfig(
-        ...     num_samples=16,
-        ...     max_concurrent_extractions=8,
-        ...     optimization=OptimizationConfig.standard(),
+        ...     target_layers=[15, 16, 17],
         ...     contrast=ContrastConfig.standard(),
         ... )
     """
 
+    # Extraction method
+    extraction_method: ExtractionMethod = Field(
+        default=ExtractionMethod.CAA,
+        description="Extraction method (CAA is recommended and default)",
+    )
+
     # Sample generation
+    # For CAA: multiple samples explore different layers and token positions
+    # For Gradient: multiple samples explore different random seeds
     num_samples: int = Field(
         default=16,
         ge=1,
         le=100,
-        description="Number of parallel extraction attempts",
+        description="Number of extraction samples to run in parallel",
     )
 
     num_seeds: int = Field(
@@ -557,7 +611,13 @@ class TaskConfig(BaseModel):
         description="Explicit target layers (overrides layer_strategies when set)",
     )
 
-    # Optimization settings (NEW - replaces legacy CAA)
+    # CAA-specific settings (exploration space for CAA extraction)
+    caa: CAAConfig = Field(
+        default_factory=CAAConfig,
+        description="CAA extraction exploration configuration",
+    )
+
+    # Optimization settings (for gradient-based extraction)
     optimization: OptimizationConfig = Field(
         default_factory=OptimizationConfig,
         description="Steering vector optimization configuration",

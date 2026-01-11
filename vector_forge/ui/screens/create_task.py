@@ -15,6 +15,8 @@ from vector_forge.tasks.config import (
     ContrastConfig,
     OptimizationConfig,
     EvaluationConfig,
+    ExtractionMethod,
+    CAAConfig,
 )
 from vector_forge.storage.models import (
     ModelConfig,
@@ -392,9 +394,11 @@ class CreateTaskScreen(Screen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._profile = "standard"
+        self._extraction_method = "caa"  # Default to CAA
         self._layer_strategy = "auto"
         self._aggregation = "top_k_average"
         self._contrast_quality = "standard"
+        self._remove_outliers = True
 
         # Preferences and model managers
         self._preferences = PreferencesManager()
@@ -460,6 +464,25 @@ class CreateTaskScreen(Screen):
                     id="behavior-input"
                 )
 
+            # Extraction Method section
+            yield Static("EXTRACTION", classes="main-section")
+            with Vertical(id="extraction-container"):
+                with Horizontal(classes="option-row"):
+                    yield Static("Method", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("extraction", "caa", "CAA", selected=True, id="ext-caa")
+                        yield OptionPill("extraction", "gradient", "Gradient", id="ext-gradient")
+                        yield OptionPill("extraction", "hybrid", "Hybrid", id="ext-hybrid")
+
+                # CAA options (outlier removal)
+                with Horizontal(classes="option-row", id="outlier-row"):
+                    yield Static("Outliers", classes="option-label")
+                    with Horizontal(classes="option-pills"):
+                        yield OptionPill("outliers", "remove", "Remove", selected=True, id="out-remove")
+                        yield OptionPill("outliers", "keep", "Keep All", id="out-keep")
+
+                yield ParamRow("Threshold", "inp-outlier-threshold", "3.0", "std devs", id="outlier-threshold-row")
+
             # Parameters section
             yield Static("PARAMETERS", classes="main-section")
             with Vertical(id="params-container"):
@@ -470,7 +493,7 @@ class CreateTaskScreen(Screen):
                         yield ParamRow("Seeds", "inp-seeds", "4")
                         yield ParamRow("Datapoints", "inp-datapoints", "50", "per sample")
 
-                    with ParamSection("OPTIMIZATION"):
+                    with ParamSection("OPTIMIZATION", id="optimization-section"):
                         yield ParamRow("Learning Rate", "inp-lr", "0.1")
                         yield ParamRow("Max Iters", "inp-max-iters", "50")
                         yield ParamRow("Coldness", "inp-coldness", "0.7", "softmax temp")
@@ -544,7 +567,19 @@ class CreateTaskScreen(Screen):
 
     def on_option_pill_selected(self, event: OptionPill.Selected) -> None:
         """Handle option pill selection."""
-        if event.group == "layer":
+        if event.group == "extraction":
+            self._extraction_method = event.value
+            for pill in self.query(OptionPill):
+                if pill.group == "extraction":
+                    pill.set_selected(pill.value == event.value)
+            self._update_extraction_visibility()
+        elif event.group == "outliers":
+            self._remove_outliers = (event.value == "remove")
+            for pill in self.query(OptionPill):
+                if pill.group == "outliers":
+                    pill.set_selected(pill.value == event.value)
+            self._update_outlier_threshold_visibility()
+        elif event.group == "layer":
             self._layer_strategy = event.value
             for pill in self.query(OptionPill):
                 if pill.group == "layer":
@@ -560,8 +595,32 @@ class CreateTaskScreen(Screen):
             for pill in self.query(OptionPill):
                 if pill.group == "contrast":
                     pill.set_selected(pill.value == event.value)
-            # Update contrast fields based on preset
             self._apply_contrast_preset(event.value)
+
+    def _update_extraction_visibility(self) -> None:
+        """Show/hide UI elements based on extraction method."""
+        is_caa = self._extraction_method == "caa"
+        is_gradient = self._extraction_method in ("gradient", "hybrid")
+
+        # CAA-specific options (outlier removal)
+        try:
+            self.query_one("#outlier-row").display = is_caa
+            self.query_one("#outlier-threshold-row").display = is_caa and self._remove_outliers
+        except Exception:
+            pass  # Elements may not exist yet
+
+        # Optimization section (only for gradient/hybrid)
+        try:
+            self.query_one("#optimization-section").display = is_gradient
+        except Exception:
+            pass
+
+    def _update_outlier_threshold_visibility(self) -> None:
+        """Show/hide outlier threshold based on remove_outliers setting."""
+        try:
+            self.query_one("#outlier-threshold-row").display = self._remove_outliers
+        except Exception:
+            pass
 
     def on_model_card_clicked(self, event: ModelCard.Clicked) -> None:
         """Handle API model card click - open selector."""
@@ -883,7 +942,30 @@ class CreateTaskScreen(Screen):
             generation_temperature=eval_temp,
         )
 
+        # Map extraction method
+        extraction_map = {
+            "caa": ExtractionMethod.CAA,
+            "gradient": ExtractionMethod.GRADIENT,
+            "hybrid": ExtractionMethod.HYBRID,
+        }
+        extraction_method = extraction_map.get(self._extraction_method, ExtractionMethod.CAA)
+
+        # Build CAA config
+        outlier_threshold_str = self.query_one("#inp-outlier-threshold", Input).value.strip()
+        outlier_threshold = 3.0
+        if outlier_threshold_str:
+            try:
+                outlier_threshold = float(outlier_threshold_str)
+            except ValueError:
+                pass
+        caa_config = CAAConfig(
+            remove_extreme_outliers=self._remove_outliers,
+            outlier_std_threshold=outlier_threshold,
+        )
+
         return TaskConfig(
+            extraction_method=extraction_method,
+            caa=caa_config,
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
             layer_strategies=[layer_strategy],

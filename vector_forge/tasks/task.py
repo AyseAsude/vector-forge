@@ -456,7 +456,10 @@ class ExtractionTask:
         Args:
             behavior: Expanded behavior specification.
             config: Optional task configuration.
-            generation_method: "grid", "smart", or "seeded".
+            generation_method: Sample generation method:
+                - "smart": Quasi-random sampling for good coverage (default)
+                - "grid": Full grid search over parameters
+                - "seeded": Single strategy with multiple seeds
 
         Returns:
             Configured ExtractionTask.

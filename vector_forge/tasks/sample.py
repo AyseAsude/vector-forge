@@ -14,6 +14,7 @@ from vector_forge.tasks.config import (
     TaskConfig,
     SampleConfig,
     LayerStrategy,
+    TokenPosition,
 )
 from vector_forge.tasks.expander import ExpandedBehavior
 
@@ -140,6 +141,7 @@ class SampleGenerator:
         Creates one sample for each combination of:
         - Seeds (0 to num_seeds-1)
         - Layer strategies
+        - Token positions (all 3 automatically)
 
         Args:
             behavior: The expanded behavior to extract.
@@ -151,12 +153,14 @@ class SampleGenerator:
 
         seeds = range(self._config.num_seeds)
         strategies = self._config.layer_strategies
+        token_positions = list(TokenPosition)
 
-        for seed, strategy in product(seeds, strategies):
+        for seed, strategy, token_pos in product(seeds, strategies, token_positions):
             config = SampleConfig(
                 seed=seed,
                 layer_strategy=strategy,
                 target_layers=self._config.target_layers,
+                token_position=token_pos,
             )
 
             sample = ExtractionSample(
@@ -171,6 +175,7 @@ class SampleGenerator:
                 "generation_method": "grid",
                 "behavior_name": behavior.name,
                 "total_combinations": len(samples),
+                "token_positions": [tp.value for tp in token_positions],
             },
         )
 
@@ -205,8 +210,10 @@ class SampleGenerator:
         samples = []
         seeds = list(range(self._config.num_seeds))
         strategies = self._config.layer_strategies
+        # All token positions - automatically cycle through all of them
+        token_positions = list(TokenPosition)
 
-        for point in points:
+        for i, point in enumerate(points):
             seed_idx = int(point[0] * len(seeds))
             strat_idx = int(point[1] * len(strategies))
 
@@ -214,10 +221,14 @@ class SampleGenerator:
             seed_idx = min(seed_idx, len(seeds) - 1)
             strat_idx = min(strat_idx, len(strategies) - 1)
 
+            # Cycle through token positions
+            token_pos = token_positions[i % len(token_positions)]
+
             config = SampleConfig(
                 seed=seeds[seed_idx],
                 layer_strategy=strategies[strat_idx],
                 target_layers=self._config.target_layers,
+                token_position=token_pos,
             )
 
             sample = ExtractionSample(
@@ -232,6 +243,7 @@ class SampleGenerator:
                 "generation_method": "smart",
                 "behavior_name": behavior.name,
                 "requested_samples": n,
+                "token_positions": [tp.value for tp in token_positions],
             },
         )
 
@@ -298,6 +310,7 @@ class SampleGenerator:
 
         Useful for noise reduction through averaging vectors from
         the same strategy but different random initializations.
+        Cycles through all token positions.
 
         Args:
             behavior: The expanded behavior to extract.
@@ -308,11 +321,14 @@ class SampleGenerator:
             SampleSet with same strategy, different seeds.
         """
         samples = []
+        token_positions = list(TokenPosition)
 
         for seed in range(n_seeds):
+            token_pos = token_positions[seed % len(token_positions)]
             config = SampleConfig(
                 seed=seed,
                 layer_strategy=strategy,
+                token_position=token_pos,
             )
 
             sample = ExtractionSample(
@@ -339,6 +355,7 @@ class SampleGenerator:
         """Generate samples that sweep across different layer strategies.
 
         Each seed is paired with each layer strategy.
+        Cycles through all token positions.
 
         Args:
             behavior: The expanded behavior to extract.
@@ -348,18 +365,23 @@ class SampleGenerator:
             SampleSet covering all strategy-seed combinations.
         """
         samples = []
+        token_positions = list(TokenPosition)
+        sample_idx = 0
 
         for strategy in self._config.layer_strategies:
             for seed in range(n_seeds):
+                token_pos = token_positions[sample_idx % len(token_positions)]
                 config = SampleConfig(
                     seed=seed,
                     layer_strategy=strategy,
+                    token_position=token_pos,
                 )
                 sample = ExtractionSample(
                     behavior=behavior,
                     config=config,
                 )
                 samples.append(sample)
+                sample_idx += 1
 
         return SampleSet(
             samples=samples,
@@ -370,3 +392,4 @@ class SampleGenerator:
                 "n_seeds": n_seeds,
             },
         )
+

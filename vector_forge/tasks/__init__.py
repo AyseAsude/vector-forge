@@ -1,8 +1,8 @@
 """Task-based extraction system for Vector Forge.
 
-This module provides a parallel exploration framework for steering vector extraction,
-using an optimization-based approach from the steering-vectors library. It runs
-multiple extraction strategies in parallel and aggregates the best results.
+This module provides a parallel exploration framework for steering vector extraction.
+Supports both CAA (Contrastive Activation Addition) and gradient-based optimization.
+Runs multiple extraction strategies in parallel and aggregates the best results.
 
 Key Components:
     - ExtractionTask: Defines what to extract and how to evaluate
@@ -12,12 +12,10 @@ Key Components:
     - ContrastToTrainingAdapter: Converts contrast pairs to training datapoints
 
 Example:
-    >>> from vector_forge.tasks import ExtractionTask, TaskRunner
-    >>> task = ExtractionTask.from_behavior(
-    ...     behavior,
-    ...     config=TaskConfig.standard(),
-    ... )
-    >>> runner = TaskRunner(backend, llm_client, max_concurrent=8)
+    >>> from vector_forge.tasks import ExtractionTask, TaskRunner, TaskConfig
+    >>> config = TaskConfig(extraction_method=ExtractionMethod.CAA)
+    >>> task = ExtractionTask.from_behavior(behavior, config=config)
+    >>> runner = TaskRunner(backend, llm_client)
     >>> result = await runner.run(task, sample_datasets)
 """
 
@@ -30,6 +28,9 @@ from vector_forge.tasks.config import (
     ContrastQuality,
     AggregationStrategy,
     LayerStrategy,
+    ExtractionMethod,
+    TokenPosition,
+    CAAConfig,
 )
 from vector_forge.tasks.sample import (
     ExtractionSample,
@@ -67,6 +68,9 @@ __all__ = [
     "ContrastQuality",
     "AggregationStrategy",
     "LayerStrategy",
+    "ExtractionMethod",
+    "TokenPosition",
+    "CAAConfig",
     # Samples
     "ExtractionSample",
     "SampleSet",

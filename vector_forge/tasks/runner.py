@@ -1,10 +1,10 @@
 """Parallel task runner for extraction tasks.
 
-Executes extraction tasks with configurable parallelism, using the
-optimization-based steering vector approach from steering-vectors library.
+Executes extraction tasks with configurable parallelism, supporting both:
+- CAA (Contrastive Activation Addition) - fast, deterministic, recommended
+- Gradient optimization - slower, can find arbitrary directions
 
 Architecture:
-- Uses SteeringOptimizer for gradient-based vector extraction
 - Profile-based memory management (measures actual usage, not estimates)
 - Memory-aware scheduling with OOM protection
 - Full reproducibility via comprehensive result tracking
@@ -30,6 +30,9 @@ from steering_vectors import (
     VectorSteering,
     HuggingFaceBackend,
     TrainingDatapoint,
+    # CAA extraction
+    extract as caa_extract,
+    ContrastPair,
 )
 from steering_vectors.core.config import OptimizationConfig as SVOptimizationConfig
 from steering_vectors.optimization.callbacks import (
@@ -38,7 +41,12 @@ from steering_vectors.optimization.callbacks import (
     EarlyStoppingCallback,
 )
 
-from vector_forge.tasks.config import TaskConfig, LayerStrategy, AggregationStrategy
+from vector_forge.tasks.config import (
+    TaskConfig,
+    LayerStrategy,
+    AggregationStrategy,
+    ExtractionMethod,
+)
 from vector_forge.tasks.sample import ExtractionSample
 from vector_forge.tasks.task import ExtractionTask, TaskResult, SampleResult
 from vector_forge.tasks.evaluation import VectorEvaluator
@@ -549,7 +557,7 @@ class TaskRunner:
     ) -> ExtractionResult:
         """Synchronous vector extraction (called by OOMHandler).
 
-        This is the core optimization logic, separated from async wrapper.
+        Supports both CAA and gradient-based extraction based on config.
         """
         sample_idx = sample.config.seed % 1000
 
@@ -580,6 +588,123 @@ class TaskRunner:
         # Determine target layer
         layer = self._get_target_layer(sample)
 
+        # Branch based on extraction method
+        if config.extraction_method == ExtractionMethod.CAA:
+            return self._extract_caa(sample, datapoints, config, layer, start_time)
+        else:
+            return self._extract_gradient(sample, datapoints, config, layer, start_time)
+
+    def _extract_caa(
+        self,
+        sample: ExtractionSample,
+        datapoints: List[TrainingDatapoint],
+        config: TaskConfig,
+        layer: int,
+        start_time: float,
+    ) -> ExtractionResult:
+        """Extract vector using CAA (Contrastive Activation Addition).
+
+        CAA is fast, deterministic, and recommended for most use cases.
+        Uses sample's token_position (assigned by generator to explore all positions).
+        """
+        sample_idx = sample.config.seed % 1000
+        token_position = sample.config.token_position
+
+        # Emit extraction started event
+        self._emit(
+            "emit_optimization_started",
+            sample_idx=sample_idx,
+            layer=layer,
+            num_datapoints=len(datapoints),
+            config={
+                "method": "caa",
+                "token_position": token_position.value,
+                "seed": sample.config.seed,
+            },
+        )
+
+        try:
+            # Convert TrainingDatapoints to ContrastPairs
+            pairs = self._datapoints_to_contrast_pairs(datapoints)
+
+            # Run CAA extraction with sample's token_position
+            result = caa_extract(
+                backend=self._sv_backend,
+                tokenizer=self._backend.tokenizer,
+                pairs=pairs,
+                layer=layer,
+                method="caa",
+                token_position=token_position.value,
+                remove_outliers=config.caa.remove_extreme_outliers,
+                outlier_std_threshold=config.caa.outlier_std_threshold,
+            )
+
+            duration = time.time() - start_time
+
+            # Emit completed event
+            self._emit(
+                "emit_optimization_completed",
+                sample_idx=sample_idx,
+                layer=layer,
+                final_loss=0.0,  # CAA has no loss
+                iterations=1,  # Single pass
+                loss_history=[],
+                datapoints_used=len(datapoints),
+                duration_seconds=duration,
+                success=True,
+                error=None,
+            )
+
+            return ExtractionResult(
+                vector=result.vector,
+                layer=layer,
+                final_loss=0.0,
+                iterations=1,
+                loss_history=[],
+                datapoints_used=result.metadata.get("num_pairs_used", len(datapoints)),
+                config_used={
+                    "method": "caa",
+                    "token_position": token_position.value,
+                    "layer": layer,
+                    "seed": sample.config.seed,
+                    "vector_norm": result.metadata.get("vector_norm", 0.0),
+                    "num_pairs": len(pairs),
+                    "num_pairs_used": result.metadata.get("num_pairs_used", len(pairs)),
+                    "outliers_removed": result.metadata.get("outliers_removed", 0),
+                },
+            )
+
+        except Exception as e:
+            duration = time.time() - start_time
+            self._emit(
+                "emit_optimization_completed",
+                sample_idx=sample_idx,
+                layer=layer,
+                final_loss=0.0,
+                iterations=0,
+                loss_history=[],
+                datapoints_used=len(datapoints),
+                duration_seconds=duration,
+                success=False,
+                error=str(e),
+            )
+            raise
+
+    def _extract_gradient(
+        self,
+        sample: ExtractionSample,
+        datapoints: List[TrainingDatapoint],
+        config: TaskConfig,
+        layer: int,
+        start_time: float,
+    ) -> ExtractionResult:
+        """Extract vector using gradient optimization.
+
+        Gradient optimization can find arbitrary directions. Consider using
+        CAA instead, or use hybrid mode (CAA init + gradient refinement).
+        """
+        sample_idx = sample.config.seed % 1000
+
         # Build optimization config
         opt_config = config.optimization
         sv_config = SVOptimizationConfig(
@@ -601,6 +726,7 @@ class TaskRunner:
             layer=layer,
             num_datapoints=len(datapoints),
             config={
+                "method": config.extraction_method.value,
                 "lr": sv_config.lr,
                 "max_iters": sv_config.max_iters,
                 "coldness": sv_config.coldness,
@@ -627,6 +753,28 @@ class TaskRunner:
 
         # Create optimizer and run
         steering = VectorSteering()
+
+        # For hybrid mode, initialize from CAA
+        if config.extraction_method == ExtractionMethod.HYBRID:
+            try:
+                pairs = self._datapoints_to_contrast_pairs(datapoints)
+                caa_result = caa_extract(
+                    backend=self._sv_backend,
+                    tokenizer=self._backend.tokenizer,
+                    pairs=pairs,
+                    layer=layer,
+                    method="caa",
+                    token_position=config.token_position.value,
+                )
+                # Initialize steering vector from CAA, normalized to starting_norm
+                caa_vec = caa_result.vector
+                caa_norm = caa_vec.norm()
+                if caa_norm > 0:
+                    caa_vec = caa_vec * (opt_config.starting_norm / caa_norm)
+                steering.vector = caa_vec.clone().requires_grad_(True)
+            except Exception as e:
+                logger.warning(f"CAA init failed for hybrid, using random init: {e}")
+
         optimizer = SteeringOptimizer(
             backend=self._sv_backend,
             steering_mode=steering,
@@ -660,6 +808,7 @@ class TaskRunner:
                 loss_history=history_callback.losses,
                 datapoints_used=len(datapoints),
                 config_used={
+                    "method": config.extraction_method.value,
                     "lr": sv_config.lr,
                     "max_iters": sv_config.max_iters,
                     "coldness": sv_config.coldness,
@@ -685,6 +834,30 @@ class TaskRunner:
                 error=str(e),
             )
             raise
+
+    def _datapoints_to_contrast_pairs(
+        self,
+        datapoints: List[TrainingDatapoint],
+    ) -> List[ContrastPair]:
+        """Convert TrainingDatapoints to ContrastPairs for CAA extraction."""
+        pairs = []
+        for dp in datapoints:
+            # Get completions
+            positive = dp.dst_completions[0] if dp.dst_completions else ""
+            negative = dp.src_completions[0] if dp.src_completions else ""
+
+            if not positive or not negative:
+                continue
+
+            # Create ContrastPair from prompt + completion format
+            pair = ContrastPair.from_prompt_completion(
+                prompt=dp.prompt,
+                positive_completion=positive,
+                negative_completion=negative,
+            )
+            pairs.append(pair)
+
+        return pairs
 
     async def _extract_vector(
         self,
