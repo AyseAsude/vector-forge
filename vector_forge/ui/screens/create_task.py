@@ -761,6 +761,9 @@ class CreateTaskScreen(Screen):
         judge_model = (
             self._judge_config.get_litellm_model() if self._judge_config else DEFAULT_MODEL
         )
+        expander_model = (
+            self._expander_config.get_litellm_model() if self._expander_config else DEFAULT_MODEL
+        )
 
         # Build optimization config
         max_norm_str = self.query_one("#inp-max-norm", Input).value.strip()
@@ -802,6 +805,7 @@ class CreateTaskScreen(Screen):
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
             extractor_model=extractor_model,
             judge_model=judge_model,
+            expander_model=expander_model,
             target_model=target_model,
         )
 
