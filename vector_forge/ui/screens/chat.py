@@ -23,7 +23,13 @@ from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
 class ConversationPanel(Vertical):
-    """Right panel showing the chat conversation."""
+    """Right panel showing the chat conversation.
+
+    Implements a chat-like interface with:
+    - User messages right-aligned as bubbles
+    - AI responses (baseline + steered) left-aligned and paired
+    - Messages sized relative to content length
+    """
 
     DEFAULT_CSS = """
     ConversationPanel {
@@ -39,17 +45,19 @@ class ConversationPanel(Vertical):
 
     ConversationPanel .title {
         text-style: bold;
+        color: $foreground;
     }
 
     ConversationPanel .message-stream {
         height: 1fr;
-        padding: 1 0 1 2;
+        padding: 2 1 1 2;
         background: $background;
         scrollbar-gutter: stable;
     }
 
     ConversationPanel .empty-state {
         height: 1fr;
+        width: 100%;
         content-align: center middle;
         color: $foreground-muted;
     }
@@ -72,7 +80,7 @@ class ConversationPanel(Vertical):
 
         yield VerticalScroll(classes="message-stream", id="message-stream")
         yield ChatInput(id="chat-input")
-        yield Static("enter send · ctrl+n clear", classes="hint-bar", id="hint-bar")
+        yield Static("enter send · ctrl+n new chat", classes="hint-bar", id="hint-bar")
 
     def _is_at_bottom(self) -> bool:
         """Check if scroll is at bottom."""
