@@ -403,6 +403,7 @@ class CreateTaskScreen(Screen):
         self._remove_outliers = True
         self._tournament_enabled = True  # Tournament on by default
         self._elimination_rounds = 2
+        self._elimination_rate = 0.75  # Default 75% elimination per round
 
         # Preferences and model managers
         self._preferences = PreferencesManager()
@@ -428,9 +429,9 @@ class CreateTaskScreen(Screen):
             # Profile section
             yield Static("PROFILE", classes="main-section")
             with Horizontal(id="profiles"):
-                yield ProfileCard("quick", "Quick", "4 samples", id="profile-quick")
-                yield ProfileCard("standard", "Standard", "16 samples", selected=True, id="profile-standard")
-                yield ProfileCard("comprehensive", "Full", "32 samples", id="profile-comprehensive")
+                yield ProfileCard("quick", "Quick", "32→4 samples", id="profile-quick")
+                yield ProfileCard("standard", "Standard", "256→16 samples", selected=True, id="profile-standard")
+                yield ProfileCard("comprehensive", "Full", "1024→32 samples", id="profile-comprehensive")
 
             # Models section
             yield Static("MODELS", classes="main-section")
@@ -493,7 +494,7 @@ class CreateTaskScreen(Screen):
                 # Row 1: Sampling & Optimization
                 with Horizontal(classes="params-row"):
                     with ParamSection("SAMPLING"):
-                        yield ParamRow("Samples", "inp-samples", "16")
+                        yield ParamRow("Samples", "inp-samples", "256")
                         yield ParamRow("Seeds", "inp-seeds", "4")
                         yield ParamRow("Datapoints", "inp-datapoints", "50", "per sample")
 
@@ -875,15 +876,20 @@ class CreateTaskScreen(Screen):
 
         # Update tournament settings based on profile
         # All profiles have tournament enabled by default with appropriate rounds
+        # Elimination rates calculated to achieve target initial→final samples:
+        #   Quick: 32→4 (1 round, 87.5% elim)
+        #   Standard: 256→16 (2 rounds, 75% elim)
+        #   Comprehensive: 1024→32 (3 rounds, 68.5% elim)
         tournament_settings = {
-            "quick": {"enabled": True, "rounds": 1, "survivors": 8, "min_dp": 15, "max_dp": 40},
-            "standard": {"enabled": True, "rounds": 2, "survivors": 16, "min_dp": 15, "max_dp": 60},
-            "comprehensive": {"enabled": True, "rounds": 3, "survivors": 32, "min_dp": 15, "max_dp": 80},
+            "quick": {"enabled": True, "rounds": 1, "survivors": 4, "elim_rate": 0.875, "min_dp": 15, "max_dp": 40},
+            "standard": {"enabled": True, "rounds": 2, "survivors": 16, "elim_rate": 0.75, "min_dp": 15, "max_dp": 60},
+            "comprehensive": {"enabled": True, "rounds": 3, "survivors": 32, "elim_rate": 0.685, "min_dp": 15, "max_dp": 80},
         }
         t_settings = tournament_settings.get(profile, tournament_settings["standard"])
 
         self._tournament_enabled = t_settings["enabled"]
         self._elimination_rounds = t_settings["rounds"]
+        self._elimination_rate = t_settings["elim_rate"]
 
         # Update tournament pills
         for pill in self.query(OptionPill):
@@ -896,6 +902,11 @@ class CreateTaskScreen(Screen):
         self.query_one("#inp-tournament-survivors", Input).value = str(t_settings["survivors"])
         self.query_one("#inp-tournament-min-dp", Input).value = str(t_settings["min_dp"])
         self.query_one("#inp-tournament-max-dp", Input).value = str(t_settings["max_dp"])
+
+        # Calculate and display initial samples
+        keep_rate = 1.0 - t_settings["elim_rate"]
+        initial_samples = int(t_settings["survivors"] / (keep_rate ** t_settings["rounds"]))
+        self.query_one("#inp-samples", Input).value = str(initial_samples)
 
         self._update_tournament_visibility()
 
@@ -1112,6 +1123,7 @@ class CreateTaskScreen(Screen):
         tournament_config = TournamentConfig(
             enabled=self._tournament_enabled,
             elimination_rounds=self._elimination_rounds,
+            elimination_rate=self._elimination_rate,
             final_survivors=int(self.query_one("#inp-tournament-survivors", Input).value or "16"),
             min_datapoints=int(self.query_one("#inp-tournament-min-dp", Input).value or "15"),
             max_datapoints=int(self.query_one("#inp-tournament-max-dp", Input).value or "60"),

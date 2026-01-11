@@ -257,33 +257,36 @@ class TournamentConfig(BaseModel):
 
     @classmethod
     def quick(cls) -> "TournamentConfig":
-        """Quick tournament: 1 elimination round, 8 survivors (32 initial)."""
+        """Quick tournament: 32→4 (1 round, 87.5% elimination)."""
         return cls(
             enabled=True,
             elimination_rounds=1,
-            final_survivors=8,
+            final_survivors=4,
+            elimination_rate=0.875,
             min_datapoints=15,
             max_datapoints=40,
         )
 
     @classmethod
     def standard(cls) -> "TournamentConfig":
-        """Standard tournament: 2 elimination rounds, 16 survivors (256 initial)."""
+        """Standard tournament: 256→16 (2 rounds, 75% elimination)."""
         return cls(
             enabled=True,
             elimination_rounds=2,
             final_survivors=16,
+            elimination_rate=0.75,
             min_datapoints=15,
             max_datapoints=60,
         )
 
     @classmethod
     def comprehensive(cls) -> "TournamentConfig":
-        """Comprehensive tournament: 3 elimination rounds, 32 survivors (2048 initial)."""
+        """Comprehensive tournament: 1024→32 (3 rounds, 68.5% elimination)."""
         return cls(
             enabled=True,
             elimination_rounds=3,
             final_survivors=32,
+            elimination_rate=0.685,
             min_datapoints=15,
             max_datapoints=80,
         )
@@ -1246,12 +1249,12 @@ class TaskConfig(BaseModel):
 
     @classmethod
     def quick_tournament(cls) -> "TaskConfig":
-        """Quick tournament: 32 initial → 8 survivors (1 elimination round).
+        """Quick tournament: 32→4 (1 round, 87.5% elimination).
 
-        ~4x more exploration than quick() for similar compute.
+        ~8x more exploration than quick() for similar compute.
         """
         return cls(
-            num_samples=8,  # Final survivors
+            num_samples=4,  # Final survivors
             num_seeds=2,
             layer_strategies=[LayerStrategy.AUTO, LayerStrategy.SWEEP],
             optimization=OptimizationConfig.fast(),
@@ -1259,12 +1262,12 @@ class TaskConfig(BaseModel):
             datapoints_per_sample=40,  # Max for finals
             evaluation=EvaluationConfig.fast(),
             tournament=TournamentConfig.quick(),
-            top_k=4,
+            top_k=2,
         )
 
     @classmethod
     def standard_tournament(cls) -> "TaskConfig":
-        """Standard tournament: 256 initial → 16 survivors (2 elimination rounds).
+        """Standard tournament: 256→16 (2 rounds, 75% elimination).
 
         ~16x more exploration than standard() for similar compute.
         """
@@ -1282,10 +1285,10 @@ class TaskConfig(BaseModel):
 
     @classmethod
     def comprehensive_tournament(cls) -> "TaskConfig":
-        """Comprehensive tournament: 2048 initial → 32 survivors (3 elimination rounds).
+        """Comprehensive tournament: 1024→32 (3 rounds, 68.5% elimination).
 
-        ~64x more exploration than comprehensive() for similar compute.
-        Best quality but takes longer.
+        ~32x more exploration than comprehensive() for similar compute.
+        Best quality with thorough elimination.
         """
         return cls(
             num_samples=32,  # Final survivors

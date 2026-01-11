@@ -20,6 +20,8 @@ from vector_forge.contrast.protocols import (
     BoundaryCheckResult,
     IntensityCheckResult,
     StructuralCheckResult,
+    ValidationThresholds,
+    DEFAULT_VALIDATION_THRESHOLDS,
 )
 from vector_forge.contrast.utils import safe_parse_llm_json
 from vector_forge.contrast.validation.composer import ValidationComposer
@@ -55,11 +57,12 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         llm_client: BaseLLMClient,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
-        # Validation thresholds
-        min_dimension_score: float = 6.0,
-        min_structural_score: float = 7.0,
-        min_marker_score: float = 5.0,
-        min_boundary_score: float = 5.0,
+        thresholds: Optional[ValidationThresholds] = None,
+        # Legacy parameters for backward compatibility
+        min_dimension_score: Optional[float] = None,
+        min_structural_score: Optional[float] = None,
+        min_marker_score: Optional[float] = None,
+        min_boundary_score: Optional[float] = None,
     ):
         """Initialize the LLM validator.
 
@@ -67,21 +70,32 @@ class LLMContrastValidator(ContrastValidatorProtocol):
             llm_client: LLM client for judging.
             temperature: Generation temperature (lower = more consistent).
             max_tokens: Maximum response tokens (None = provider default).
-            min_dimension_score: Minimum dimension check score to pass.
-            min_structural_score: Minimum structural check score to pass.
-            min_marker_score: Minimum marker check score to pass (if markers available).
-            min_boundary_score: Minimum boundary check score to pass (if boundaries available).
+            thresholds: Validation thresholds (preferred). If None, uses defaults.
+            min_dimension_score: (Deprecated) Use thresholds parameter instead.
+            min_structural_score: (Deprecated) Use thresholds parameter instead.
+            min_marker_score: (Deprecated) Use thresholds parameter instead.
+            min_boundary_score: (Deprecated) Use thresholds parameter instead.
         """
         self._llm = llm_client
         self._temperature = temperature
         self._max_tokens = max_tokens
-        self._composer = ValidationComposer()
 
-        # Thresholds
-        self._min_dimension = min_dimension_score
-        self._min_structural = min_structural_score
-        self._min_marker = min_marker_score
-        self._min_boundary = min_boundary_score
+        # Build thresholds - prefer explicit thresholds object, fall back to legacy params
+        if thresholds is not None:
+            self._thresholds = thresholds
+        elif any(x is not None for x in [min_dimension_score, min_structural_score, min_marker_score, min_boundary_score]):
+            # Legacy parameter handling
+            self._thresholds = ValidationThresholds(
+                dimension=min_dimension_score if min_dimension_score is not None else DEFAULT_VALIDATION_THRESHOLDS.dimension,
+                structural=min_structural_score if min_structural_score is not None else DEFAULT_VALIDATION_THRESHOLDS.structural,
+                marker=min_marker_score if min_marker_score is not None else DEFAULT_VALIDATION_THRESHOLDS.marker,
+                boundary=min_boundary_score if min_boundary_score is not None else DEFAULT_VALIDATION_THRESHOLDS.boundary,
+            )
+        else:
+            self._thresholds = DEFAULT_VALIDATION_THRESHOLDS
+
+        # Initialize composer with thresholds
+        self._composer = ValidationComposer(thresholds=self._thresholds)
 
     async def validate(
         self,
@@ -264,9 +278,9 @@ class LLMContrastValidator(ContrastValidatorProtocol):
         """Check if pair passes all validity thresholds."""
 
         # Critical checks (always required)
-        if dimension.score < self._min_dimension:
+        if dimension.score < self._thresholds.dimension:
             return False
-        if structural.score < self._min_structural:
+        if structural.score < self._thresholds.structural:
             return False
 
         # Optional checks (only if data was available)
@@ -275,12 +289,12 @@ class LLMContrastValidator(ContrastValidatorProtocol):
             analysis.get_all_absence_markers()
         )
         if has_markers and marker.score >= 0:
-            if marker.score < self._min_marker:
+            if marker.score < self._thresholds.marker:
                 return False
 
         has_boundaries = bool(analysis.not_this_behavior)
         if has_boundaries and boundary.score >= 0:
-            if boundary.score < self._min_boundary:
+            if boundary.score < self._thresholds.boundary:
                 return False
 
         return True

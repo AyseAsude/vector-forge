@@ -213,6 +213,11 @@ class ExtractionRunner:
                 min_contrast_quality=config.contrast.min_contrast_quality,
                 max_regeneration_attempts=config.contrast.max_regeneration_attempts,
                 max_concurrent_generations=config.contrast.max_concurrent_generations,
+                # Intensity distribution
+                intensity_extreme=config.contrast.intensity_extreme,
+                intensity_high=config.contrast.intensity_high,
+                intensity_medium=config.contrast.intensity_medium,
+                intensity_natural=config.contrast.intensity_natural,
             )
 
             # Step 5: Run ContrastPipeline with event emitter

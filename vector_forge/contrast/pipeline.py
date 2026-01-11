@@ -25,6 +25,7 @@ from vector_forge.contrast.protocols import (
     ContrastPair,
     ValidatedPair,
     SampleDataset,
+    SignalIntensity,
 )
 from vector_forge.contrast.analysis.behavior_analyzer import BehaviorAnalyzer
 from vector_forge.contrast.analysis.seed_generator import SeedGenerator
@@ -38,6 +39,28 @@ from vector_forge.contrast.distribution.pool_manager import PoolManager, PoolCon
 from vector_forge.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+SEMANTIC_SCORE_TO_DISTANCE_FACTOR = 0.7
+"""Factor to convert semantic score (0-10) to cosine distance (0-0.7).
+
+This maps the user-facing semantic score (0-10 scale) to actual cosine distance
+used by the embedding validator. The mapping is linear:
+- Score 10 → Distance 0.7 (highly different embeddings)
+- Score 4 → Distance 0.28 (minimum acceptable difference)
+- Score 0 → Distance 0.0 (identical embeddings)
+
+The 0.7 maximum was chosen empirically:
+- Cosine distances above 0.7 are rare for coherent text pairs
+- Distance of ~0.3 corresponds to "clearly different but related" texts
+- Distance of ~0.5 corresponds to "substantially different content"
+
+Formula: distance = (score / 10.0) * SEMANTIC_SCORE_TO_DISTANCE_FACTOR
+"""
 
 
 @dataclass
@@ -82,6 +105,29 @@ class ContrastPipelineConfig:
     # Parallelism
     max_concurrent_generations: int = 5
     """Maximum concurrent pair generations."""
+
+    # Intensity distribution for contrast pairs
+    intensity_extreme: float = 0.10
+    """Proportion of extreme intensity pairs (maximum signal)."""
+
+    intensity_high: float = 0.20
+    """Proportion of high intensity pairs (clear signal)."""
+
+    intensity_medium: float = 0.30
+    """Proportion of medium intensity pairs (balanced)."""
+
+    intensity_natural: float = 0.40
+    """Proportion of natural intensity pairs (deployment-realistic)."""
+
+    @property
+    def intensity_distribution(self) -> Dict[SignalIntensity, float]:
+        """Get intensity distribution as a dictionary."""
+        return {
+            SignalIntensity.EXTREME: self.intensity_extreme,
+            SignalIntensity.HIGH: self.intensity_high,
+            SignalIntensity.MEDIUM: self.intensity_medium,
+            SignalIntensity.NATURAL: self.intensity_natural,
+        }
 
     @classmethod
     def default(cls) -> "ContrastPipelineConfig":
@@ -218,9 +264,10 @@ class ContrastPipeline:
         self._pool_manager = PoolManager(self._config.to_pool_config())
 
         # Build validator chain
-        # Convert semantic score threshold back to distance for embedding validator
-        # score 4.0 ~ distance 0.28, score 6.0 ~ distance 0.42
-        min_distance = (self._config.min_semantic_score / 10.0) * 0.7
+        # Convert semantic score (0-10) to cosine distance for embedding validator
+        min_distance = (
+            self._config.min_semantic_score / 10.0
+        ) * SEMANTIC_SCORE_TO_DISTANCE_FACTOR
         self._validator = CompositeContrastValidator([
             EmbeddingContrastValidator(min_distance=min_distance),
             LLMContrastValidator(
@@ -458,6 +505,42 @@ class ContrastPipeline:
             statistics=statistics,
         )
 
+    def _assign_intensities(self, seeds: List[Seed]) -> List[SignalIntensity]:
+        """Assign intensities to seeds based on distribution config.
+
+        Args:
+            seeds: Seeds to assign intensities to.
+
+        Returns:
+            List of intensities, one per seed.
+        """
+        n_seeds = len(seeds)
+        if n_seeds == 0:
+            return []
+
+        distribution = self._config.intensity_distribution
+        intensities: List[SignalIntensity] = []
+
+        # Calculate counts for each intensity
+        remaining = n_seeds
+        intensity_counts: Dict[SignalIntensity, int] = {}
+
+        for intensity, ratio in distribution.items():
+            count = int(n_seeds * ratio)
+            intensity_counts[intensity] = count
+            remaining -= count
+
+        # Distribute remaining to the highest ratio (typically NATURAL)
+        if remaining > 0:
+            max_intensity = max(distribution, key=distribution.get)
+            intensity_counts[max_intensity] += remaining
+
+        # Build the intensity list
+        for intensity, count in intensity_counts.items():
+            intensities.extend([intensity] * count)
+
+        return intensities
+
     async def _generate_validated_pairs(
         self,
         seeds: List[Seed],
@@ -467,6 +550,7 @@ class ContrastPipeline:
         """Generate and validate pairs for a list of seeds.
 
         Uses semaphore to limit concurrent generations.
+        Distributes intensities across seeds based on config.
 
         Args:
             seeds: Seeds to generate pairs from.
@@ -475,9 +559,12 @@ class ContrastPipeline:
         """
         semaphore = asyncio.Semaphore(self._config.max_concurrent_generations)
 
-        async def process_seed(seed: Seed) -> ValidatedPair:
+        # Assign intensities to seeds based on distribution
+        intensities = self._assign_intensities(seeds)
+
+        async def process_seed(seed: Seed, intensity: SignalIntensity) -> ValidatedPair:
             async with semaphore:
-                pair = await self._pair_generator.generate(seed, analysis)
+                pair = await self._pair_generator.generate(seed, analysis, intensity)
 
                 # Emit pair generated event
                 pair_id = self._generate_id("pair")
@@ -494,7 +581,7 @@ class ContrastPipeline:
                 validated = await self._validate_with_retry(pair, analysis, pair_id)
                 return validated
 
-        tasks = [process_seed(seed) for seed in seeds]
+        tasks = [process_seed(seed, intensity) for seed, intensity in zip(seeds, intensities)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out exceptions

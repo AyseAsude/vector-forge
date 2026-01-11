@@ -279,6 +279,48 @@ class IntensityCheckResult:
 
 
 @dataclass
+class ValidationThresholds:
+    """Thresholds for validation dimensions.
+
+    This is the single source of truth for validation thresholds,
+    used by both LLMContrastValidator and ValidationComposer to ensure
+    consistency between code logic and prompt text.
+
+    Threshold Rationale:
+    - dimension (6.0): Must be on correct variable. Lower threshold because
+      LLM judges tend to be conservative with high scores.
+    - structural (7.0): Higher because malformed responses inject noise.
+    - marker (5.0): Lower because markers are correlates, not causes.
+      The behavioral test is the ground truth.
+    - boundary (5.0): Lower because some overlap is acceptable if dimension is correct.
+    """
+    dimension: float = 6.0
+    """Minimum score for dimension check (contrast on correct variable)."""
+
+    structural: float = 7.0
+    """Minimum score for structural check (well-formed responses)."""
+
+    marker: float = 5.0
+    """Minimum score for marker check (if markers available)."""
+
+    boundary: float = 5.0
+    """Minimum score for boundary check (if boundaries available)."""
+
+    def format_for_prompt(self) -> str:
+        """Format thresholds for inclusion in validation prompts."""
+        return f"""**Validity Criteria:**
+- dimension_check.score >= {self.dimension:.0f} (Critical)
+- structural_check.score >= {self.structural:.0f} (Critical)
+- If markers available: marker_check.score >= {self.marker:.0f}
+- If boundaries available: boundary_check.score >= {self.boundary:.0f}
+- intensity_check affects quality score but doesn't gate validity"""
+
+
+# Default thresholds instance
+DEFAULT_VALIDATION_THRESHOLDS = ValidationThresholds()
+
+
+@dataclass
 class StructuralCheckResult:
     """Result of checking structural quality."""
     score: float  # 0-10

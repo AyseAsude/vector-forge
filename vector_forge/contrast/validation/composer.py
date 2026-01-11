@@ -12,6 +12,8 @@ from vector_forge.contrast.protocols import (
     BehaviorAnalysis,
     ContrastPair,
     SignalIntensity,
+    ValidationThresholds,
+    DEFAULT_VALIDATION_THRESHOLDS,
 )
 
 
@@ -30,6 +32,15 @@ class ValidationComposer:
         >>> prompt = composer.compose(pair, analysis, SignalIntensity.MEDIUM)
         >>> # prompt is now behavior-specific
     """
+
+    def __init__(self, thresholds: Optional[ValidationThresholds] = None):
+        """Initialize the validation composer.
+
+        Args:
+            thresholds: Validation thresholds for prompt generation.
+                       If None, uses DEFAULT_VALIDATION_THRESHOLDS.
+        """
+        self._thresholds = thresholds or DEFAULT_VALIDATION_THRESHOLDS
 
     def compose(
         self,
@@ -274,57 +285,61 @@ Your goal is to ensure the pair has CLEAN contrast on the CORRECT dimension."""
 
     def _compose_output_format(self) -> str:
         """Compose output format section."""
-        return """{
-  "dimension_check": {
+        # Use thresholds.format_for_prompt() for consistency with validation logic
+        validity_criteria = self._thresholds.format_for_prompt()
+
+        return f"""## OUTPUT FORMAT
+
+Return a JSON object with the following structure:
+
+```json
+{{
+  "dimension_check": {{
     "score": <0-10>,
-    "is_correct": <true if score >= 7>,
+    "is_correct": <true if score >= {self._thresholds.dimension:.0f}>,
     "what_differs": "what actually differs between dst and src",
     "dst_pattern_match": <true/false>,
     "src_pattern_match": <true/false>,
     "explanation": "why dimension is correct or wrong"
-  },
-  "marker_check": {
+  }},
+  "marker_check": {{
     "score": <0-10>,
     "presence_markers_found": ["markers found in dst"],
     "presence_markers_missing": ["expected markers not in dst"],
     "absence_markers_found": ["markers found in src"],
     "absence_markers_missing": ["expected markers not in src"],
     "explanation": "marker analysis"
-  },
-  "boundary_check": {
+  }},
+  "boundary_check": {{
     "score": <0-10>,
     "is_correct_behavior": <true/false>,
     "confused_with": "<similar behavior name or null>",
     "explanation": "why this is/isn't the right behavior"
-  },
-  "intensity_check": {
+  }},
+  "intensity_check": {{
     "score": <0-10>,
     "actual_intensity": "<extreme/high/medium/natural>",
     "matches_calibration": <true/false>,
     "explanation": "how intensity matches or doesn't"
-  },
-  "structural_check": {
+  }},
+  "structural_check": {{
     "score": <0-10>,
     "dst_wellformed": <true/false>,
     "src_wellformed": <true/false>,
     "dst_complete": <true/false>,
     "src_complete": <true/false>,
     "issues": ["any issues found"]
-  },
-  "overall": {
+  }},
+  "overall": {{
     "is_valid": <true if all critical checks pass>,
     "contrast_quality": <0-10 aggregate score>,
     "primary_issue": "main issue if not valid, or 'none'",
     "reasoning": "brief overall assessment"
-  }
-}
+  }}
+}}
+```
 
-**Validity Criteria:**
-- dimension_check.score >= 6 (Critical)
-- structural_check.score >= 7 (Critical)
-- If markers available: marker_check.score >= 5
-- If boundaries available: boundary_check.score >= 5
-- intensity_check affects quality score but doesn't gate validity
+{validity_criteria}
 
 Return ONLY the JSON object, no other text."""
 
@@ -333,6 +348,7 @@ def compose_validation_prompt(
     pair: ContrastPair,
     analysis: BehaviorAnalysis,
     intensity: SignalIntensity = SignalIntensity.MEDIUM,
+    thresholds: Optional[ValidationThresholds] = None,
 ) -> str:
     """Convenience function to compose validation prompt.
 
@@ -340,9 +356,10 @@ def compose_validation_prompt(
         pair: The contrast pair to validate.
         analysis: Behavior analysis with rich context.
         intensity: Target intensity level.
+        thresholds: Validation thresholds. If None, uses defaults.
 
     Returns:
         Composed validation prompt.
     """
-    composer = ValidationComposer()
+    composer = ValidationComposer(thresholds=thresholds)
     return composer.compose(pair, analysis, intensity)

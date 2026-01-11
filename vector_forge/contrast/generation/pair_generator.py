@@ -6,8 +6,9 @@ ensuring clear contrast on the distinguishing variable at all intensities.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from vector_forge.contrast.protocols import (
     PairGeneratorProtocol,
@@ -117,6 +118,7 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         llm_client: BaseLLMClient,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        max_concurrency: int = 10,
     ):
         """Initialize the pair generator.
 
@@ -124,10 +126,12 @@ class ContrastPairGenerator(PairGeneratorProtocol):
             llm_client: LLM client for generation.
             temperature: Base generation temperature.
             max_tokens: Maximum response tokens (None = provider default).
+            max_concurrency: Maximum concurrent generations for batch methods.
         """
         self._llm = llm_client
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_concurrency = max_concurrency
 
     async def generate(
         self,
@@ -262,21 +266,41 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
         intensity: SignalIntensity = SignalIntensity.MEDIUM,
+        max_concurrency: int = 10,
     ) -> List[ContrastPair]:
         """Generate multiple contrast pairs at the same intensity.
+
+        Uses asyncio.gather with semaphore for concurrent generation.
 
         Args:
             seeds: Seeds to generate from.
             analysis: Behavior analysis for context.
             intensity: Signal intensity for all pairs.
+            max_concurrency: Maximum concurrent generations.
 
         Returns:
             List of ContrastPairs.
         """
+        if not seeds:
+            return []
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def bounded_generate(seed: Seed) -> ContrastPair:
+            async with semaphore:
+                return await self.generate(seed, analysis, intensity)
+
+        tasks = [bounded_generate(seed) for seed in seeds]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filter out exceptions and log them
         pairs = []
-        for seed in seeds:
-            pair = await self.generate(seed, analysis, intensity)
-            pairs.append(pair)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning(f"Batch generation failed for seed {i}: {result}")
+            else:
+                pairs.append(result)
+
         return pairs
 
     async def generate_batch_distributed(
@@ -284,17 +308,24 @@ class ContrastPairGenerator(PairGeneratorProtocol):
         seeds: List[Seed],
         analysis: BehaviorAnalysis,
         distribution: Optional[Dict[SignalIntensity, float]] = None,
+        max_concurrency: int = 10,
     ) -> List[ContrastPair]:
-        """Generate pairs with distributed intensities.
+        """Generate pairs with distributed intensities concurrently.
+
+        Uses asyncio.gather with semaphore for concurrent generation.
 
         Args:
             seeds: Seeds to generate from.
             analysis: Behavior analysis for context.
             distribution: Optional intensity distribution (defaults to balanced).
+            max_concurrency: Maximum concurrent generations.
 
         Returns:
             List of ContrastPairs at varying intensities.
         """
+        if not seeds:
+            return []
+
         if distribution is None:
             distribution = {
                 SignalIntensity.EXTREME: 0.1,
@@ -303,11 +334,10 @@ class ContrastPairGenerator(PairGeneratorProtocol):
                 SignalIntensity.NATURAL: 0.4,
             }
 
-        pairs = []
         n_seeds = len(seeds)
 
         # Calculate counts for each intensity
-        intensity_counts = {}
+        intensity_counts: Dict[SignalIntensity, int] = {}
         remaining = n_seeds
         for intensity, ratio in distribution.items():
             count = int(n_seeds * ratio)
@@ -319,15 +349,33 @@ class ContrastPairGenerator(PairGeneratorProtocol):
             max_intensity = max(distribution, key=distribution.get)
             intensity_counts[max_intensity] += remaining
 
-        # Generate pairs at each intensity
+        # Build list of (seed, intensity) pairs
+        seed_intensity_pairs: List[Tuple[Seed, SignalIntensity]] = []
         seed_idx = 0
         for intensity, count in intensity_counts.items():
             for _ in range(count):
                 if seed_idx >= n_seeds:
                     break
-                pair = await self.generate(seeds[seed_idx], analysis, intensity)
-                pairs.append(pair)
+                seed_intensity_pairs.append((seeds[seed_idx], intensity))
                 seed_idx += 1
+
+        # Generate concurrently with semaphore
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def bounded_generate(seed: Seed, intensity: SignalIntensity) -> ContrastPair:
+            async with semaphore:
+                return await self.generate(seed, analysis, intensity)
+
+        tasks = [bounded_generate(seed, intensity) for seed, intensity in seed_intensity_pairs]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filter out exceptions and log them
+        pairs = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning(f"Batch distributed generation failed for pair {i}: {result}")
+            else:
+                pairs.append(result)
 
         return pairs
 
