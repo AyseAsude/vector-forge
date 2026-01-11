@@ -72,7 +72,7 @@ class ConversationPanel(Vertical):
 
         yield VerticalScroll(classes="message-stream", id="message-stream")
         yield ChatInput(id="chat-input")
-        yield Static("ctrl+enter send · enter newline", classes="hint-bar", id="hint-bar")
+        yield Static("enter send · ctrl+enter newline", classes="hint-bar", id="hint-bar")
 
     def _is_at_bottom(self) -> bool:
         """Check if scroll is at bottom."""

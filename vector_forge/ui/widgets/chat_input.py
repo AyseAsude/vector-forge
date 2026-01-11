@@ -7,6 +7,29 @@ from textual.widget import Widget
 from textual.widgets import TextArea
 
 
+class SubmittableTextArea(TextArea):
+    """TextArea that emits submit on enter, newline on ctrl+enter."""
+
+    class SubmitRequest(Message):
+        """Request to submit the text."""
+        pass
+
+    def _on_key(self, event) -> None:
+        """Handle key events: enter=submit, ctrl+enter/shift+enter=newline."""
+        if event.key == "enter":
+            # Enter sends the message
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.SubmitRequest())
+        elif event.key in ("ctrl+enter", "shift+enter", "ctrl+j"):
+            # Insert newline
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+        else:
+            super()._on_key(event)
+
+
 class ChatInput(Widget):
     """Multi-line input for chat messages.
 
@@ -62,21 +85,18 @@ class ChatInput(Widget):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="input-box"):
-            yield TextArea("", id="chat-textarea")
+            yield SubmittableTextArea("", id="chat-textarea")
 
     def on_mount(self) -> None:
         """Focus input on mount."""
         self.query_one("#chat-textarea", TextArea).focus()
 
-    def on_key(self, event) -> None:
-        """Handle keyboard shortcuts."""
-        # Ctrl+Enter or Cmd+Enter to send
-        if event.key == "ctrl+enter" or event.key == "cmd+enter":
-            if self._enabled:
-                self._submit()
-                event.prevent_default()
+    def on_submittable_text_area_submit_request(self) -> None:
+        """Handle submit request from TextArea."""
+        if self._enabled:
+            self._do_submit()
 
-    def _submit(self) -> None:
+    def _do_submit(self) -> None:
         """Submit the current input."""
         text_area = self.query_one("#chat-textarea", TextArea)
         content = text_area.text.strip()

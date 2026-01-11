@@ -147,8 +147,7 @@ class VectorSelector(Vertical):
     VectorSelector .empty-state {
         height: auto;
         color: $foreground-muted;
-        text-align: center;
-        padding: 2;
+        padding: 1 0;
     }
 
     """
@@ -255,10 +254,7 @@ class VectorSelector(Vertical):
         if extraction.status != ExtractionStatus.COMPLETE:
             vector_list.remove_children()
             vector_list.mount(
-                Static(
-                    f"Extraction {extraction.status.value}...\nVectors available after completion.",
-                    classes="empty-state",
-                )
+                Static("Extraction running...", classes="empty-state")
             )
             return
 
@@ -273,6 +269,10 @@ class VectorSelector(Vertical):
             return
 
         vector_list = self.query_one("#vector-list", VerticalScroll)
+
+        # Remove empty-state message if present
+        for empty in vector_list.query(".empty-state"):
+            empty.remove()
 
         # Load vectors from session store if not cached
         vectors = state.chat.available_vectors

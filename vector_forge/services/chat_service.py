@@ -277,13 +277,14 @@ class ChatService:
                 device=vector.device,
                 dtype=vector.dtype,
             )
-            steering.set_vector(vector * strength)
+            steering.set_vector(vector)
 
             # Generate with steering
             output = backend.generate_with_steering(
-                prompt=prompt,
-                mode=steering,
-                layer=layer,
+                prompt,
+                steering_mode=steering,
+                layers=layer,
+                strength=strength,
                 max_new_tokens=max_tokens,
                 temperature=temperature,
                 do_sample=temperature > 0,
