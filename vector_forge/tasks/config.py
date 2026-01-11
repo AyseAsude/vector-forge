@@ -542,6 +542,11 @@ class TaskConfig(BaseModel):
         description="Layer selection strategies to explore",
     )
 
+    target_layers: Optional[List[int]] = Field(
+        default=None,
+        description="Explicit target layers (overrides layer_strategies when set)",
+    )
+
     # Optimization settings (NEW - replaces legacy CAA)
     optimization: OptimizationConfig = Field(
         default_factory=OptimizationConfig,

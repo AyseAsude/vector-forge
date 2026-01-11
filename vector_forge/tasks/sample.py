@@ -156,6 +156,7 @@ class SampleGenerator:
             config = SampleConfig(
                 seed=seed,
                 layer_strategy=strategy,
+                target_layers=self._config.target_layers,
             )
 
             sample = ExtractionSample(
@@ -216,6 +217,7 @@ class SampleGenerator:
             config = SampleConfig(
                 seed=seeds[seed_idx],
                 layer_strategy=strategies[strat_idx],
+                target_layers=self._config.target_layers,
             )
 
             sample = ExtractionSample(

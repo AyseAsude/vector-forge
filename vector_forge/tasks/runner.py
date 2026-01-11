@@ -714,9 +714,10 @@ class TaskRunner:
     def _get_target_layer(self, sample: ExtractionSample) -> int:
         """Determine target layer based on sample configuration."""
         if sample.config.target_layers:
-            # Use middle of specified layers
+            # Randomly select from target layers based on sample seed
             layers = sample.config.target_layers
-            return layers[len(layers) // 2]
+            random.seed(sample.config.seed)
+            return random.choice(layers)
 
         strategy = sample.config.layer_strategy
         total = self._num_layers

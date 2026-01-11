@@ -506,6 +506,8 @@ class CreateTaskScreen(Screen):
                         yield OptionPill("layer", "middle", "Middle", id="layer-middle")
                         yield OptionPill("layer", "late", "Late", id="layer-late")
 
+                yield ParamRow("Layers", "inp-layers", "", "e.g. 15, 16, 17")
+
                 with Horizontal(classes="option-row"):
                     yield Static("Aggregation", classes="option-label")
                     with Horizontal(classes="option-pills"):
@@ -542,6 +544,7 @@ class CreateTaskScreen(Screen):
             for pill in self.query(OptionPill):
                 if pill.group == "layer":
                     pill.set_selected(pill.value == event.value)
+            self._apply_layer_preset(event.value)
         elif event.group == "aggregation":
             self._aggregation = event.value
             for pill in self.query(OptionPill):
@@ -619,6 +622,9 @@ class CreateTaskScreen(Screen):
         # Save selection to preferences
         self._preferences.set_selected_model(ModelRole.TARGET, result.config.id)
 
+        # Refresh layers based on new model's num_layers
+        self._apply_layer_preset(self._layer_strategy)
+
     def _on_model_selected(self, result: ModelSelectorScreen.ModelSelected | None) -> None:
         """Handle model selection from modal."""
         if result is None:
@@ -682,6 +688,7 @@ class CreateTaskScreen(Screen):
         for pill in self.query(OptionPill):
             if pill.group == "layer":
                 pill.set_selected(pill.value == strategy)
+        self._apply_layer_preset(strategy)
 
         # Update aggregation pills
         self._aggregation = cfg.aggregation_strategy.value
@@ -721,6 +728,41 @@ class CreateTaskScreen(Screen):
         self.query_one("#inp-min-dst", Input).value = str(contrast.min_dst_score)
         self.query_one("#inp-max-src", Input).value = str(contrast.max_src_score)
         self.query_one("#inp-min-dist", Input).value = str(contrast.min_semantic_distance)
+
+    def _compute_layers_for_strategy(self, strategy: str, num_layers: int) -> list[int]:
+        """Compute target layers for a given strategy and model size."""
+        if strategy == "auto":
+            mid = num_layers // 2
+            return [mid - 1, mid, mid + 1]
+        elif strategy == "sweep":
+            start = num_layers // 4
+            end = 3 * num_layers // 4
+            return list(range(start, end, 2))
+        elif strategy == "middle":
+            mid = num_layers // 2
+            return [mid - 1, mid, mid + 1]
+        elif strategy == "late":
+            return list(range(3 * num_layers // 4, num_layers - 2))
+        else:
+            return [num_layers // 2]
+
+    def _apply_layer_preset(self, strategy: str) -> None:
+        """Apply a layer strategy preset to the layers field."""
+        num_layers = self._target_config.num_layers if self._target_config else None
+
+        if num_layers:
+            layers = self._compute_layers_for_strategy(strategy, num_layers)
+            self.query_one("#inp-layers", Input).value = ", ".join(str(l) for l in layers)
+        else:
+            # No model loaded yet - show placeholder based on strategy
+            placeholders = {
+                "auto": "middle ±1",
+                "sweep": "25%-75% (step 2)",
+                "middle": "middle ±1",
+                "late": "75%-end",
+            }
+            self.query_one("#inp-layers", Input).value = ""
+            self.query_one("#inp-layers", Input).placeholder = placeholders.get(strategy, "auto")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-cancel":
@@ -792,10 +834,20 @@ class CreateTaskScreen(Screen):
             self._target_config.model_id if self._target_config else None
         )
 
+        # Parse target layers from input
+        layers_str = self.query_one("#inp-layers", Input).value.strip()
+        target_layers = None
+        if layers_str:
+            try:
+                target_layers = [int(l.strip()) for l in layers_str.split(",") if l.strip()]
+            except ValueError:
+                pass  # Invalid input, use None
+
         return TaskConfig(
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
             num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
             layer_strategies=[layer_strategy],
+            target_layers=target_layers,
             optimization=optimization_config,
             contrast=contrast_config,
             datapoints_per_sample=int(self.query_one("#inp-datapoints", Input).value or "50"),
