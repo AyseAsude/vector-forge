@@ -274,7 +274,7 @@ class OptimizationRenderer(LogDetailRenderer):
             sample_idx = payload.get("sample_idx", 0)
             layer = payload.get("layer", 0)
             success = payload.get("success", True)
-            final_loss = payload.get("final_loss", 0.0)
+            final_loss = payload.get("final_loss")
             iterations = payload.get("iterations", 0)
             duration = payload.get("duration_seconds", 0.0)
             dp_used = payload.get("datapoints_used", 0)
@@ -282,7 +282,8 @@ class OptimizationRenderer(LogDetailRenderer):
             status = "[$success]SUCCESS[/]" if success else "[$error]FAILED[/]"
             sections.append(("RESULT", f"Status: {status}\nSample: {sample_idx} | Layer: {layer}"))
 
-            metrics = f"Final loss: {final_loss:.6f}\n"
+            loss_str = f"{final_loss:.6f}" if final_loss is not None else "N/A"
+            metrics = f"Final loss: {loss_str}\n"
             metrics += f"Iterations: {iterations}\n"
             metrics += f"Duration: {duration:.2f}s\n"
             metrics += f"Datapoints used: {dp_used}"
@@ -294,9 +295,11 @@ class OptimizationRenderer(LogDetailRenderer):
 
             # Loss history (if available, show trend)
             loss_history = payload.get("loss_history", [])
-            if loss_history and len(loss_history) > 1:
-                start_loss = loss_history[0]
-                end_loss = loss_history[-1]
+            # Filter out None values for trend calculation
+            valid_losses = [loss for loss in loss_history if loss is not None]
+            if valid_losses and len(valid_losses) > 1:
+                start_loss = valid_losses[0]
+                end_loss = valid_losses[-1]
                 improvement = ((start_loss - end_loss) / start_loss * 100) if start_loss > 0 else 0
                 trend = f"Start: {start_loss:.6f} -> End: {end_loss:.6f} ({improvement:.1f}% improvement)"
                 sections.append(("LOSS TREND", trend))
