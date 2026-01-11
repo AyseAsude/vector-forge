@@ -33,6 +33,7 @@ class LogDetailModal(ModalScreen):
     DEFAULT_CSS = """
     LogDetailModal {
         align: center middle;
+        background: $background 80%;
     }
 
     LogDetailModal #modal-container {
@@ -40,7 +41,7 @@ class LogDetailModal(ModalScreen):
         max-width: 120;
         height: 85%;
         background: $surface;
-        border: solid $primary;
+        border: solid $surface-lighten-1;
     }
 
     LogDetailModal #modal-header {
@@ -69,7 +70,7 @@ class LogDetailModal(ModalScreen):
     LogDetailModal #modal-content {
         height: 1fr;
         padding: 1 0 1 2;
-        background: $background;
+        background: $surface-darken-1;
         scrollbar-gutter: stable;
     }
 
@@ -85,7 +86,7 @@ class LogDetailModal(ModalScreen):
         height: auto;
         padding: 1;
         margin-bottom: 1;
-        background: $surface;
+        background: $surface-darken-1;
     }
 
     LogDetailModal #modal-footer {

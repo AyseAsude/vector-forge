@@ -52,6 +52,7 @@ class MessageDetailModal(ModalScreen):
     DEFAULT_CSS = """
     MessageDetailModal {
         align: center middle;
+        background: $background 80%;
     }
 
     MessageDetailModal #modal-container {
@@ -59,7 +60,7 @@ class MessageDetailModal(ModalScreen):
         max-width: 120;
         height: 85%;
         background: $surface;
-        border: solid $primary;
+        border: solid $surface-lighten-1;
     }
 
     MessageDetailModal #modal-header {
@@ -82,7 +83,7 @@ class MessageDetailModal(ModalScreen):
     MessageDetailModal #modal-content {
         height: 1fr;
         padding: 1 0 1 2;
-        background: $background;
+        background: $surface-darken-1;
         scrollbar-gutter: stable;
     }
 
@@ -98,7 +99,7 @@ class MessageDetailModal(ModalScreen):
         height: auto;
         padding: 1;
         margin-bottom: 1;
-        background: $surface;
+        background: $surface-darken-1;
     }
 
     MessageDetailModal #modal-footer {
@@ -187,6 +188,7 @@ class ToolCallModal(ModalScreen):
     DEFAULT_CSS = """
     ToolCallModal {
         align: center middle;
+        background: $background 80%;
     }
 
     ToolCallModal #modal {
@@ -195,6 +197,7 @@ class ToolCallModal(ModalScreen):
         height: auto;
         max-height: 80%;
         background: $surface;
+        border: solid $surface-lighten-1;
         padding: 1 2;
     }
 
@@ -221,7 +224,7 @@ class ToolCallModal(ModalScreen):
         height: auto;
         max-height: 10;
         padding: 1;
-        background: $background;
+        background: $surface-darken-1;
         margin-bottom: 1;
     }
 
