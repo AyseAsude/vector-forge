@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional, Callable, Protocol, TYPE_CHECKING
 import asyncio
 import time
 import logging
+import math
 import random
 import uuid
 
@@ -781,7 +782,8 @@ class TaskRunner:
         completed = 0
         started_at = time.time()
 
-        async def evaluate_one(result: SampleResult) -> None:
+        async def evaluate_one(result: SampleResult) -> Optional[Exception]:
+            """Evaluate a single result, returning None on success or Exception on failure."""
             nonlocal completed
             start_time = time.time()
             eval_id = self._generate_id("eval")
@@ -798,42 +800,77 @@ class TaskRunner:
                 num_prompts=config.evaluation.behavior_prompts,
             )
 
-            evaluation = await evaluator.evaluate(
-                result.vector,
-                result.layer,
-                behavior,
-                config.max_concurrent_evaluations,
-            )
+            try:
+                evaluation = await evaluator.evaluate(
+                    result.vector,
+                    result.layer,
+                    behavior,
+                    config.max_concurrent_evaluations,
+                )
 
-            result.evaluation = evaluation
-            result.overall_score = evaluation.overall_score
-            result.scores = evaluation.scores_dict
-            result.recommended_strength = evaluation.recommended_strength
-            result.evaluation_time_seconds = time.time() - start_time
+                result.evaluation = evaluation
+                result.overall_score = evaluation.overall_score
+                result.scores = evaluation.scores_dict
+                result.recommended_strength = evaluation.recommended_strength
+                result.evaluation_time_seconds = time.time() - start_time
 
-            # Emit evaluation completed event
-            self._emit(
-                "emit_evaluation_completed",
-                evaluation_id=eval_id,
-                scores=evaluation.scores_dict,
-                recommended_strength=evaluation.recommended_strength,
-                verdict="passed" if evaluation.overall_score > 0.5 else "needs_refinement",
-                citations=None,
-                recommendations=None,
-                raw_judge_output=None,
-            )
+                # Emit evaluation completed event
+                self._emit(
+                    "emit_evaluation_completed",
+                    evaluation_id=eval_id,
+                    scores=evaluation.scores_dict,
+                    recommended_strength=evaluation.recommended_strength,
+                    verdict="passed" if evaluation.overall_score > 0.5 else "needs_refinement",
+                    citations=None,
+                    recommendations=None,
+                    raw_judge_output=getattr(evaluation, 'raw_output', None),
+                )
 
-            completed += 1
-            self._report_progress(
-                total=len(results),
-                extractions=len(results),
-                evaluations=completed,
-                failed=len(results) - len(valid_results),
-                phase="evaluating",
-                started=started_at,
-            )
+                completed += 1
+                self._report_progress(
+                    total=len(results),
+                    extractions=len(results),
+                    evaluations=completed,
+                    failed=len(results) - len(valid_results),
+                    phase="evaluating",
+                    started=started_at,
+                )
+                return None
 
-        await asyncio.gather(*[evaluate_one(r) for r in valid_results])
+            except Exception as e:
+                logger.warning(f"Evaluation failed for sample {sample_idx}: {e}")
+                # Emit failed evaluation event
+                self._emit(
+                    "emit_evaluation_completed",
+                    evaluation_id=eval_id,
+                    scores={},
+                    recommended_strength=1.0,
+                    verdict="failed",
+                    citations=None,
+                    recommendations=None,
+                    raw_judge_output=f"Error: {str(e)}",
+                )
+                completed += 1
+                self._report_progress(
+                    total=len(results),
+                    extractions=len(results),
+                    evaluations=completed,
+                    failed=len(results) - len(valid_results),
+                    phase="evaluating",
+                    started=started_at,
+                )
+                return e
+
+        # Use return_exceptions=True to prevent one failure from cancelling others
+        eval_results = await asyncio.gather(
+            *[evaluate_one(r) for r in valid_results],
+            return_exceptions=True,
+        )
+
+        # Log any unexpected exceptions (ones not caught inside evaluate_one)
+        for i, err in enumerate(eval_results):
+            if isinstance(err, Exception):
+                logger.error(f"Unexpected evaluation error for result {i}: {err}")
 
         logger.info(f"Evaluation complete for {len(valid_results)} vectors")
         return results
