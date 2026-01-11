@@ -291,8 +291,8 @@ class VectorForgeApp(App):
             screen_name = type(screen).__name__
 
             if screen_name == "DashboardScreen":
-                if session_created or session_completed:
-                    # Full sync needed for new/completed sessions
+                if session_created or session_completed or has_logs:
+                    # Full sync needed for new/completed sessions or new logs
                     if hasattr(screen, '_sync'):
                         screen._sync()
                 else:

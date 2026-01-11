@@ -29,6 +29,11 @@ from vector_forge.storage.events import (
     DatapointAddedEvent,
     # Evaluation events
     EvaluationStartedEvent,
+    EvaluationDimensionStartedEvent,
+    EvaluationGenerationEvent,
+    EvaluationJudgeCallEvent,
+    EvaluationDimensionCompletedEvent,
+    EvaluationProgressEvent,
     EvaluationOutputEvent,
     EvaluationCompletedEvent,
 )
@@ -414,6 +419,7 @@ class EventEmitter:
         layer: int,
         strength_levels: List[float],
         num_prompts: int,
+        dimensions: Optional[List[str]] = None,
     ) -> None:
         """Emit evaluation started event."""
         self.emit(
@@ -424,6 +430,113 @@ class EventEmitter:
                 layer=layer,
                 strength_levels=strength_levels,
                 num_prompts=num_prompts,
+                dimensions=dimensions or ["behavior", "specificity", "coherence", "capability", "generalization"],
+            ),
+            source="evaluator",
+        )
+
+    def emit_evaluation_dimension_started(
+        self,
+        evaluation_id: str,
+        dimension: str,
+        num_prompts: int,
+        num_generations: int,
+    ) -> None:
+        """Emit dimension evaluation started event."""
+        self.emit(
+            EvaluationDimensionStartedEvent(
+                evaluation_id=evaluation_id,
+                dimension=dimension,
+                num_prompts=num_prompts,
+                num_generations=num_generations,
+            ),
+            source="evaluator",
+        )
+
+    def emit_evaluation_generation(
+        self,
+        evaluation_id: str,
+        dimension: str,
+        prompt: str,
+        output: str,
+        strength: float,
+        generation_index: int,
+        is_baseline: bool = False,
+    ) -> None:
+        """Emit single model generation event during evaluation."""
+        self.emit(
+            EvaluationGenerationEvent(
+                evaluation_id=evaluation_id,
+                dimension=dimension,
+                prompt=prompt,
+                output=output,
+                strength=strength,
+                generation_index=generation_index,
+                is_baseline=is_baseline,
+            ),
+            source="evaluator",
+        )
+
+    def emit_evaluation_judge_call(
+        self,
+        evaluation_id: str,
+        dimension: str,
+        prompt: str,
+        num_outputs: int,
+        scores: List[float],
+        latency_ms: float = 0.0,
+    ) -> None:
+        """Emit judge LLM call event during evaluation."""
+        self.emit(
+            EvaluationJudgeCallEvent(
+                evaluation_id=evaluation_id,
+                dimension=dimension,
+                prompt=prompt,
+                num_outputs=num_outputs,
+                scores=scores,
+                latency_ms=latency_ms,
+            ),
+            source="evaluator",
+        )
+
+    def emit_evaluation_dimension_completed(
+        self,
+        evaluation_id: str,
+        dimension: str,
+        score: float,
+        max_score: float = 10.0,
+        details: Optional[Dict[str, Any]] = None,
+        duration_seconds: float = 0.0,
+    ) -> None:
+        """Emit dimension evaluation completed event."""
+        self.emit(
+            EvaluationDimensionCompletedEvent(
+                evaluation_id=evaluation_id,
+                dimension=dimension,
+                score=score,
+                max_score=max_score,
+                details=details or {},
+                duration_seconds=duration_seconds,
+            ),
+            source="evaluator",
+        )
+
+    def emit_evaluation_progress(
+        self,
+        evaluation_id: str,
+        phase: str,
+        completed: int,
+        total: int,
+        current_dimension: Optional[str] = None,
+    ) -> None:
+        """Emit evaluation progress update."""
+        self.emit(
+            EvaluationProgressEvent(
+                evaluation_id=evaluation_id,
+                phase=phase,
+                completed=completed,
+                total=total,
+                current_dimension=current_dimension,
             ),
             source="evaluator",
         )
@@ -436,7 +549,7 @@ class EventEmitter:
         strength: Optional[float] = None,
         is_baseline: bool = False,
     ) -> None:
-        """Emit single evaluation output event."""
+        """Emit single evaluation output event (legacy)."""
         self.emit(
             EvaluationOutputEvent(
                 evaluation_id=evaluation_id,
@@ -454,20 +567,28 @@ class EventEmitter:
         scores: Dict[str, float],
         recommended_strength: float,
         verdict: str,
+        dimension_scores: Optional[Dict[str, float]] = None,
         citations: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         recommendations: Optional[List[str]] = None,
         raw_judge_output: Optional[str] = None,
+        duration_seconds: float = 0.0,
+        total_generations: int = 0,
+        total_judge_calls: int = 0,
     ) -> None:
         """Emit evaluation completed event."""
         self.emit(
             EvaluationCompletedEvent(
                 evaluation_id=evaluation_id,
                 scores=scores,
+                dimension_scores=dimension_scores or {},
                 citations=citations or {},
                 recommendations=recommendations or [],
                 verdict=verdict,
                 recommended_strength=recommended_strength,
                 raw_judge_output=raw_judge_output,
+                duration_seconds=duration_seconds,
+                total_generations=total_generations,
+                total_judge_calls=total_judge_calls,
             ),
             source="evaluator",
         )

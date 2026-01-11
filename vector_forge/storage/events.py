@@ -209,15 +209,74 @@ class EvaluationStartedEvent(BaseModel):
 
     event_type: Literal["evaluation.started"] = "evaluation.started"
     evaluation_id: str
-    eval_type: str  # "quick" or "thorough"
+    eval_type: str  # "quick" or "comprehensive"
     vector_id: str
     layer: int
     strength_levels: List[float] = Field(default_factory=list)
     num_prompts: int = 0
+    dimensions: List[str] = Field(default_factory=list)  # e.g., ["behavior", "specificity", ...]
+
+
+class EvaluationDimensionStartedEvent(BaseModel):
+    """Individual evaluation dimension started (behavior, specificity, etc.)."""
+
+    event_type: Literal["evaluation.dimension_started"] = "evaluation.dimension_started"
+    evaluation_id: str
+    dimension: str  # "behavior", "specificity", "coherence", "capability", "generalization"
+    num_prompts: int
+    num_generations: int  # Total generations for this dimension
+
+
+class EvaluationGenerationEvent(BaseModel):
+    """Single model generation during evaluation."""
+
+    event_type: Literal["evaluation.generation"] = "evaluation.generation"
+    evaluation_id: str
+    dimension: str
+    prompt: str
+    output: str
+    strength: float
+    generation_index: int
+    is_baseline: bool = False
+
+
+class EvaluationJudgeCallEvent(BaseModel):
+    """Judge LLM call during evaluation."""
+
+    event_type: Literal["evaluation.judge_call"] = "evaluation.judge_call"
+    evaluation_id: str
+    dimension: str
+    prompt: str  # The prompt being judged (or batch description)
+    num_outputs: int  # How many outputs being judged in this call
+    scores: List[float]  # Scores returned
+    latency_ms: float = 0.0
+
+
+class EvaluationDimensionCompletedEvent(BaseModel):
+    """Individual evaluation dimension completed with score."""
+
+    event_type: Literal["evaluation.dimension_completed"] = "evaluation.dimension_completed"
+    evaluation_id: str
+    dimension: str
+    score: float
+    max_score: float = 10.0
+    details: Dict[str, Any] = Field(default_factory=dict)
+    duration_seconds: float = 0.0
+
+
+class EvaluationProgressEvent(BaseModel):
+    """Evaluation progress update."""
+
+    event_type: Literal["evaluation.progress"] = "evaluation.progress"
+    evaluation_id: str
+    phase: str  # "generating", "judging"
+    completed: int
+    total: int
+    current_dimension: Optional[str] = None
 
 
 class EvaluationOutputEvent(BaseModel):
-    """Single evaluation output captured."""
+    """Single evaluation output captured (legacy, use EvaluationGenerationEvent)."""
 
     event_type: Literal["evaluation.output"] = "evaluation.output"
     evaluation_id: str
@@ -233,11 +292,15 @@ class EvaluationCompletedEvent(BaseModel):
     event_type: Literal["evaluation.completed"] = "evaluation.completed"
     evaluation_id: str
     scores: Dict[str, float] = Field(default_factory=dict)
+    dimension_scores: Dict[str, float] = Field(default_factory=dict)  # Per-dimension breakdown
     citations: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)
     recommendations: List[str] = Field(default_factory=list)
     verdict: str = "needs_refinement"
     recommended_strength: float = 1.0
     raw_judge_output: Optional[str] = None
+    duration_seconds: float = 0.0
+    total_generations: int = 0
+    total_judge_calls: int = 0
 
 
 # =============================================================================
@@ -475,6 +538,11 @@ EventPayload = Annotated[
         DatapointQualityEvent,
         # Evaluation
         EvaluationStartedEvent,
+        EvaluationDimensionStartedEvent,
+        EvaluationGenerationEvent,
+        EvaluationJudgeCallEvent,
+        EvaluationDimensionCompletedEvent,
+        EvaluationProgressEvent,
         EvaluationOutputEvent,
         EvaluationCompletedEvent,
         # Checkpoint

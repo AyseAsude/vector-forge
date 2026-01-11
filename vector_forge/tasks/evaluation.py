@@ -14,9 +14,10 @@ Key optimization: Uses batched judging to reduce LLM calls.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Protocol, Tuple, Union
+from typing import List, Dict, Any, Optional, Protocol, Tuple, Union, TYPE_CHECKING
 import asyncio
 import logging
+import time
 
 import torch
 from steering_vectors import VectorSteering
@@ -29,6 +30,9 @@ from vector_forge.tasks.batched_judge import (
     SpecificityJudge,
     OutputToJudge,
 )
+
+if TYPE_CHECKING:
+    from vector_forge.storage.emitter import EventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +201,7 @@ class VectorEvaluator:
         model_backend: ModelBackend,
         judge_llm: JudgeLLM,
         config: EvaluationConfig,
+        event_emitter: Optional["EventEmitter"] = None,
     ) -> None:
         """Initialize the evaluator.
 
@@ -204,10 +209,17 @@ class VectorEvaluator:
             model_backend: Backend for model inference.
             judge_llm: LLM for judging outputs.
             config: Evaluation configuration.
+            event_emitter: Optional event emitter for event sourcing.
         """
         self._backend = model_backend
         self._judge = judge_llm
         self._config = config
+        self._emitter = event_emitter
+
+        # Evaluation tracking for event sourcing
+        self._current_eval_id: Optional[str] = None
+        self._generation_count = 0
+        self._judge_call_count = 0
 
         # Initialize batched judges (max_tokens=None lets provider use its default)
         self._behavior_judge = BatchedJudge(
@@ -224,6 +236,19 @@ class VectorEvaluator:
             judge_llm,
             temperature=0.3,
         )
+
+    def _emit(self, method_name: str, **kwargs) -> None:
+        """Emit an event if emitter is available."""
+        if self._emitter is not None:
+            method = getattr(self._emitter, method_name, None)
+            if method:
+                method(**kwargs)
+
+    def set_evaluation_id(self, eval_id: str) -> None:
+        """Set the current evaluation ID for event tracking."""
+        self._current_eval_id = eval_id
+        self._generation_count = 0
+        self._judge_call_count = 0
 
     def _generate_steered(
         self,
@@ -351,13 +376,30 @@ class VectorEvaluator:
         Batching strategy: All outputs for the same prompt are judged together.
         This reduces LLM calls from 600 to 50 (for 50 prompts).
         """
+        dimension_start = time.time()
         prompts = self._generate_behavior_prompts(behavior)
         prompts = prompts[: self._config.behavior_prompts]
 
+        num_strengths = len(self._config.strength_levels)
+        num_gens = self._config.behavior_generations_per_prompt
+        total_generations = len(prompts) * num_strengths * num_gens
+
+        # Emit dimension started
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_started",
+                evaluation_id=self._current_eval_id,
+                dimension="behavior",
+                num_prompts=len(prompts),
+                num_generations=total_generations,
+            )
+
         # Phase 1: Generate all outputs (parallel, uses local model)
         outputs_by_prompt: Dict[str, List[OutputToJudge]] = {}
+        generation_counter = 0
 
         async def generate_outputs_for_prompt(prompt: str) -> List[OutputToJudge]:
+            nonlocal generation_counter
             outputs = []
             for strength in self._config.strength_levels:
                 for gen_idx in range(self._config.behavior_generations_per_prompt):
@@ -375,6 +417,19 @@ class VectorEvaluator:
                             generation_index=gen_idx,
                             prompt=prompt,
                         ))
+                        generation_counter += 1
+                        self._generation_count += 1
+
+                        # Emit generation event (batched - every 10 to reduce overhead)
+                        if self._current_eval_id and generation_counter % 10 == 0:
+                            self._emit(
+                                "emit_evaluation_progress",
+                                evaluation_id=self._current_eval_id,
+                                phase="generating",
+                                completed=generation_counter,
+                                total=total_generations,
+                                current_dimension="behavior",
+                            )
             return outputs
 
         # Generate all outputs in parallel
@@ -394,6 +449,17 @@ class VectorEvaluator:
             f"batching to {len(prompts)} judge calls"
         )
 
+        # Emit progress - switching to judging phase
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="judging",
+                completed=0,
+                total=len(prompts),
+                current_dimension="behavior",
+            )
+
         # Use rich criteria from behavior analysis (components, markers, boundaries)
         criteria = behavior.evaluation_criteria if behavior.evaluation_criteria else []
         # Add component-based criteria for better judging
@@ -402,12 +468,28 @@ class VectorEvaluator:
                 if comp.markers:
                     criteria.append(f"Look for markers: {', '.join(comp.markers[:3])}")
 
+        judge_start = time.time()
         results = await self._behavior_judge.judge_behavior_batch(
             all_outputs,
             behavior.name,
             behavior.get_judge_criteria() if behavior.components else behavior.detailed_definition,
             criteria,
         )
+        judge_latency = (time.time() - judge_start) * 1000
+        self._judge_call_count += len(prompts)
+
+        # Emit judge call event
+        if self._current_eval_id:
+            all_scores = [r.score for r in results]
+            self._emit(
+                "emit_evaluation_judge_call",
+                evaluation_id=self._current_eval_id,
+                dimension="behavior",
+                prompt=f"batch:{len(prompts)} prompts",
+                num_outputs=len(all_outputs),
+                scores=all_scores[:20],  # Limit to first 20 to avoid huge events
+                latency_ms=judge_latency,
+            )
 
         # Phase 3: Organize scores by strength
         strength_scores: Dict[float, List[float]] = {
@@ -425,6 +507,20 @@ class VectorEvaluator:
 
         # Overall behavior score is average at strength 1.0
         main_score = calibration.get(1.0, sum(calibration.values()) / len(calibration))
+
+        dimension_duration = time.time() - dimension_start
+
+        # Emit dimension completed
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_completed",
+                evaluation_id=self._current_eval_id,
+                dimension="behavior",
+                score=main_score,
+                max_score=10.0,
+                details={"per_strength": calibration, "num_outputs": len(all_outputs)},
+                duration_seconds=dimension_duration,
+            )
 
         return (
             DimensionScore(
