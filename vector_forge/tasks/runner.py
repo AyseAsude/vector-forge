@@ -777,6 +777,7 @@ class TaskRunner:
             self._backend,
             self._llm,
             config.evaluation,
+            event_emitter=self._emitter,
         )
 
         completed = 0
@@ -789,6 +790,9 @@ class TaskRunner:
             eval_id = self._generate_id("eval")
             sample_idx = result.sample.config.seed % 1000
 
+            # Set evaluation ID for event tracking within evaluator
+            evaluator.set_evaluation_id(eval_id)
+
             # Emit evaluation started event
             self._emit(
                 "emit_evaluation_started",
@@ -798,6 +802,7 @@ class TaskRunner:
                 layer=result.layer,
                 strength_levels=config.evaluation.strength_levels,
                 num_prompts=config.evaluation.behavior_prompts,
+                dimensions=["behavior", "specificity", "coherence", "capability", "generalization"],
             )
 
             try:
@@ -819,11 +824,21 @@ class TaskRunner:
                     "emit_evaluation_completed",
                     evaluation_id=eval_id,
                     scores=evaluation.scores_dict,
+                    dimension_scores={
+                        "behavior": evaluation.behavior_score.score if evaluation.behavior_score else 0,
+                        "specificity": evaluation.specificity_score.score if evaluation.specificity_score else 0,
+                        "coherence": evaluation.coherence_score.score if evaluation.coherence_score else 0,
+                        "capability": evaluation.capability_score.score if evaluation.capability_score else 0,
+                        "generalization": evaluation.generalization_score.score if evaluation.generalization_score else 0,
+                    },
                     recommended_strength=evaluation.recommended_strength,
                     verdict="passed" if evaluation.overall_score > 0.5 else "needs_refinement",
                     citations=None,
                     recommendations=None,
                     raw_judge_output=getattr(evaluation, 'raw_output', None),
+                    duration_seconds=time.time() - start_time,
+                    total_generations=evaluator._generation_count,
+                    total_judge_calls=evaluator._judge_call_count,
                 )
 
                 completed += 1
