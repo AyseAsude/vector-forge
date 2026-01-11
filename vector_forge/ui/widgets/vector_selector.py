@@ -221,16 +221,18 @@ class VectorSelector(Vertical):
 
         # Handle no extraction selected
         if extraction_id is None:
-            self._clear_state()
+            if self._current_extraction_id is not None:
+                self._clear_state()
+                vector_list.remove_children()
+                vector_list.mount(Static("Select a task first", classes="empty-state"))
             task_name.update("No task selected")
             task_model.update("")
-            vector_list.remove_children()
-            vector_list.mount(Static("Select a task first", classes="empty-state"))
             return
 
         extraction = state.extractions.get(extraction_id)
         if extraction is None:
-            self._clear_state()
+            if self._current_extraction_id is not None:
+                self._clear_state()
             task_name.update("Task not found")
             task_model.update("")
             return
@@ -246,20 +248,21 @@ class VectorSelector(Vertical):
 
         # Check if extraction is complete
         if extraction.status != ExtractionStatus.COMPLETE:
-            self._clear_state()
-            vector_list.remove_children()
-            vector_list.mount(
-                Static("Extraction running...", classes="empty-state")
-            )
+            if self._current_extraction_id != extraction_id or self._vectors:
+                self._clear_state()
+                self._current_extraction_id = extraction_id
+                vector_list.remove_children()
+                vector_list.mount(
+                    Static("Extraction running...", classes="empty-state")
+                )
             return
 
-        # Check if we need to reload vectors (extraction changed)
+        # Only reload and re-render if extraction actually changed
         if extraction_id != self._current_extraction_id:
             self._current_extraction_id = extraction_id
             self._selected_layer = None
             self._vectors = self._load_vectors(extraction_id, extraction)
-
-        self._render_vectors(vector_list)
+            self._render_vectors(vector_list)
 
     def _clear_state(self) -> None:
         """Clear internal state when extraction changes."""
@@ -327,12 +330,10 @@ class VectorSelector(Vertical):
             if self._selected_layer is None:
                 self._selected_layer = self._vectors[0].layer
 
-        # Mount vector rows (use index for unique ID, not layer which may have duplicates)
-        for idx, v in enumerate(self._vectors):
+        # Mount vector rows (no IDs needed - queried by class in on_vector_row_selected)
+        for v in self._vectors:
             is_selected = (v.layer == self._selected_layer)
-            vector_list.mount(
-                VectorRow(v, is_selected=is_selected, id=f"vector-{idx}")
-            )
+            vector_list.mount(VectorRow(v, is_selected=is_selected))
 
     def on_vector_row_selected(self, event: VectorRow.Selected) -> None:
         """Handle vector selection."""
