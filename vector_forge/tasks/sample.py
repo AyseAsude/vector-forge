@@ -157,9 +157,10 @@ class SampleGenerator:
         """Generate samples using grid search over parameters.
 
         Creates one sample for each combination of:
-        - Seeds (0 to num_seeds-1)
         - Layer strategies
         - Token positions (all 3 automatically)
+
+        Each sample gets a unique random seed.
 
         Args:
             behavior: The expanded behavior to extract.
@@ -169,13 +170,12 @@ class SampleGenerator:
         """
         samples = []
 
-        seeds = range(self._config.num_seeds)
         strategies = self._config.layer_strategies
         token_positions = list(TokenPosition)
 
-        for seed, strategy, token_pos in product(seeds, strategies, token_positions):
+        for i, (strategy, token_pos) in enumerate(product(strategies, token_positions)):
             config = SampleConfig(
-                seed=seed,
+                seed=random.randint(0, 2**31 - 1),
                 layer_strategy=strategy,
                 target_layers=self._config.target_layers,
                 token_position=token_pos,
@@ -205,7 +205,7 @@ class SampleGenerator:
         """Generate samples using quasi-random sampling for good coverage.
 
         Uses Latin Hypercube Sampling to ensure diverse coverage of the
-        parameter space with fewer samples than full grid search.
+        strategy space. Each sample gets a unique random seed.
 
         Args:
             behavior: The expanded behavior to extract.
@@ -219,31 +219,28 @@ class SampleGenerator:
         try:
             from scipy.stats import qmc
 
-            sampler = qmc.LatinHypercube(d=2)  # seed, strategy
+            sampler = qmc.LatinHypercube(d=1)  # strategy only
             points = sampler.random(n=n)
         except ImportError:
             # Fallback to simple random sampling
-            points = [[random.random() for _ in range(2)] for _ in range(n)]
+            points = [[random.random()] for _ in range(n)]
 
         samples = []
-        seeds = list(range(self._config.num_seeds))
         strategies = self._config.layer_strategies
         # All token positions - automatically cycle through all of them
         token_positions = list(TokenPosition)
 
         for i, point in enumerate(points):
-            seed_idx = int(point[0] * len(seeds))
-            strat_idx = int(point[1] * len(strategies))
+            strat_idx = int(point[0] * len(strategies))
 
-            # Clamp indices to valid range
-            seed_idx = min(seed_idx, len(seeds) - 1)
+            # Clamp index to valid range
             strat_idx = min(strat_idx, len(strategies) - 1)
 
             # Cycle through token positions
             token_pos = token_positions[i % len(token_positions)]
 
             config = SampleConfig(
-                seed=seeds[seed_idx],
+                seed=random.randint(0, 2**31 - 1),
                 layer_strategy=strategies[strat_idx],
                 target_layers=self._config.target_layers,
                 token_position=token_pos,
@@ -322,9 +319,9 @@ class SampleGenerator:
         self,
         behavior: ExpandedBehavior,
         strategy: LayerStrategy,
-        n_seeds: int = 5,
+        n_samples: int = 5,
     ) -> SampleSet:
-        """Generate samples for a single strategy with multiple seeds.
+        """Generate samples for a single strategy with random seeds.
 
         Useful for noise reduction through averaging vectors from
         the same strategy but different random initializations.
@@ -333,18 +330,18 @@ class SampleGenerator:
         Args:
             behavior: The expanded behavior to extract.
             strategy: The layer strategy to use.
-            n_seeds: Number of different seeds to try.
+            n_samples: Number of samples to generate.
 
         Returns:
-            SampleSet with same strategy, different seeds.
+            SampleSet with same strategy, different random seeds.
         """
         samples = []
         token_positions = list(TokenPosition)
 
-        for seed in range(n_seeds):
-            token_pos = token_positions[seed % len(token_positions)]
+        for i in range(n_samples):
+            token_pos = token_positions[i % len(token_positions)]
             config = SampleConfig(
-                seed=seed,
+                seed=random.randint(0, 2**31 - 1),
                 layer_strategy=strategy,
                 token_position=token_pos,
             )
@@ -361,36 +358,37 @@ class SampleGenerator:
                 "generation_method": "seeded",
                 "behavior_name": behavior.name,
                 "strategy": strategy.value,
-                "n_seeds": n_seeds,
+                "n_samples": n_samples,
             },
         )
 
     def generate_layer_sweep(
         self,
         behavior: ExpandedBehavior,
-        n_seeds: int = 3,
+        n_per_strategy: int = 3,
     ) -> SampleSet:
         """Generate samples that sweep across different layer strategies.
 
-        Each seed is paired with each layer strategy.
+        Creates n_per_strategy samples for each layer strategy,
+        each with a unique random seed.
         Cycles through all token positions.
 
         Args:
             behavior: The expanded behavior to extract.
-            n_seeds: Number of seeds per strategy.
+            n_per_strategy: Number of samples per strategy.
 
         Returns:
-            SampleSet covering all strategy-seed combinations.
+            SampleSet covering all strategies with random seeds.
         """
         samples = []
         token_positions = list(TokenPosition)
         sample_idx = 0
 
         for strategy in self._config.layer_strategies:
-            for seed in range(n_seeds):
+            for _ in range(n_per_strategy):
                 token_pos = token_positions[sample_idx % len(token_positions)]
                 config = SampleConfig(
-                    seed=seed,
+                    seed=random.randint(0, 2**31 - 1),
                     layer_strategy=strategy,
                     token_position=token_pos,
                 )
@@ -407,7 +405,7 @@ class SampleGenerator:
                 "generation_method": "layer_sweep",
                 "behavior_name": behavior.name,
                 "strategies": [s.value for s in self._config.layer_strategies],
-                "n_seeds": n_seeds,
+                "n_per_strategy": n_per_strategy,
             },
         )
 

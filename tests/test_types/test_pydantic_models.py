@@ -430,13 +430,11 @@ class TestTaskConfigTypes:
         """Test quick preset creates valid config."""
         config = TaskConfig.quick()
         assert config.num_samples == 4
-        assert config.num_seeds == 2
 
     def test_preset_comprehensive(self):
         """Test comprehensive preset creates valid config."""
         config = TaskConfig.comprehensive()
         assert config.num_samples == 32
-        assert config.num_seeds == 8
 
 
 # =============================================================================

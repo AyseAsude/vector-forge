@@ -524,7 +524,6 @@ class CreateTaskScreen(Screen):
                 with Horizontal(classes="params-row"):
                     with ParamSection("SAMPLING"):
                         yield ParamRow("Samples", "inp-samples", "256")
-                        yield ParamRow("Seeds", "inp-seeds", "4")
                         yield ParamRow("Datapoints", "inp-datapoints", "50", "per sample")
 
                     with ParamSection("CONTRAST"):
@@ -856,7 +855,6 @@ class CreateTaskScreen(Screen):
 
         # Update sampling fields
         self.query_one("#inp-samples", Input).value = str(cfg.num_samples)
-        self.query_one("#inp-seeds", Input).value = str(cfg.num_seeds)
         self.query_one("#inp-datapoints", Input).value = str(cfg.datapoints_per_sample)
 
         # Update optimization fields
@@ -1219,7 +1217,6 @@ class CreateTaskScreen(Screen):
             extraction_method=extraction_method,
             caa=caa_config,
             num_samples=int(self.query_one("#inp-samples", Input).value or "16"),
-            num_seeds=int(self.query_one("#inp-seeds", Input).value or "4"),
             layer_strategies=[layer_strategy],
             target_layers=target_layers,
             optimization=optimization_config,

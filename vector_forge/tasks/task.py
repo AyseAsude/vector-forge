@@ -475,7 +475,7 @@ class ExtractionTask:
             samples = generator.generate_seeded(
                 behavior,
                 config.layer_strategies[0],
-                config.num_seeds,
+                config.effective_samples,
             )
         else:
             raise ValueError(f"Unknown generation method: {generation_method}")

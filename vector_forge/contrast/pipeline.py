@@ -94,6 +94,9 @@ class ContrastPipelineConfig:
     max_regeneration_attempts: int = 2
     """Maximum attempts to regenerate a failed pair."""
 
+    max_json_retries: int = 3
+    """Maximum retry attempts when LLM returns invalid JSON."""
+
     # Generation settings
     generation_temperature: float = 0.7
     """Temperature for pair generation."""
@@ -249,7 +252,10 @@ class ContrastPipeline:
 
         # Initialize components (Dependency Injection)
         # Expander LLM: behavior analysis and seed generation
-        self._analyzer = BehaviorAnalyzer(llm_client)
+        self._analyzer = BehaviorAnalyzer(
+            llm_client,
+            max_retries=self._config.max_json_retries,
+        )
         self._seed_generator = SeedGenerator(llm_client)
         # Generator LLM: contrast pair generation
         self._pair_generator = ContrastPairGenerator(

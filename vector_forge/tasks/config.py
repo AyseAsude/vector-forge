@@ -1193,13 +1193,6 @@ class TaskConfig(BaseModel):
         description="Number of extraction samples to run in parallel",
     )
 
-    num_seeds: int = Field(
-        default=4,
-        ge=1,
-        le=20,
-        description="Different random seeds to try",
-    )
-
     layer_strategies: List[LayerStrategy] = Field(
         default_factory=lambda: [LayerStrategy.AUTO, LayerStrategy.SWEEP],
         description="Layer selection strategies to explore",
@@ -1337,7 +1330,6 @@ class TaskConfig(BaseModel):
         """Quick configuration for testing (no tournament)."""
         return cls(
             num_samples=4,
-            num_seeds=2,
             layer_strategies=[LayerStrategy.AUTO],
             optimization=OptimizationConfig.fast(),
             contrast=ContrastConfig.fast(),
@@ -1361,7 +1353,6 @@ class TaskConfig(BaseModel):
         """Comprehensive configuration for best results (no tournament)."""
         return cls(
             num_samples=32,
-            num_seeds=8,
             layer_strategies=[
                 LayerStrategy.AUTO,
                 LayerStrategy.SWEEP,
@@ -1387,7 +1378,6 @@ class TaskConfig(BaseModel):
         """
         return cls(
             num_samples=4,  # Final survivors
-            num_seeds=2,
             layer_strategies=[LayerStrategy.AUTO, LayerStrategy.SWEEP],
             optimization=OptimizationConfig.fast(),
             contrast=ContrastConfig.fast(),
@@ -1405,7 +1395,6 @@ class TaskConfig(BaseModel):
         """
         return cls(
             num_samples=16,  # Final survivors
-            num_seeds=4,
             layer_strategies=[LayerStrategy.AUTO, LayerStrategy.SWEEP, LayerStrategy.MIDDLE],
             optimization=OptimizationConfig.standard(),
             contrast=ContrastConfig.standard(),
@@ -1424,7 +1413,6 @@ class TaskConfig(BaseModel):
         """
         return cls(
             num_samples=32,  # Final survivors
-            num_seeds=8,
             layer_strategies=[
                 LayerStrategy.AUTO,
                 LayerStrategy.SWEEP,

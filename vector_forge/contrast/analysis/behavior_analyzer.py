@@ -174,6 +174,7 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
         llm_client: BaseLLMClient,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        max_retries: int = 3,
     ):
         """Initialize the behavior analyzer.
 
@@ -181,10 +182,12 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
             llm_client: LLM client for analysis.
             temperature: Generation temperature.
             max_tokens: Maximum tokens for response (None = provider default).
+            max_retries: Maximum retry attempts on JSON parse failure.
         """
         self._llm = llm_client
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_retries = max_retries
 
     async def analyze(self, behavior_description: str) -> BehaviorAnalysis:
         """Analyze behavior and return structured analysis.
@@ -196,24 +199,38 @@ class BehaviorAnalyzer(BehaviorAnalyzerProtocol):
             BehaviorAnalysis containing components, triggers, etc.
 
         Raises:
-            ValueError: If analysis fails or cannot be parsed.
+            ValueError: If analysis fails after all retries.
         """
         logger.info(f"Analyzing behavior: {behavior_description[:50]}...")
 
         prompt = ANALYSIS_PROMPT.format(behavior_description=behavior_description)
 
-        response = await self._llm.complete(
-            messages=[Message(role="user", content=prompt)],
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
-            response_format=JSON_RESPONSE_FORMAT,
-        )
+        last_error: Optional[Exception] = None
+        for attempt in range(self._max_retries):
+            response = await self._llm.complete(
+                messages=[Message(role="user", content=prompt)],
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+                response_format=JSON_RESPONSE_FORMAT,
+            )
 
-        try:
-            data = parse_llm_json(response.content)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse behavior analysis: {e}")
-            raise ValueError(f"Failed to parse behavior analysis: {e}")
+            try:
+                data = parse_llm_json(response.content)
+                break  # Success, exit retry loop
+            except json.JSONDecodeError as e:
+                last_error = e
+                if attempt < self._max_retries - 1:
+                    logger.warning(
+                        f"JSON parse failed on attempt {attempt + 1}/{self._max_retries}, "
+                        f"retrying: {e}"
+                    )
+                else:
+                    logger.error(
+                        f"Failed to parse behavior analysis after {self._max_retries} attempts: {e}"
+                    )
+                    raise ValueError(
+                        f"Failed to parse behavior analysis after {self._max_retries} attempts: {e}"
+                    )
 
         components = self._extract_components(data)
 
