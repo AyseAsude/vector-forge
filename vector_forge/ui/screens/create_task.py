@@ -1007,8 +1007,9 @@ class CreateTaskScreen(Screen):
     def _compute_layers_for_strategy(self, strategy: str, num_layers: int) -> list[int]:
         """Compute target layers for a given strategy and model size."""
         if strategy == "auto":
-            mid = num_layers // 2
-            return [mid - 1, mid, mid + 1]
+            base = num_layers // 3
+            offset = num_layers // 10
+            return [base - offset, base, base + offset]
         elif strategy == "sweep":
             start = num_layers // 4
             end = 3 * num_layers // 4

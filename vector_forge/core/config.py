@@ -65,13 +65,13 @@ class EvaluationBudget(BaseModel):
     # Quick evaluation (used during inner iteration loop)
     quick_eval_prompts: int = Field(default=5, ge=1)
     quick_eval_generations_per_prompt: int = Field(default=3, ge=1)
-    quick_eval_strength_levels: List[float] = Field(default_factory=lambda: [1.0, 1.5])
+    quick_eval_strength_levels: List[float] = Field(default_factory=lambda: [0.5, 1.5, 2.5])
 
     # Thorough evaluation (used by judge)
     thorough_eval_prompts: int = Field(default=30, ge=5)
     thorough_eval_generations_per_prompt: int = Field(default=5, ge=1)
     thorough_eval_strength_levels: List[float] = Field(
-        default_factory=lambda: [0.5, 1.0, 1.5, 2.0]
+        default_factory=lambda: [0.5, 1.0, 1.5, 2.0, 2.5]
     )
     baseline_generations_per_prompt: int = Field(default=3, ge=1)
 
@@ -81,10 +81,10 @@ class EvaluationBudget(BaseModel):
         return cls(
             quick_eval_prompts=3,
             quick_eval_generations_per_prompt=2,
-            quick_eval_strength_levels=[1.0],
+            quick_eval_strength_levels=[0.5, 1.5, 2.5],
             thorough_eval_prompts=10,
             thorough_eval_generations_per_prompt=3,
-            thorough_eval_strength_levels=[0.5, 1.0, 1.5],
+            thorough_eval_strength_levels=[0.5, 1.5, 2.5],
             baseline_generations_per_prompt=2,
         )
 
@@ -99,10 +99,10 @@ class EvaluationBudget(BaseModel):
         return cls(
             quick_eval_prompts=10,
             quick_eval_generations_per_prompt=5,
-            quick_eval_strength_levels=[0.5, 1.0, 1.5],
+            quick_eval_strength_levels=[0.5, 1.5, 2.5],
             thorough_eval_prompts=50,
             thorough_eval_generations_per_prompt=10,
-            thorough_eval_strength_levels=[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+            thorough_eval_strength_levels=[0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0],
             baseline_generations_per_prompt=5,
         )
 

@@ -688,28 +688,28 @@ class ContrastConfig(BaseModel):
 
     # Intensity distribution for contrast pairs
     intensity_extreme: float = Field(
-        default=0.10,
+        default=0.40,
         ge=0.0,
         le=1.0,
         description="Proportion of extreme intensity pairs (0.0-1.0)",
     )
 
     intensity_high: float = Field(
-        default=0.20,
+        default=0.30,
         ge=0.0,
         le=1.0,
         description="Proportion of high intensity pairs (0.0-1.0)",
     )
 
     intensity_medium: float = Field(
-        default=0.30,
+        default=0.20,
         ge=0.0,
         le=1.0,
         description="Proportion of medium intensity pairs (0.0-1.0)",
     )
 
     intensity_natural: float = Field(
-        default=0.40,
+        default=0.10,
         ge=0.0,
         le=1.0,
         description="Proportion of natural intensity pairs (0.0-1.0)",
@@ -800,22 +800,22 @@ class ContrastConfig(BaseModel):
         """
         presets = {
             IntensityProfile.EXTREME: {
-                "intensity_extreme": 0.35,
-                "intensity_high": 0.35,
+                "intensity_extreme": 0.40,
+                "intensity_high": 0.30,
                 "intensity_medium": 0.20,
                 "intensity_natural": 0.10,
             },
             IntensityProfile.BALANCED: {
-                "intensity_extreme": 0.10,
-                "intensity_high": 0.20,
-                "intensity_medium": 0.30,
-                "intensity_natural": 0.40,
+                "intensity_extreme": 0.40,
+                "intensity_high": 0.30,
+                "intensity_medium": 0.20,
+                "intensity_natural": 0.10,
             },
             IntensityProfile.NATURAL: {
-                "intensity_extreme": 0.05,
-                "intensity_high": 0.10,
-                "intensity_medium": 0.30,
-                "intensity_natural": 0.55,
+                "intensity_extreme": 0.40,
+                "intensity_high": 0.30,
+                "intensity_medium": 0.20,
+                "intensity_natural": 0.10,
             },
         }
         return presets.get(profile, presets[IntensityProfile.BALANCED])
@@ -951,13 +951,13 @@ class EvaluationConfig(BaseModel):
 
     # Strength calibration
     strength_levels: List[float] = Field(
-        default_factory=lambda: [0.5, 1.0, 1.5, 2.0],
+        default_factory=lambda: [0.5, 1.0, 1.5, 2.0, 2.5],
         description="Steering strengths to test",
     )
 
     # Generation temperature for steered outputs during evaluation
     generation_temperature: float = Field(
-        default=0.7,
+        default=1.0,
         ge=0.0,
         le=2.0,
         description="Temperature for generating steered outputs during evaluation",
@@ -998,8 +998,8 @@ class EvaluationConfig(BaseModel):
             coherence_prompts=15,
             capability_prompts=10,
             generalization_prompts=15,
-            strength_levels=[0.5, 1.0, 1.5],
-            generation_temperature=0.7,
+            strength_levels=[0.5, 1.5, 2.5],
+            generation_temperature=1.0,
         )
 
     @classmethod
@@ -1017,8 +1017,8 @@ class EvaluationConfig(BaseModel):
             coherence_prompts=50,
             capability_prompts=30,
             generalization_prompts=50,
-            strength_levels=[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
-            generation_temperature=0.7,
+            strength_levels=[0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0],
+            generation_temperature=1.0,
         )
 
     def scale_to_depth(self, depth: EvalDepth) -> "EvaluationConfig":

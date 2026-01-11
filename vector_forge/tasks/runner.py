@@ -1194,8 +1194,9 @@ class TaskRunner:
         total = self._num_layers
 
         if strategy == LayerStrategy.AUTO:
-            mid = total // 2
-            return [mid - 1, mid, mid + 1]
+            base = total // 3
+            offset = total // 10
+            return [base - offset, base, base + offset]
         elif strategy == LayerStrategy.SWEEP:
             start = total // 4
             end = 3 * total // 4
