@@ -230,36 +230,29 @@ class UIStateSynchronizer:
                     )
                 extraction.add_agent(agent)
 
-        # Reconstruct sample agents from contrast pairs (if not already created from optimizations)
-        if replayed and replayed.contrast_pairs:
-            # Count pairs per sample (excluding core pool with sample_idx=-1)
-            pairs_per_sample: dict[int, int] = {}
-            for pair in replayed.contrast_pairs.values():
-                idx = pair.sample_idx
-                if idx >= 0:  # Skip core pool
-                    pairs_per_sample[idx] = pairs_per_sample.get(idx, 0) + 1
-
-            # Create or update sample agents with pair counts
-            for sample_idx, pair_count in pairs_per_sample.items():
+        # Reconstruct sample agents from seed assignments (core + unique pairs)
+        if replayed and replayed.seed_assignments:
+            for sample_idx, (num_core, num_unique) in replayed.seed_assignments.items():
+                total_pairs = num_core + num_unique
                 agent_id = f"{extraction.id}_sample_{sample_idx}"
                 if agent_id in extraction.agents:
                     # Update existing agent's pair count
-                    extraction.agents[agent_id].tool_calls_count = pair_count
+                    extraction.agents[agent_id].tool_calls_count = total_pairs
                 else:
                     # Create new agent for contrast phase
                     agent = AgentUIState(
                         id=agent_id,
                         name=f"Sample {sample_idx + 1}",
-                        role=f"contrast pairs",
+                        role=f"{num_core} core + {num_unique} unique",
                         status=AgentStatus.COMPLETE,
                         started_at=started_at,
                         completed_at=completed_at,
                         turns=1,
-                        tool_calls_count=pair_count,
+                        tool_calls_count=total_pairs,
                     )
                     agent.add_message(
                         MessageRole.ASSISTANT,
-                        f"Generated {pair_count} contrast pairs"
+                        f"Assigned {num_core} core + {num_unique} unique seeds ({total_pairs} total pairs)"
                     )
                     extraction.add_agent(agent)
 
@@ -904,15 +897,12 @@ class UIStateSynchronizer:
         if sample_idx < 0:
             return
 
-        # Create or update sample agent to show contrast pair generation
+        # Update sample agent status (count already set by seed.assigned)
         agent = self._get_or_create_sample_agent(extraction, sample_idx)
         agent.status = AgentStatus.RUNNING
-        agent.tool_calls_count += 1
         agent.current_tool = "generating pairs"
 
-        # Only notify every 5 pairs to reduce UI churn
-        if agent.tool_calls_count % 5 == 0:
-            self._ui_state._notify()
+        self._ui_state._notify()
 
     def _handle_contrast_pair_validated(self, session_id: str, event: EventEnvelope) -> None:
         """Handle contrast.pair_validated event."""
@@ -949,14 +939,17 @@ class UIStateSynchronizer:
 
         payload = event.payload
         sample_idx = payload.get("sample_idx", 0)
-        num_seeds = len(payload.get("seed_ids", []))
+        num_core = payload.get("num_core_seeds", 0)
+        num_unique = payload.get("num_unique_seeds", 0)
+        total_pairs = num_core + num_unique
 
         # Create sample agent in waiting state
         agent = self._get_or_create_sample_agent(extraction, sample_idx)
         agent.status = AgentStatus.WAITING
+        agent.tool_calls_count = total_pairs  # Set expected total pairs
         agent.add_message(
             MessageRole.SYSTEM,
-            f"Assigned {num_seeds} seeds for contrast pair generation"
+            f"Assigned {num_core} core + {num_unique} unique seeds ({total_pairs} total pairs)"
         )
 
         self._ui_state._notify()

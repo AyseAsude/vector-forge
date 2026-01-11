@@ -129,6 +129,8 @@ class ReplayedState:
     seeds: Dict[str, ReplayedSeed] = field(default_factory=dict)
     contrast_pairs: Dict[str, ReplayedContrastPair] = field(default_factory=dict)
     optimizations: List[ReplayedOptimization] = field(default_factory=list)
+    # Seed assignments: sample_idx -> (num_core_seeds, num_unique_seeds)
+    seed_assignments: Dict[int, tuple] = field(default_factory=dict)
 
     # Best results
     best_layer: Optional[int] = None
@@ -306,7 +308,10 @@ class SessionReplayer:
             pass  # Just for logging
 
         elif event_type == "seed.assigned":
-            pass  # Just for logging
+            sample_idx = payload.get("sample_idx", 0)
+            num_core = payload.get("num_core_seeds", 0)
+            num_unique = payload.get("num_unique_seeds", 0)
+            state.seed_assignments[sample_idx] = (num_core, num_unique)
 
         elif event_type == "contrast.behavior_analyzed":
             pass  # Just for logging
