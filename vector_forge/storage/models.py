@@ -205,9 +205,11 @@ class ModelConfig(BaseModel):
         """
         # Providers that need prefix
         prefix_map = {
+            Provider.OPENAI: "openai/",
             Provider.OPENROUTER: "openrouter/",
             Provider.OLLAMA: "ollama/",
             Provider.AZURE: "azure/",
+            Provider.CUSTOM: "openai/",
         }
         prefix = prefix_map.get(self.provider, "")
 
