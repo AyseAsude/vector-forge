@@ -251,6 +251,15 @@ class VectorEvaluator:
         self._generation_count = 0
         self._judge_call_count = 0
 
+    def _create_steering_mode(self, vector: torch.Tensor) -> VectorSteering:
+        """Create a VectorSteering mode from a vector for inference.
+
+        For inference, we don't need gradients, so we detach the vector.
+        This avoids unnecessary memory overhead from gradient tracking.
+        """
+        # Use detached vector - no gradients needed for inference
+        return VectorSteering(vector=vector.detach())
+
     def _generate_steered(
         self,
         prompt: str,
@@ -259,10 +268,10 @@ class VectorEvaluator:
         strength: float,
         max_new_tokens: int = 100,
     ) -> str:
-        """Generate text with steering vector applied.
+        """Generate text with steering vector applied (single prompt).
 
-        Wraps the raw tensor in a VectorSteering object and calls
-        the backend's generate_with_steering with correct parameters.
+        Note: For multiple prompts, use _generate_steered_batch for much
+        better performance through GPU batching.
 
         Args:
             prompt: Input prompt.
@@ -274,21 +283,71 @@ class VectorEvaluator:
         Returns:
             Generated text.
         """
-        # Create and initialize steering mode
-        steering = VectorSteering()
-        steering.init_parameters(
-            hidden_dim=vector.shape[0],
-            device=vector.device,
-            dtype=vector.dtype,
-        )
-        steering.set_vector(vector)
-
-        # Call backend with correct signature
+        steering = self._create_steering_mode(vector)
         return self._backend.generate_with_steering(
             prompt,
             steering_mode=steering,
             layers=layer,
             strength=strength,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+        )
+
+    def _generate_steered_batch(
+        self,
+        prompts: List[str],
+        vector: torch.Tensor,
+        layer: int,
+        strength: float,
+        max_new_tokens: int = 100,
+    ) -> List[str]:
+        """Generate text for multiple prompts with steering (BATCHED).
+
+        This is the HIGH-PERFORMANCE method - processes all prompts in
+        a single GPU batch, maximizing throughput and parallelism.
+
+        Args:
+            prompts: List of input prompts.
+            vector: Steering vector tensor.
+            layer: Layer to apply steering.
+            strength: Steering strength multiplier.
+            max_new_tokens: Maximum tokens to generate.
+
+        Returns:
+            List of generated texts (same order as prompts).
+        """
+        if not prompts:
+            return []
+
+        steering = self._create_steering_mode(vector)
+        return self._backend.generate_with_steering_batch(
+            prompts,
+            steering_mode=steering,
+            layers=layer,
+            strength=strength,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+        )
+
+    def _generate_baseline_batch(
+        self,
+        prompts: List[str],
+        max_new_tokens: int = 100,
+    ) -> List[str]:
+        """Generate text for multiple prompts WITHOUT steering (BATCHED).
+
+        Args:
+            prompts: List of input prompts.
+            max_new_tokens: Maximum tokens to generate.
+
+        Returns:
+            List of generated texts.
+        """
+        if not prompts:
+            return []
+
+        return self._backend.generate_batch(
+            prompts,
             max_new_tokens=max_new_tokens,
             do_sample=True,
         )
@@ -311,24 +370,12 @@ class VectorEvaluator:
         Returns:
             Complete evaluation result.
         """
-        semaphore = asyncio.Semaphore(max_concurrent)
-
         # Run all evaluation dimensions in parallel
-        behavior_task = self._evaluate_behavior(
-            vector, layer, behavior, semaphore
-        )
-        specificity_task = self._evaluate_specificity(
-            vector, layer, behavior, semaphore
-        )
-        coherence_task = self._evaluate_coherence(
-            vector, layer, behavior, semaphore
-        )
-        capability_task = self._evaluate_capability(
-            vector, layer, semaphore
-        )
-        generalization_task = self._evaluate_generalization(
-            vector, layer, behavior, semaphore
-        )
+        behavior_task = self._evaluate_behavior(vector, layer, behavior)
+        specificity_task = self._evaluate_specificity(vector, layer, behavior)
+        coherence_task = self._evaluate_coherence(vector, layer, behavior)
+        capability_task = self._evaluate_capability(vector, layer)
+        generalization_task = self._evaluate_generalization(vector, layer, behavior)
 
         results = await asyncio.gather(
             behavior_task,
@@ -370,12 +417,16 @@ class VectorEvaluator:
         vector: torch.Tensor,
         layer: int,
         behavior: ExpandedBehavior,
-        semaphore: asyncio.Semaphore,
     ) -> Tuple[DimensionScore, Dict[float, float]]:
-        """Evaluate behavior induction strength using batched judging.
+        """Evaluate behavior induction strength using batched generation and judging.
 
-        Batching strategy: All outputs for the same prompt are judged together.
-        This reduces LLM calls from 600 to 50 (for 50 prompts).
+        BATCHED GENERATION: All prompts for each strength level are processed
+        in a single GPU batch, maximizing throughput. This is MUCH faster than
+        individual asyncio.to_thread calls.
+
+        Batching reduces:
+        - 600 individual generate() calls → 4 batched calls (one per strength)
+        - 600 individual LLM judge calls → 50 batched calls (one per prompt)
         """
         dimension_start = time.time()
         prompts = self._generate_behavior_prompts(behavior)
@@ -395,60 +446,58 @@ class VectorEvaluator:
                 num_generations=total_generations,
             )
 
-        # Phase 1: Generate all outputs (parallel, uses local model)
-        outputs_by_prompt: Dict[str, List[OutputToJudge]] = {}
+        # Phase 1: BATCHED generation - group by strength level
+        # Each strength level gets ONE batched call that processes ALL prompts
+        all_outputs: List[OutputToJudge] = []
+        outputs_by_prompt: Dict[str, List[OutputToJudge]] = {p: [] for p in prompts}
         generation_counter = 0
 
-        async def generate_outputs_for_prompt(prompt: str) -> List[OutputToJudge]:
-            nonlocal generation_counter
-            outputs = []
-            for strength in self._config.strength_levels:
-                for gen_idx in range(self._config.behavior_generations_per_prompt):
-                    async with semaphore:
-                        output = await asyncio.to_thread(
-                            self._generate_steered,
-                            prompt,
-                            vector,
-                            layer,
-                            strength,
-                        )
-                        outputs.append(OutputToJudge(
-                            output=output,
-                            strength=strength,
-                            generation_index=gen_idx,
-                            prompt=prompt,
-                        ))
-                        generation_counter += 1
-                        self._generation_count += 1
+        for strength in self._config.strength_levels:
+            # For each generation index, batch ALL prompts together
+            for gen_idx in range(num_gens):
+                # Emit progress before batch
+                if self._current_eval_id:
+                    self._emit(
+                        "emit_evaluation_progress",
+                        evaluation_id=self._current_eval_id,
+                        phase="generating",
+                        completed=generation_counter,
+                        total=total_generations,
+                        current_dimension="behavior",
+                    )
 
-                        # Emit generation event (batched - every 10 to reduce overhead)
-                        if self._current_eval_id and generation_counter % 10 == 0:
-                            self._emit(
-                                "emit_evaluation_progress",
-                                evaluation_id=self._current_eval_id,
-                                phase="generating",
-                                completed=generation_counter,
-                                total=total_generations,
-                                current_dimension="behavior",
-                            )
-            return outputs
+                # SINGLE batched call for ALL prompts at this strength/gen_idx
+                # This runs on GPU in parallel - much faster than individual calls
+                batch_outputs = await asyncio.to_thread(
+                    self._generate_steered_batch,
+                    prompts,
+                    vector,
+                    layer,
+                    strength,
+                    100,  # max_new_tokens
+                )
 
-        # Generate all outputs in parallel
-        generation_tasks = [generate_outputs_for_prompt(p) for p in prompts]
-        all_prompt_outputs = await asyncio.gather(*generation_tasks)
+                # Organize outputs
+                for prompt, output in zip(prompts, batch_outputs):
+                    output_obj = OutputToJudge(
+                        output=output,
+                        strength=strength,
+                        generation_index=gen_idx,
+                        prompt=prompt,
+                    )
+                    all_outputs.append(output_obj)
+                    outputs_by_prompt[prompt].append(output_obj)
 
-        for prompt, outputs in zip(prompts, all_prompt_outputs):
-            outputs_by_prompt[prompt] = outputs
-
-        # Phase 2: Batch judge all outputs (one LLM call per prompt)
-        all_outputs = []
-        for prompt in prompts:
-            all_outputs.extend(outputs_by_prompt[prompt])
+                generation_counter += len(prompts)
+                self._generation_count += len(prompts)
 
         logger.info(
-            f"Behavior eval: {len(prompts)} prompts, {len(all_outputs)} outputs, "
-            f"batching to {len(prompts)} judge calls"
+            f"Behavior eval: {len(prompts)} prompts × {num_strengths} strengths × "
+            f"{num_gens} gens = {len(all_outputs)} outputs (batched into "
+            f"{num_strengths * num_gens} GPU calls)"
         )
+
+        # Phase 2: Batch judge all outputs (one LLM call per prompt)
 
         # Emit progress - switching to judging phase
         if self._current_eval_id:
@@ -537,12 +586,11 @@ class VectorEvaluator:
         vector: torch.Tensor,
         layer: int,
         behavior: ExpandedBehavior,
-        semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
         """Evaluate specificity (avoiding side effects).
 
-        NOT batched: Each prompt-output pair needs unique context to determine
-        if the behavior inappropriately appears on unrelated prompts.
+        BATCHED GENERATION: All neutral prompts are generated in one GPU batch.
+        Judging is still per-prompt (each needs unique context).
         """
         dimension_start = time.time()
         prompts = self._generate_neutral_prompts()
@@ -555,52 +603,59 @@ class VectorEvaluator:
                 evaluation_id=self._current_eval_id,
                 dimension="specificity",
                 num_prompts=len(prompts),
-                num_generations=len(prompts),  # 1 generation per prompt
+                num_generations=len(prompts),
             )
 
-        generation_counter = 0
-        judge_counter = 0
+        # Phase 1: BATCHED generation - one call for ALL prompts
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="generating",
+                completed=0,
+                total=len(prompts),
+                current_dimension="specificity",
+            )
 
-        async def evaluate_one(prompt: str) -> float:
-            nonlocal generation_counter, judge_counter
-            async with semaphore:
-                # Generate steered output
-                steered = await asyncio.to_thread(
-                    self._generate_steered,
-                    prompt,
-                    vector,
-                    layer,
-                    1.0,
-                )
-                generation_counter += 1
-                self._generation_count += 1
+        # SINGLE batched call for all neutral prompts
+        steered_outputs = await asyncio.to_thread(
+            self._generate_steered_batch,
+            prompts,
+            vector,
+            layer,
+            1.0,  # strength
+            100,  # max_new_tokens
+        )
+        self._generation_count += len(prompts)
 
-                # Emit progress
-                if self._current_eval_id and generation_counter % 5 == 0:
-                    self._emit(
-                        "emit_evaluation_progress",
-                        evaluation_id=self._current_eval_id,
-                        phase="generating",
-                        completed=generation_counter,
-                        total=len(prompts),
-                        current_dimension="specificity",
-                    )
+        logger.info(
+            f"Specificity eval: {len(prompts)} prompts generated in 1 batch call"
+        )
 
-                # Judge specificity (individual call)
-                judge_start = time.time()
-                result = await self._specificity_judge.judge_specificity(
-                    prompt, steered, behavior.name
-                )
-                judge_counter += 1
-                self._judge_call_count += 1
+        # Phase 2: Judge each output (requires individual context)
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="judging",
+                completed=0,
+                total=len(prompts),
+                current_dimension="specificity",
+            )
 
-                return result.score
+        async def judge_one(prompt: str, output: str) -> float:
+            result = await self._specificity_judge.judge_specificity(
+                prompt, output, behavior.name
+            )
+            self._judge_call_count += 1
+            return result.score
 
-        tasks = [evaluate_one(p) for p in prompts]
+        # Run all judge calls concurrently (they're LLM API calls, not GPU)
+        tasks = [judge_one(p, o) for p, o in zip(prompts, steered_outputs)]
         scores = await asyncio.gather(*tasks)
 
         logger.info(
-            f"Specificity eval: {len(prompts)} prompts, {len(prompts)} judge calls (no batching)"
+            f"Specificity eval: {len(prompts)} judge calls completed"
         )
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
@@ -629,12 +684,11 @@ class VectorEvaluator:
         vector: torch.Tensor,
         layer: int,
         behavior: ExpandedBehavior,
-        semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
-        """Evaluate output coherence using batched judging.
+        """Evaluate output coherence using batched generation and judging.
 
-        Batching strategy: All outputs for the same prompt are judged together.
-        This reduces LLM calls from 120 to 30 (for 30 prompts).
+        BATCHED GENERATION: All prompts for each strength level are processed
+        in a single GPU batch, maximizing throughput.
         """
         dimension_start = time.time()
         prompts = self._generate_coherence_prompts()
@@ -653,55 +707,47 @@ class VectorEvaluator:
                 num_generations=total_generations,
             )
 
+        # Phase 1: BATCHED generation - group by strength level
+        all_outputs: List[OutputToJudge] = []
         generation_counter = 0
 
-        # Phase 1: Generate all outputs (parallel, uses local model)
-        async def generate_outputs_for_prompt(prompt: str) -> List[OutputToJudge]:
-            nonlocal generation_counter
-            outputs = []
-            for strength in self._config.strength_levels:
-                async with semaphore:
-                    output = await asyncio.to_thread(
-                        self._generate_steered,
-                        prompt,
-                        vector,
-                        layer,
-                        strength,
-                        200,  # Longer output for coherence check
-                    )
-                    outputs.append(OutputToJudge(
-                        output=output,
-                        strength=strength,
-                        generation_index=0,
-                        prompt=prompt,
-                    ))
-                    generation_counter += 1
-                    self._generation_count += 1
+        for strength in self._config.strength_levels:
+            # Emit progress before batch
+            if self._current_eval_id:
+                self._emit(
+                    "emit_evaluation_progress",
+                    evaluation_id=self._current_eval_id,
+                    phase="generating",
+                    completed=generation_counter,
+                    total=total_generations,
+                    current_dimension="coherence",
+                )
 
-                    # Emit progress every 10 generations
-                    if self._current_eval_id and generation_counter % 10 == 0:
-                        self._emit(
-                            "emit_evaluation_progress",
-                            evaluation_id=self._current_eval_id,
-                            phase="generating",
-                            completed=generation_counter,
-                            total=total_generations,
-                            current_dimension="coherence",
-                        )
-            return outputs
+            # SINGLE batched call for ALL prompts at this strength
+            batch_outputs = await asyncio.to_thread(
+                self._generate_steered_batch,
+                prompts,
+                vector,
+                layer,
+                strength,
+                200,  # Longer output for coherence check
+            )
 
-        # Generate all outputs in parallel
-        generation_tasks = [generate_outputs_for_prompt(p) for p in prompts]
-        all_prompt_outputs = await asyncio.gather(*generation_tasks)
+            # Organize outputs
+            for prompt, output in zip(prompts, batch_outputs):
+                all_outputs.append(OutputToJudge(
+                    output=output,
+                    strength=strength,
+                    generation_index=0,
+                    prompt=prompt,
+                ))
 
-        # Flatten all outputs
-        all_outputs = []
-        for outputs in all_prompt_outputs:
-            all_outputs.extend(outputs)
+            generation_counter += len(prompts)
+            self._generation_count += len(prompts)
 
         logger.info(
-            f"Coherence eval: {len(prompts)} prompts, {len(all_outputs)} outputs, "
-            f"batching to {len(prompts)} judge calls"
+            f"Coherence eval: {len(prompts)} prompts × {num_strengths} strengths = "
+            f"{len(all_outputs)} outputs (batched into {num_strengths} GPU calls)"
         )
 
         # Phase 2: Batch judge all outputs (one LLM call per prompt)
@@ -749,14 +795,15 @@ class VectorEvaluator:
         self,
         vector: torch.Tensor,
         layer: int,
-        semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
-        """Evaluate capability preservation."""
+        """Evaluate capability preservation using batched generation.
+
+        BATCHED GENERATION: All baseline and steered outputs are generated
+        in just 2 GPU batch calls (one for baseline, one for steered).
+        """
         dimension_start = time.time()
         prompts = self._generate_capability_prompts()
         prompts_to_eval = prompts[: self._config.capability_prompts]
-        baseline_correct = 0
-        steered_correct = 0
 
         # Emit dimension started (2 generations per prompt: baseline + steered)
         if self._current_eval_id:
@@ -768,55 +815,62 @@ class VectorEvaluator:
                 num_generations=len(prompts_to_eval) * 2,
             )
 
-        generation_counter = 0
+        # Extract just the prompt texts
+        prompt_texts = [p["prompt"] for p in prompts_to_eval]
+        expected_answers = [p["expected"] for p in prompts_to_eval]
 
-        async def evaluate_one(prompt: str, expected: str) -> Tuple[bool, bool]:
-            nonlocal generation_counter
-            async with semaphore:
-                baseline = await asyncio.to_thread(
-                    self._backend.generate,
-                    prompt,
-                    50,
-                )
-                generation_counter += 1
-                self._generation_count += 1
+        # Phase 1: BATCHED baseline generation (no steering)
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="generating",
+                completed=0,
+                total=len(prompts_to_eval) * 2,
+                current_dimension="capability",
+            )
 
-                steered = await asyncio.to_thread(
-                    self._generate_steered,
-                    prompt,
-                    vector,
-                    layer,
-                    1.0,
-                    50,
-                )
-                generation_counter += 1
-                self._generation_count += 1
+        baseline_outputs = await asyncio.to_thread(
+            self._generate_baseline_batch,
+            prompt_texts,
+            50,  # max_new_tokens
+        )
+        self._generation_count += len(prompt_texts)
 
-                # Emit progress every 10 generations
-                if self._current_eval_id and generation_counter % 10 == 0:
-                    self._emit(
-                        "emit_evaluation_progress",
-                        evaluation_id=self._current_eval_id,
-                        phase="generating",
-                        completed=generation_counter,
-                        total=len(prompts_to_eval) * 2,
-                        current_dimension="capability",
-                    )
+        # Phase 2: BATCHED steered generation
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="generating",
+                completed=len(prompts_to_eval),
+                total=len(prompts_to_eval) * 2,
+                current_dimension="capability",
+            )
 
-                baseline_ok = expected.lower() in baseline.lower()
-                steered_ok = expected.lower() in steered.lower()
-                return baseline_ok, steered_ok
+        steered_outputs = await asyncio.to_thread(
+            self._generate_steered_batch,
+            prompt_texts,
+            vector,
+            layer,
+            1.0,  # strength
+            50,  # max_new_tokens
+        )
+        self._generation_count += len(prompt_texts)
 
-        tasks = [
-            evaluate_one(p["prompt"], p["expected"])
-            for p in prompts_to_eval
-        ]
-        results = await asyncio.gather(*tasks)
+        logger.info(
+            f"Capability eval: {len(prompts_to_eval)} prompts × 2 = "
+            f"{len(prompts_to_eval) * 2} outputs (batched into 2 GPU calls)"
+        )
 
-        for baseline_ok, steered_ok in results:
-            if baseline_ok:
+        # Phase 3: Compare results
+        baseline_correct = 0
+        steered_correct = 0
+
+        for baseline, steered, expected in zip(baseline_outputs, steered_outputs, expected_answers):
+            if expected.lower() in baseline.lower():
                 baseline_correct += 1
-            if steered_ok:
+            if expected.lower() in steered.lower():
                 steered_correct += 1
 
         # Score based on preservation ratio
@@ -838,7 +892,7 @@ class VectorEvaluator:
                 details={
                     "baseline_correct": baseline_correct,
                     "steered_correct": steered_correct,
-                    "total": len(results),
+                    "total": len(prompts_to_eval),
                 },
                 duration_seconds=dimension_duration,
             )
@@ -849,7 +903,7 @@ class VectorEvaluator:
             details={
                 "baseline_correct": baseline_correct,
                 "steered_correct": steered_correct,
-                "total": len(results),
+                "total": len(prompts_to_eval),
             },
         )
 
@@ -858,9 +912,12 @@ class VectorEvaluator:
         vector: torch.Tensor,
         layer: int,
         behavior: ExpandedBehavior,
-        semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
-        """Evaluate generalization to out-of-distribution prompts."""
+        """Evaluate generalization to out-of-distribution prompts.
+
+        BATCHED GENERATION: All OOD prompts are generated in one GPU batch.
+        Judging is still per-output (each needs individual evaluation).
+        """
         dimension_start = time.time()
         prompts = self._generate_ood_prompts(behavior)
         prompts_to_eval = prompts[: self._config.generalization_prompts]
@@ -875,39 +932,50 @@ class VectorEvaluator:
                 num_generations=len(prompts_to_eval),
             )
 
-        generation_counter = 0
-        judge_counter = 0
+        # Phase 1: BATCHED generation - one call for ALL OOD prompts
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="generating",
+                completed=0,
+                total=len(prompts_to_eval),
+                current_dimension="generalization",
+            )
 
-        async def evaluate_one(prompt: str) -> float:
-            nonlocal generation_counter, judge_counter
-            async with semaphore:
-                output = await asyncio.to_thread(
-                    self._generate_steered,
-                    prompt,
-                    vector,
-                    layer,
-                    1.0,
-                )
-                generation_counter += 1
-                self._generation_count += 1
+        # SINGLE batched call for all OOD prompts
+        outputs = await asyncio.to_thread(
+            self._generate_steered_batch,
+            prompts_to_eval,
+            vector,
+            layer,
+            1.0,  # strength
+            100,  # max_new_tokens
+        )
+        self._generation_count += len(prompts_to_eval)
 
-                # Emit progress every 5 generations
-                if self._current_eval_id and generation_counter % 5 == 0:
-                    self._emit(
-                        "emit_evaluation_progress",
-                        evaluation_id=self._current_eval_id,
-                        phase="generating",
-                        completed=generation_counter,
-                        total=len(prompts_to_eval),
-                        current_dimension="generalization",
-                    )
+        logger.info(
+            f"Generalization eval: {len(prompts_to_eval)} OOD prompts generated in 1 batch call"
+        )
 
-                score = await self._judge_behavior(output, behavior)
-                judge_counter += 1
-                self._judge_call_count += 1
-                return score
+        # Phase 2: Judge each output (requires individual context)
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_progress",
+                evaluation_id=self._current_eval_id,
+                phase="judging",
+                completed=0,
+                total=len(prompts_to_eval),
+                current_dimension="generalization",
+            )
 
-        tasks = [evaluate_one(p) for p in prompts_to_eval]
+        async def judge_one(output: str) -> float:
+            score = await self._judge_behavior(output, behavior)
+            self._judge_call_count += 1
+            return score
+
+        # Run all judge calls concurrently (they're LLM API calls, not GPU)
+        tasks = [judge_one(o) for o in outputs]
         scores = await asyncio.gather(*tasks)
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
