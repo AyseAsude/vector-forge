@@ -164,32 +164,24 @@ class ChatService:
         self._vector = await loop.run_in_executor(None, load)
         return self._vector
 
-    def _format_messages(self, messages: List[Dict[str, str]]) -> str:
-        """Format messages for model input.
+    def _format_messages(self, backend: Any, messages: List[Dict[str, str]]) -> str:
+        """Format messages using the model's native chat template.
+
+        Uses tokenizer.apply_chat_template() which is the HuggingFace standard
+        for instruction-tuned models (Qwen, Llama, Mistral, etc.).
 
         Args:
+            backend: HuggingFaceBackend instance with tokenizer.
             messages: List of {role, content} dicts.
 
         Returns:
-            Formatted prompt string.
+            Formatted prompt string with proper special tokens.
         """
-        # Simple chat template - most models support this format
-        parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if role == "system":
-                parts.append(f"System: {content}")
-            elif role == "user":
-                parts.append(f"User: {content}")
-            elif role == "assistant":
-                parts.append(f"Assistant: {content}")
-
-        # Add assistant prefix for generation
-        parts.append("Assistant:")
-
-        return "\n\n".join(parts)
+        return backend.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     async def generate_baseline(
         self,
@@ -199,8 +191,10 @@ class ChatService:
     ) -> str:
         """Generate baseline (unsteered) response.
 
+        Uses the model's native chat template for proper formatting.
+
         Args:
-            messages: Conversation history.
+            messages: Conversation history as list of {role, content} dicts.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
 
@@ -208,27 +202,19 @@ class ChatService:
             Generated response text.
         """
         backend = await self._ensure_backend()
-
-        prompt = self._format_messages(messages)
-
         loop = asyncio.get_event_loop()
 
         def generate():
-            # Generate without steering
-            output = backend.generate(
-                prompt=prompt,
+            prompt = self._format_messages(backend, messages)
+            return backend.generate(
+                prompt,
                 max_new_tokens=max_tokens,
                 temperature=temperature,
                 do_sample=temperature > 0,
             )
-            return output
 
         try:
-            result = await loop.run_in_executor(None, generate)
-            # Extract just the new generated text
-            if result.startswith(prompt):
-                result = result[len(prompt) :].strip()
-            return result
+            return await loop.run_in_executor(None, generate)
         except Exception as e:
             logger.error(f"Baseline generation failed: {e}")
             return f"Generation error: {e}"
@@ -244,8 +230,10 @@ class ChatService:
     ) -> str:
         """Generate steered response.
 
+        Uses the model's native chat template for proper formatting.
+
         Args:
-            messages: Conversation history.
+            messages: Conversation history as list of {role, content} dicts.
             layer: Layer to apply steering (None = use best from config).
             strength: Steering strength multiplier.
             temperature: Sampling temperature.
@@ -262,25 +250,15 @@ class ChatService:
 
         # Get layer from config if not specified
         if layer is None:
-            # Try to get best layer from config or metadata
             layer = self._config.get("best_layer", 16)
-
-        prompt = self._format_messages(messages)
 
         loop = asyncio.get_event_loop()
 
         def generate():
-            # Create steering mode
-            steering = VectorSteering()
-            steering.init_parameters(
-                hidden_dim=vector.shape[0],
-                device=vector.device,
-                dtype=vector.dtype,
-            )
-            steering.set_vector(vector)
+            prompt = self._format_messages(backend, messages)
+            steering = VectorSteering(vector=vector.detach())
 
-            # Generate with steering
-            output = backend.generate_with_steering(
+            return backend.generate_with_steering(
                 prompt,
                 steering_mode=steering,
                 layers=layer,
@@ -289,14 +267,9 @@ class ChatService:
                 temperature=temperature,
                 do_sample=temperature > 0,
             )
-            return output
 
         try:
-            result = await loop.run_in_executor(None, generate)
-            # Extract just the new generated text
-            if result.startswith(prompt):
-                result = result[len(prompt) :].strip()
-            return result
+            return await loop.run_in_executor(None, generate)
         except Exception as e:
             logger.error(f"Steered generation failed: {e}")
             return f"Generation error: {e}"

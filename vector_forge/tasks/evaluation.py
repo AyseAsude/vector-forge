@@ -260,6 +260,36 @@ class VectorEvaluator:
         # Use detached vector - no gradients needed for inference
         return VectorSteering(vector=vector.detach())
 
+    def _format_prompt(self, prompt: str) -> str:
+        """Format a prompt using the model's native chat template.
+
+        Uses tokenizer.apply_chat_template() which is the HuggingFace standard
+        for instruction-tuned models (Qwen, Llama, Mistral, etc.).
+
+        Args:
+            prompt: Raw prompt string.
+
+        Returns:
+            Formatted prompt with proper special tokens.
+        """
+        messages = [{"role": "user", "content": prompt}]
+        return self._backend.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+    def _format_prompts_batch(self, prompts: List[str]) -> List[str]:
+        """Format multiple prompts using the model's native chat template.
+
+        Args:
+            prompts: List of raw prompt strings.
+
+        Returns:
+            List of formatted prompts with proper special tokens.
+        """
+        return [self._format_prompt(p) for p in prompts]
+
     def _generate_steered(
         self,
         prompt: str,
@@ -269,6 +299,8 @@ class VectorEvaluator:
         max_new_tokens: int = 100,
     ) -> str:
         """Generate text with steering vector applied (single prompt).
+
+        Uses the model's native chat template for proper formatting.
 
         Note: For multiple prompts, use _generate_steered_batch for much
         better performance through GPU batching.
@@ -284,8 +316,9 @@ class VectorEvaluator:
             Generated text.
         """
         steering = self._create_steering_mode(vector)
+        formatted_prompt = self._format_prompt(prompt)
         return self._backend.generate_with_steering(
-            prompt,
+            formatted_prompt,
             steering_mode=steering,
             layers=layer,
             strength=strength,
@@ -304,6 +337,8 @@ class VectorEvaluator:
     ) -> List[str]:
         """Generate text for multiple prompts with steering (BATCHED).
 
+        Uses the model's native chat template for proper formatting.
+
         This is the HIGH-PERFORMANCE method - processes all prompts in
         a single GPU batch, maximizing throughput and parallelism.
 
@@ -321,8 +356,9 @@ class VectorEvaluator:
             return []
 
         steering = self._create_steering_mode(vector)
+        formatted_prompts = self._format_prompts_batch(prompts)
         return self._backend.generate_with_steering_batch(
-            prompts,
+            formatted_prompts,
             steering_mode=steering,
             layers=layer,
             strength=strength,
@@ -338,6 +374,8 @@ class VectorEvaluator:
     ) -> List[str]:
         """Generate text for multiple prompts WITHOUT steering (BATCHED).
 
+        Uses the model's native chat template for proper formatting.
+
         Args:
             prompts: List of input prompts.
             max_new_tokens: Maximum tokens to generate.
@@ -348,8 +386,9 @@ class VectorEvaluator:
         if not prompts:
             return []
 
+        formatted_prompts = self._format_prompts_batch(prompts)
         return self._backend.generate_batch(
-            prompts,
+            formatted_prompts,
             max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=self._config.generation_temperature,
