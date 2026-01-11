@@ -29,6 +29,11 @@ from vector_forge.ui.theme import ICONS
 from vector_forge.ui.widgets.tmux_bar import TmuxBar
 
 
+def _escape_markup(text: str) -> str:
+    """Escape Rich markup characters in text to prevent interpretation."""
+    return text.replace("[", r"\[").replace("]", r"\]")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Message Detail Modal - Shows full message content
 # ─────────────────────────────────────────────────────────────────────────────
@@ -135,7 +140,7 @@ class MessageDetailModal(ModalScreen):
                 # Message content
                 if msg.content:
                     yield Static("CONTENT", classes="section-header")
-                    yield Static(msg.content, classes="section-content")
+                    yield Static(_escape_markup(msg.content), classes="section-content")
 
                 # Tool calls
                 if msg.tool_calls:
@@ -148,12 +153,12 @@ class MessageDetailModal(ModalScreen):
                             # Try to format JSON arguments
                             try:
                                 args_obj = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
-                                args_str = json.dumps(args_obj, indent=2)
+                                args_str = _escape_markup(json.dumps(args_obj, indent=2))
                             except (json.JSONDecodeError, TypeError):
-                                args_str = str(tc.arguments)
+                                args_str = _escape_markup(str(tc.arguments))
                             yield Static(args_str, classes="section-content")
                         if tc.result:
-                            yield Static(f"Result: {tc.result}", classes="section-content")
+                            yield Static(f"Result: {_escape_markup(str(tc.result))}", classes="section-content")
 
             # Footer
             with Vertical(id="modal-footer"):

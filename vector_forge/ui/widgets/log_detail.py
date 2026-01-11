@@ -39,12 +39,17 @@ class LogDetailRenderer(ABC):
         """Return text unchanged - detail view shows full content."""
         return text
 
+    def _escape_markup(self, text: str) -> str:
+        """Escape Rich markup characters in text to prevent interpretation."""
+        return text.replace("[", r"\[").replace("]", r"\]")
+
     def _format_json(self, data: Any, indent: int = 2) -> str:
-        """Format data as pretty JSON."""
+        """Format data as pretty JSON with escaped markup characters."""
         try:
-            return json.dumps(data, indent=indent, default=str, ensure_ascii=False)
+            json_str = json.dumps(data, indent=indent, default=str, ensure_ascii=False)
+            return self._escape_markup(json_str)
         except (TypeError, ValueError):
-            return str(data)
+            return self._escape_markup(str(data))
 
 
 class LLMRequestRenderer(LogDetailRenderer):
@@ -132,8 +137,8 @@ class LLMResponseRenderer(LogDetailRenderer):
                     args_obj = json.loads(args) if isinstance(args, str) else args
                     args_str = self._format_json(args_obj)
                 except (json.JSONDecodeError, TypeError):
-                    args_str = str(args)
-                tc_lines.append(f"[{name}]\n{self._truncate(args_str)}")
+                    args_str = self._escape_markup(str(args))
+                tc_lines.append(f"\\[{name}\\]\n{self._truncate(args_str)}")
             sections.append(("TOOL CALLS", "\n\n".join(tc_lines)))
 
         return sections
@@ -577,7 +582,7 @@ class DefaultRenderer(LogDetailRenderer):
         return True  # Always can render as fallback
 
     def render_sections(self, entry: LogEntry) -> List[Tuple[str, str]]:
-        sections = [("MESSAGE", entry.message)]
+        sections = [("MESSAGE", self._escape_markup(entry.message))]
 
         if entry.payload:
             sections.append(("RAW PAYLOAD", self._format_json(entry.payload)))
