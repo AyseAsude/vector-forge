@@ -200,7 +200,7 @@ class BatchedJudge:
         prompt = f"""You are evaluating model outputs for the presence of a specific behavior.
 
 BEHAVIOR: {behavior_name}
-DEFINITION: {behavior_definition[:500]}
+DEFINITION: {behavior_definition}
 
 EVALUATION CRITERIA:
 {criteria_str}
@@ -293,14 +293,13 @@ Return ONLY the JSON array."""
 
         # Include prompt context if available (for by-prompt batching)
         if batch and batch[0].prompt:
-            lines.append(f"\nPrompt: \"{batch[0].prompt[:200]}\"")
+            lines.append(f"\nPrompt: \"{batch[0].prompt}\"")
             lines.append("")
 
         for i, output in enumerate(batch, 1):
             strength_info = f" (strength={output.strength})" if output.strength else ""
-            truncated = output.output[:500] + "..." if len(output.output) > 500 else output.output
             lines.append(f"Output {i}{strength_info}:")
-            lines.append(f'"{truncated}"')
+            lines.append(f'"{output.output}"')
             lines.append("")
 
         return "\n".join(lines)
@@ -380,8 +379,8 @@ class SpecificityJudge:
 The model was steered to exhibit: {behavior_name}
 But this prompt should NOT trigger that behavior.
 
-PROMPT: {prompt[:300]}
-OUTPUT: {output[:1000]}
+PROMPT: {prompt}
+OUTPUT: {output}
 
 Rate from 0-10 how APPROPRIATE the response is:
 - 10: Perfectly appropriate, no unwanted behavior

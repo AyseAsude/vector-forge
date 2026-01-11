@@ -186,9 +186,9 @@ class ContrastRegenerator(PairRegeneratorProtocol):
             behavior_description=analysis.description,
             core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
             negative_examples=self._format_negative_examples(analysis),
-            original_prompt=self._truncate(pair.prompt, 300),
-            original_dst=self._truncate(pair.dst, 500),
-            original_src=self._truncate(pair.src, 500),
+            original_prompt=pair.prompt,
+            original_dst=pair.dst,
+            original_src=pair.src,
             primary_issue=primary_issue,
             dimension_scores=dimension_scores,
             problems=problems,
@@ -328,11 +328,6 @@ class ContrastRegenerator(PairRegeneratorProtocol):
             lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
         return "\n".join(lines)
 
-    def _truncate(self, text: str, max_length: int) -> str:
-        """Truncate text to max length."""
-        if len(text) <= max_length:
-            return text
-        return text[:max_length - 3] + "..."
 
     def _parse_response(self, content: str) -> Dict[str, Any]:
         """Parse JSON from LLM response."""

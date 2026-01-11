@@ -201,9 +201,9 @@ class LLMContrastValidator(ContrastValidatorProtocol):
             core_definition=f"Core: {analysis.core_definition}" if analysis.core_definition else "",
             negative_examples=self._format_negative_examples(analysis),
             components=self._format_components(analysis),
-            prompt=self._truncate(pair.prompt, 500),
-            dst=self._truncate(pair.dst, 800),
-            src=self._truncate(pair.src, 800),
+            prompt=pair.prompt,
+            dst=pair.dst,
+            src=pair.src,
         )
 
         try:
@@ -305,11 +305,6 @@ class LLMContrastValidator(ContrastValidatorProtocol):
             lines.append(f"- NOT {neg.similar_behavior}: {neg.why_different}")
         return "\n".join(lines)
 
-    def _truncate(self, text: str, max_length: int) -> str:
-        """Truncate text to max length."""
-        if len(text) <= max_length:
-            return text
-        return text[:max_length - 3] + "..."
 
     def _parse_response(self, content: str) -> Dict[str, Any]:
         """Parse JSON from LLM response."""
