@@ -117,6 +117,7 @@ from vector_forge.storage.emitter import (
     EventEmitterProtocol,
     generate_id,
 )
+from vector_forge.storage.log_builder import build_log_entry
 
 __all__ = [
     # Config
@@ -204,4 +205,6 @@ __all__ = [
     "NullEventEmitter",
     "EventEmitterProtocol",
     "generate_id",
+    # Log building
+    "build_log_entry",
 ]

@@ -12,6 +12,7 @@ from vector_forge.storage import (
     EventEnvelope,
     EventCategory,
     SessionReplayer,
+    build_log_entry,
 )
 from vector_forge.services.session import SessionService, SessionInfo
 from vector_forge.ui.state import (
@@ -377,7 +378,11 @@ class UIStateSynchronizer:
 
             extraction_id = self._session_to_extraction[session_id]
 
-            # Route event to appropriate handler
+            # Add log entry for all events using shared log builder
+            # This ensures real-time logs match replay logs exactly
+            self._add_event_log(session_id, event)
+
+            # Route event to appropriate handler for UI state updates
             handlers = {
                 "session.started": self._handle_session_started,
                 "session.completed": self._handle_session_completed,
@@ -407,11 +412,30 @@ class UIStateSynchronizer:
             handler = handlers.get(event.event_type)
             if handler:
                 handler(session_id, event)
-            else:
-                logger.debug(f"Unhandled event type: {event.event_type}")
 
         except Exception as e:
             logger.error(f"Error handling event {event.event_type}: {e}")
+
+    def _add_event_log(self, session_id: str, event: EventEnvelope) -> None:
+        """Add a log entry for an event using the shared log builder.
+
+        Args:
+            session_id: The session ID.
+            event: The event envelope.
+        """
+        log_entry = build_log_entry(event.event_type, event.payload, event.source)
+        if log_entry is None:
+            return  # Skip events that shouldn't be logged (e.g., llm.chunk)
+
+        source, message, level = log_entry
+        self._ui_state.add_log(
+            source=source,
+            message=message,
+            level=level,
+            extraction_id=session_id,
+            event_type=event.event_type,
+            payload=event.payload,
+        )
 
     def _handle_session_started(self, session_id: str, event: EventEnvelope) -> None:
         """Handle session.started event."""
@@ -435,13 +459,7 @@ class UIStateSynchronizer:
         self._ui_state.add_extraction(extraction)
         self._session_to_extraction[session_id] = session_id
 
-        # Log the start
-        self._ui_state.add_log(
-            source="session",
-            message=f"Started extraction: {extraction.behavior_name}",
-            level="info",
-            extraction_id=session_id,
-        )
+        # Log entry is added by _add_event_log via shared log builder
 
     def _handle_session_completed(self, session_id: str, event: EventEnvelope) -> None:
         """Handle session.completed event."""
@@ -467,16 +485,6 @@ class UIStateSynchronizer:
             extraction.evaluation.best_layer = payload["final_layer"]
 
         self._ui_state._notify()
-
-        # Log completion
-        status_text = "completed successfully" if success else "failed"
-        score_text = f" (score: {payload.get('final_score', 0):.2f})" if success else ""
-        self._ui_state.add_log(
-            source="session",
-            message=f"Extraction {status_text}{score_text}",
-            level="info" if success else "error",
-            extraction_id=session_id,
-        )
 
     def _handle_llm_request(self, session_id: str, event: EventEnvelope) -> None:
         """Handle llm.request event."""
@@ -511,15 +519,6 @@ class UIStateSynchronizer:
                     role=MessageRole.USER,
                     content=display_content,
                 )
-
-        # Log the request
-        self._ui_state.add_log(
-            source=source,
-            message=f"LLM request: {payload.get('model', 'unknown')}",
-            level="info",
-            extraction_id=session_id,
-            agent_id=agent.id,
-        )
 
         self._ui_state._notify()
 
@@ -613,14 +612,6 @@ class UIStateSynchronizer:
         payload = event.payload
         tool_name = payload.get("tool_name", "unknown")
 
-        # Log the tool call
-        self._ui_state.add_log(
-            source="tool",
-            message=f"Calling: {tool_name}",
-            level="info",
-            extraction_id=session_id,
-        )
-
         # Update phase based on tool
         if "datapoint" in tool_name.lower() or "generate" in tool_name.lower():
             extraction.phase = Phase.GENERATING_DATAPOINTS
@@ -633,21 +624,8 @@ class UIStateSynchronizer:
 
     def _handle_tool_result(self, session_id: str, event: EventEnvelope) -> None:
         """Handle tool.result event."""
-        extraction_id = self._session_to_extraction.get(session_id)
-        if not extraction_id:
-            return
-
-        payload = event.payload
-        success = payload.get("success", True)
-
-        if not success:
-            error = payload.get("error", "Unknown error")
-            self._ui_state.add_log(
-                source="tool",
-                message=f"Tool failed: {error}",
-                level="error",
-                extraction_id=session_id,
-            )
+        # Log entry is added by _add_event_log via shared log builder
+        pass
 
     def _handle_datapoint_added(self, session_id: str, event: EventEnvelope) -> None:
         """Handle datapoint.added event."""
@@ -701,13 +679,6 @@ class UIStateSynchronizer:
         extraction.phase = Phase.OPTIMIZING
         extraction.progress = max(extraction.progress, 0.5)
 
-        self._ui_state.add_log(
-            source="vector",
-            message=f"Created vector at layer {layer}",
-            level="info",
-            extraction_id=session_id,
-        )
-
         self._ui_state._notify()
 
     def _handle_vector_selected(self, session_id: str, event: EventEnvelope) -> None:
@@ -725,13 +696,6 @@ class UIStateSynchronizer:
         extraction.evaluation.best_layer = payload.get("layer")
         extraction.evaluation.best_strength = payload.get("strength", 1.0)
 
-        self._ui_state.add_log(
-            source="vector",
-            message=f"Selected: layer {payload.get('layer')} @ strength {payload.get('strength', 1.0):.1f}",
-            level="info",
-            extraction_id=session_id,
-        )
-
         self._ui_state._notify()
 
     def _handle_evaluation_started(self, session_id: str, event: EventEnvelope) -> None:
@@ -746,13 +710,6 @@ class UIStateSynchronizer:
 
         extraction.phase = Phase.EVALUATING
         extraction.progress = max(extraction.progress, 0.6)
-
-        self._ui_state.add_log(
-            source="evaluation",
-            message="Evaluation started",
-            level="info",
-            extraction_id=session_id,
-        )
 
         self._ui_state._notify()
 
@@ -778,13 +735,6 @@ class UIStateSynchronizer:
 
         extraction.phase = Phase.JUDGE_REVIEW
         extraction.progress = max(extraction.progress, 0.9)
-
-        self._ui_state.add_log(
-            source="evaluation",
-            message=f"Evaluation complete: {extraction.evaluation.overall:.2f}",
-            level="info",
-            extraction_id=session_id,
-        )
 
         self._ui_state._notify()
 
@@ -860,13 +810,6 @@ class UIStateSynchronizer:
         extraction.phase = Phase.OPTIMIZING
         self._ui_state._notify()
 
-        self._ui_state.add_log(
-            source=f"sample_{sample_idx}",
-            message=f"Sample {sample_idx}: Started optimization (layer {layer})",
-            level="info",
-            extraction_id=session_id,
-        )
-
     def _handle_optimization_progress(self, session_id: str, event: EventEnvelope) -> None:
         """Handle optimization.progress event - updates sample agent."""
         extraction_id = self._session_to_extraction.get(session_id)
@@ -926,14 +869,6 @@ class UIStateSynchronizer:
 
         self._ui_state._notify()
 
-        status_text = "completed" if success else "failed"
-        self._ui_state.add_log(
-            source=f"sample_{sample_idx}",
-            message=f"Sample {sample_idx}: {status_text} (loss={final_loss:.4f})",
-            level="info" if success else "error",
-            extraction_id=session_id,
-        )
-
     def _handle_contrast_pipeline_started(self, session_id: str, event: EventEnvelope) -> None:
         """Handle contrast.pipeline_started event."""
         extraction_id = self._session_to_extraction.get(session_id)
@@ -949,13 +884,6 @@ class UIStateSynchronizer:
 
         extraction.phase = Phase.GENERATING_DATAPOINTS
         extraction.max_outer_iterations = num_samples
-
-        self._ui_state.add_log(
-            source="contrast",
-            message=f"Starting contrast generation for {num_samples} samples",
-            level="info",
-            extraction_id=session_id,
-        )
 
         self._ui_state._notify()
 
