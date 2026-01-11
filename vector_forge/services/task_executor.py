@@ -25,6 +25,7 @@ from vector_forge.services.session import SessionService
 from vector_forge.tasks.config import TaskConfig
 from vector_forge.tasks.task import ExtractionTask, TaskResult
 from vector_forge.tasks.runner import TaskRunner, RunnerProgress
+from vector_forge.tasks.elimination_runner import EliminationRunner
 from vector_forge.contrast.protocols import SampleDataset
 
 logger = logging.getLogger(__name__)
@@ -285,8 +286,28 @@ class TaskExecutor:
         runner.on_progress(on_runner_progress)
 
         try:
-            # Run the task with sample datasets
-            result = await runner.run(task, sample_datasets)
+            # Check if tournament mode is enabled
+            if config.tournament.enabled:
+                # Use EliminationRunner for tournament-based extraction with lightweight eval
+                logger.info(
+                    f"Tournament mode enabled: {config.tournament.elimination_rounds} rounds, "
+                    f"{config.tournament.final_survivors} survivors"
+                )
+                elimination_runner = EliminationRunner(
+                    task_runner=runner,
+                    config=config,
+                    event_emitter=event_emitter,
+                )
+                tournament_result = await elimination_runner.run(task, sample_datasets)
+                # Extract TaskResult from TournamentResult
+                result = tournament_result.final_result
+                logger.info(
+                    f"Tournament complete: {tournament_result.num_rounds} rounds, "
+                    f"{tournament_result.inference_savings:.1%} inference savings"
+                )
+            else:
+                # Run the task with sample datasets (standard mode)
+                result = await runner.run(task, sample_datasets)
 
             # Emit vector created event
             if result.final_vector is not None:
