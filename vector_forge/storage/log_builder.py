@@ -137,7 +137,13 @@ def build_log_entry(
             loss = payload.get('final_loss') or 0.0
             iters = payload.get('iterations') or 0
             duration = payload.get('duration_seconds') or 0.0
-            return ("optimizer", f"Sample {sample} layer {layer}: loss={loss:.6f} | {iters} iters | {duration:.1f}s", "info")
+            loss_history = payload.get('loss_history') or []
+            # Detect CAA: no loss history and single iteration
+            is_caa = not loss_history and iters == 1
+            if is_caa:
+                return ("optimizer", f"Sample {sample} layer {layer}: extracted | {duration:.1f}s", "info")
+            else:
+                return ("optimizer", f"Sample {sample} layer {layer}: loss={loss:.6f} | {iters} iters | {duration:.1f}s", "info")
         else:
             error = payload.get('error') or 'unknown'
             return ("optimizer", f"Sample {sample} layer {layer} FAILED: {error}", "error")

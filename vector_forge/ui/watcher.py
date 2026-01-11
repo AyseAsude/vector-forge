@@ -309,7 +309,11 @@ def apply_event_to_state(
         final_loss = payload.get("final_loss")
         iterations = payload.get("iterations", 0)
         duration = payload.get("duration_seconds", 0.0)
+        loss_history = payload.get("loss_history", [])
         error = payload.get("error")
+
+        # Detect CAA: no loss history and single iteration
+        is_caa = not loss_history and iterations == 1
 
         agent = _get_sample_agent(extraction, sample_idx)
         if agent:
@@ -317,11 +321,17 @@ def apply_event_to_state(
             agent.completed_at = event.timestamp.timestamp()
             agent.current_tool = None
             if success:
-                loss_str = f"{final_loss:.4f}" if final_loss is not None else "N/A"
-                agent.add_message(
-                    MessageRole.ASSISTANT,
-                    f"Optimization complete: loss={loss_str}, {iterations} iterations in {duration:.1f}s"
-                )
+                if is_caa:
+                    agent.add_message(
+                        MessageRole.ASSISTANT,
+                        f"Extraction complete in {duration:.1f}s"
+                    )
+                else:
+                    loss_str = f"{final_loss:.4f}" if final_loss is not None else "N/A"
+                    agent.add_message(
+                        MessageRole.ASSISTANT,
+                        f"Optimization complete: loss={loss_str}, {iterations} iterations in {duration:.1f}s"
+                    )
             else:
                 agent.add_message(
                     MessageRole.ASSISTANT,
