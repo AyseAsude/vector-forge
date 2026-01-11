@@ -543,10 +543,25 @@ class VectorEvaluator:
         NOT batched: Each prompt-output pair needs unique context to determine
         if the behavior inappropriately appears on unrelated prompts.
         """
+        dimension_start = time.time()
         prompts = self._generate_neutral_prompts()
         prompts = prompts[: self._config.specificity_prompts]
 
+        # Emit dimension started
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_started",
+                evaluation_id=self._current_eval_id,
+                dimension="specificity",
+                num_prompts=len(prompts),
+                num_generations=len(prompts),  # 1 generation per prompt
+            )
+
+        generation_counter = 0
+        judge_counter = 0
+
         async def evaluate_one(prompt: str) -> float:
+            nonlocal generation_counter, judge_counter
             async with semaphore:
                 # Generate steered output
                 steered = await asyncio.to_thread(
@@ -556,11 +571,28 @@ class VectorEvaluator:
                     layer,
                     1.0,
                 )
+                generation_counter += 1
+                self._generation_count += 1
+
+                # Emit progress
+                if self._current_eval_id and generation_counter % 5 == 0:
+                    self._emit(
+                        "emit_evaluation_progress",
+                        evaluation_id=self._current_eval_id,
+                        phase="generating",
+                        completed=generation_counter,
+                        total=len(prompts),
+                        current_dimension="specificity",
+                    )
 
                 # Judge specificity (individual call)
+                judge_start = time.time()
                 result = await self._specificity_judge.judge_specificity(
                     prompt, steered, behavior.name
                 )
+                judge_counter += 1
+                self._judge_call_count += 1
+
                 return result.score
 
         tasks = [evaluate_one(p) for p in prompts]
@@ -571,6 +603,19 @@ class VectorEvaluator:
         )
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
+        dimension_duration = time.time() - dimension_start
+
+        # Emit dimension completed
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_completed",
+                evaluation_id=self._current_eval_id,
+                dimension="specificity",
+                score=avg_score,
+                max_score=10.0,
+                details={"num_prompts": len(scores)},
+                duration_seconds=dimension_duration,
+            )
 
         return DimensionScore(
             dimension="specificity",
@@ -590,11 +635,28 @@ class VectorEvaluator:
         Batching strategy: All outputs for the same prompt are judged together.
         This reduces LLM calls from 120 to 30 (for 30 prompts).
         """
+        dimension_start = time.time()
         prompts = self._generate_coherence_prompts()
         prompts = prompts[: self._config.coherence_prompts]
 
+        num_strengths = len(self._config.strength_levels)
+        total_generations = len(prompts) * num_strengths
+
+        # Emit dimension started
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_started",
+                evaluation_id=self._current_eval_id,
+                dimension="coherence",
+                num_prompts=len(prompts),
+                num_generations=total_generations,
+            )
+
+        generation_counter = 0
+
         # Phase 1: Generate all outputs (parallel, uses local model)
         async def generate_outputs_for_prompt(prompt: str) -> List[OutputToJudge]:
+            nonlocal generation_counter
             outputs = []
             for strength in self._config.strength_levels:
                 async with semaphore:
@@ -612,6 +674,19 @@ class VectorEvaluator:
                         generation_index=0,
                         prompt=prompt,
                     ))
+                    generation_counter += 1
+                    self._generation_count += 1
+
+                    # Emit progress every 10 generations
+                    if self._current_eval_id and generation_counter % 10 == 0:
+                        self._emit(
+                            "emit_evaluation_progress",
+                            evaluation_id=self._current_eval_id,
+                            phase="generating",
+                            completed=generation_counter,
+                            total=total_generations,
+                            current_dimension="coherence",
+                        )
             return outputs
 
         # Generate all outputs in parallel
@@ -629,11 +704,39 @@ class VectorEvaluator:
         )
 
         # Phase 2: Batch judge all outputs (one LLM call per prompt)
+        judge_start = time.time()
         results = await self._coherence_judge.judge_coherence_batch(all_outputs)
+        judge_latency = (time.time() - judge_start) * 1000
+        self._judge_call_count += len(prompts)
+
+        # Emit judge call event
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_judge_call",
+                evaluation_id=self._current_eval_id,
+                dimension="coherence",
+                prompt=f"batch:{len(prompts)} prompts",
+                num_outputs=len(all_outputs),
+                scores=[r.score for r in results[:20]],
+                latency_ms=judge_latency,
+            )
 
         # Compute average score
         scores = [r.score for r in results]
         avg_score = sum(scores) / len(scores) if scores else 0.0
+        dimension_duration = time.time() - dimension_start
+
+        # Emit dimension completed
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_completed",
+                evaluation_id=self._current_eval_id,
+                dimension="coherence",
+                score=avg_score,
+                max_score=10.0,
+                details={"num_evaluations": len(scores)},
+                duration_seconds=dimension_duration,
+            )
 
         return DimensionScore(
             dimension="coherence",
@@ -648,17 +751,35 @@ class VectorEvaluator:
         semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
         """Evaluate capability preservation."""
+        dimension_start = time.time()
         prompts = self._generate_capability_prompts()
+        prompts_to_eval = prompts[: self._config.capability_prompts]
         baseline_correct = 0
         steered_correct = 0
 
+        # Emit dimension started (2 generations per prompt: baseline + steered)
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_started",
+                evaluation_id=self._current_eval_id,
+                dimension="capability",
+                num_prompts=len(prompts_to_eval),
+                num_generations=len(prompts_to_eval) * 2,
+            )
+
+        generation_counter = 0
+
         async def evaluate_one(prompt: str, expected: str) -> Tuple[bool, bool]:
+            nonlocal generation_counter
             async with semaphore:
                 baseline = await asyncio.to_thread(
                     self._backend.generate,
                     prompt,
                     50,
                 )
+                generation_counter += 1
+                self._generation_count += 1
+
                 steered = await asyncio.to_thread(
                     self._generate_steered,
                     prompt,
@@ -667,6 +788,19 @@ class VectorEvaluator:
                     1.0,
                     50,
                 )
+                generation_counter += 1
+                self._generation_count += 1
+
+                # Emit progress every 10 generations
+                if self._current_eval_id and generation_counter % 10 == 0:
+                    self._emit(
+                        "emit_evaluation_progress",
+                        evaluation_id=self._current_eval_id,
+                        phase="generating",
+                        completed=generation_counter,
+                        total=len(prompts_to_eval) * 2,
+                        current_dimension="capability",
+                    )
 
                 baseline_ok = expected.lower() in baseline.lower()
                 steered_ok = expected.lower() in steered.lower()
@@ -674,7 +808,7 @@ class VectorEvaluator:
 
         tasks = [
             evaluate_one(p["prompt"], p["expected"])
-            for p in prompts[: self._config.capability_prompts]
+            for p in prompts_to_eval
         ]
         results = await asyncio.gather(*tasks)
 
@@ -689,6 +823,24 @@ class VectorEvaluator:
             preservation = steered_correct / baseline_correct
         else:
             preservation = 1.0 if steered_correct > 0 else 0.5
+
+        dimension_duration = time.time() - dimension_start
+
+        # Emit dimension completed
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_completed",
+                evaluation_id=self._current_eval_id,
+                dimension="capability",
+                score=preservation * 10,
+                max_score=10.0,
+                details={
+                    "baseline_correct": baseline_correct,
+                    "steered_correct": steered_correct,
+                    "total": len(results),
+                },
+                duration_seconds=dimension_duration,
+            )
 
         return DimensionScore(
             dimension="capability",
@@ -708,10 +860,25 @@ class VectorEvaluator:
         semaphore: asyncio.Semaphore,
     ) -> DimensionScore:
         """Evaluate generalization to out-of-distribution prompts."""
+        dimension_start = time.time()
         prompts = self._generate_ood_prompts(behavior)
-        scores = []
+        prompts_to_eval = prompts[: self._config.generalization_prompts]
+
+        # Emit dimension started
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_started",
+                evaluation_id=self._current_eval_id,
+                dimension="generalization",
+                num_prompts=len(prompts_to_eval),
+                num_generations=len(prompts_to_eval),
+            )
+
+        generation_counter = 0
+        judge_counter = 0
 
         async def evaluate_one(prompt: str) -> float:
+            nonlocal generation_counter, judge_counter
             async with semaphore:
                 output = await asyncio.to_thread(
                     self._generate_steered,
@@ -720,14 +887,42 @@ class VectorEvaluator:
                     layer,
                     1.0,
                 )
-                return await self._judge_behavior(output, behavior)
+                generation_counter += 1
+                self._generation_count += 1
 
-        tasks = [
-            evaluate_one(p) for p in prompts[: self._config.generalization_prompts]
-        ]
+                # Emit progress every 5 generations
+                if self._current_eval_id and generation_counter % 5 == 0:
+                    self._emit(
+                        "emit_evaluation_progress",
+                        evaluation_id=self._current_eval_id,
+                        phase="generating",
+                        completed=generation_counter,
+                        total=len(prompts_to_eval),
+                        current_dimension="generalization",
+                    )
+
+                score = await self._judge_behavior(output, behavior)
+                judge_counter += 1
+                self._judge_call_count += 1
+                return score
+
+        tasks = [evaluate_one(p) for p in prompts_to_eval]
         scores = await asyncio.gather(*tasks)
 
         avg_score = sum(scores) / len(scores) if scores else 0.0
+        dimension_duration = time.time() - dimension_start
+
+        # Emit dimension completed
+        if self._current_eval_id:
+            self._emit(
+                "emit_evaluation_dimension_completed",
+                evaluation_id=self._current_eval_id,
+                dimension="generalization",
+                score=avg_score,
+                max_score=10.0,
+                details={"num_prompts": len(scores)},
+                duration_seconds=dimension_duration,
+            )
 
         return DimensionScore(
             dimension="generalization",
