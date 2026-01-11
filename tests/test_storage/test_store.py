@@ -99,7 +99,7 @@ class TestSessionStore:
 
         event1 = LLMRequestEvent(
             request_id="req1",
-            model="gpt-4o",
+            model="gpt-5.2",
             messages=[{"role": "user", "content": "Hello"}],
         )
         envelope1 = store.append_event(event1, source="test")
@@ -269,7 +269,7 @@ class TestSessionReplayer:
         store.append_event(
             LLMRequestEvent(
                 request_id="r1",
-                model="gpt-4o",
+                model="gpt-5.2",
                 messages=[{"role": "user", "content": "Q1"}],
             ),
             source="llm",
@@ -285,7 +285,7 @@ class TestSessionReplayer:
         store.append_event(
             LLMRequestEvent(
                 request_id="r2",
-                model="gpt-4o",
+                model="gpt-5.2",
                 messages=[{"role": "user", "content": "Q2"}],
             ),
             source="llm",
@@ -386,7 +386,7 @@ class TestEventSerialization:
             SessionStartedEvent(
                 behavior_name="test",
                 behavior_description="A test behavior",
-                config={"model": "gpt-4o"},
+                config={"model": "gpt-5.2"},
             ),
             source="pipeline",
         )

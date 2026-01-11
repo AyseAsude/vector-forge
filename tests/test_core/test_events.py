@@ -117,10 +117,10 @@ class TestCreateEvent:
         """Test creating event with custom source."""
         event = create_event(
             EventType.AGENT_TOOL_CALL,
-            source="extractor",
+            source="generator",
         )
 
-        assert event.source == "extractor"
+        assert event.source == "generator"
 
     def test_with_data_kwargs(self):
         """Test creating event with data as kwargs."""

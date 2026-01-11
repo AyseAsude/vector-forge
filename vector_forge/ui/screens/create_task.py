@@ -411,7 +411,7 @@ class CreateTaskScreen(Screen):
         self._hf_model_manager = HFModelConfigManager()
 
         # Load API model configs from preferences (or fall back to default)
-        self._extractor_config = self._load_model_config(ModelRole.EXTRACTOR)
+        self._generator_config = self._load_model_config(ModelRole.GENERATOR)
         self._judge_config = self._load_model_config(ModelRole.JUDGE)
         self._expander_config = self._load_model_config(ModelRole.EXPANDER)  # Used automatically in pipeline
 
@@ -443,10 +443,10 @@ class CreateTaskScreen(Screen):
                     id="model-target",
                 )
                 yield ModelCard(
-                    field_name="extractor",
-                    label="EXTRACTOR",
-                    config=self._extractor_config,
-                    id="model-extractor",
+                    field_name="generator",
+                    label="GENERATOR",
+                    config=self._generator_config,
+                    id="model-generator",
                 )
                 yield ModelCard(
                     field_name="judge",
@@ -710,7 +710,7 @@ class CreateTaskScreen(Screen):
     def on_model_card_clicked(self, event: ModelCard.Clicked) -> None:
         """Handle API model card click - open selector."""
         config_map = {
-            "extractor": self._extractor_config,
+            "generator": self._generator_config,
             "judge": self._judge_config,
             "expander": self._expander_config,
         }
@@ -731,7 +731,7 @@ class CreateTaskScreen(Screen):
         """Load model config from preferences, falling back to default.
 
         Args:
-            role: One of ModelRole constants (extractor, judge, expander).
+            role: One of ModelRole constants (generator, judge, expander).
 
         Returns:
             The saved ModelConfig or default if not found.
@@ -779,10 +779,10 @@ class CreateTaskScreen(Screen):
         if result is None:
             return
 
-        if result.field_name == "extractor":
-            self._extractor_config = result.config
-            self.query_one("#model-extractor", ModelCard).set_config(result.config)
-            self._preferences.set_selected_model(ModelRole.EXTRACTOR, result.config.id)
+        if result.field_name == "generator":
+            self._generator_config = result.config
+            self.query_one("#model-generator", ModelCard).set_config(result.config)
+            self._preferences.set_selected_model(ModelRole.GENERATOR, result.config.id)
         elif result.field_name == "judge":
             self._judge_config = result.config
             self.query_one("#model-judge", ModelCard).set_config(result.config)
@@ -1020,8 +1020,8 @@ class CreateTaskScreen(Screen):
         aggregation = agg_map.get(self._aggregation, AggregationStrategy.TOP_K_AVERAGE)
 
         # Get model names from configs (with provider prefix for litellm)
-        extractor_model = (
-            self._extractor_config.get_litellm_model() if self._extractor_config else DEFAULT_MODEL
+        generator_model = (
+            self._generator_config.get_litellm_model() if self._generator_config else DEFAULT_MODEL
         )
         judge_model = (
             self._judge_config.get_litellm_model() if self._judge_config else DEFAULT_MODEL
@@ -1145,7 +1145,7 @@ class CreateTaskScreen(Screen):
             top_k=int(self.query_one("#inp-topk", Input).value or "5"),
             evaluation=evaluation_config,
             tournament=tournament_config,
-            extractor_model=extractor_model,
+            generator_model=generator_model,
             judge_model=judge_model,
             expander_model=expander_model,
             target_model=target_model,

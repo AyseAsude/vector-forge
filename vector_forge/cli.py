@@ -116,7 +116,7 @@ async def _extract_async(
     config = config.model_copy(update={
         "target_model": model_path,
         "num_samples": num_samples,
-        "extractor_model": llm_model,
+        "generator_model": llm_model,
         "judge_model": llm_model,
         "expander_model": llm_model,
     })

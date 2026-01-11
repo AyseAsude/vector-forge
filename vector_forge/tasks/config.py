@@ -1161,9 +1161,9 @@ class TaskConfig(BaseModel):
     )
 
     # LLM settings (for agents)
-    extractor_model: str = Field(
+    generator_model: str = Field(
         default=DEFAULT_MODEL,
-        description="Model for datapoint generation",
+        description="Model for contrast pair generation",
     )
 
     judge_model: str = Field(

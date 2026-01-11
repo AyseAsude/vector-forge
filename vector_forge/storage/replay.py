@@ -504,7 +504,7 @@ class SessionReplayer:
         """Reconstruct conversation from LLM events.
 
         Args:
-            source: Optional filter by source (e.g., "extractor", "judge").
+            source: Optional filter by source (e.g., "generator", "judge").
 
         Returns:
             List of messages in conversation order.

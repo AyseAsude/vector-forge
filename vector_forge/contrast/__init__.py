@@ -13,7 +13,8 @@ Example:
     >>> from vector_forge.contrast import ContrastPipeline, ContrastPipelineConfig
     >>>
     >>> pipeline = ContrastPipeline(
-    ...     llm_client=extractor_llm,
+    ...     llm_client=expander_llm,
+    ...     generator_llm_client=generator_llm,
     ...     judge_llm_client=judge_llm,
     ...     config=ContrastPipelineConfig.default(),
     ... )

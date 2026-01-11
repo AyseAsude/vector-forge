@@ -137,7 +137,7 @@ class SessionLoader:
                 import json
                 with open(config_path) as f:
                     config = json.load(f)
-                    model = config.get("extractor_model", "")
+                    model = config.get("generator_model", "")
                     target_model = config.get("target_model", "")
         except Exception:
             pass

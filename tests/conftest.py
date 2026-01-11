@@ -68,7 +68,7 @@ def simple_behavior() -> BehaviorSpec:
 def llm_config() -> LLMConfig:
     """Create a sample LLM configuration."""
     return LLMConfig(
-        model="gpt-4o",
+        model="gpt-5.2",
         temperature=0.7,
         max_tokens=2048,
     )
@@ -90,7 +90,7 @@ def evaluation_budget_standard() -> EvaluationBudget:
 def pipeline_config(llm_config: LLMConfig) -> PipelineConfig:
     """Create a sample pipeline configuration."""
     return PipelineConfig(
-        extractor_llm=llm_config,
+        generator_llm=llm_config,
         judge_llm=llm_config,
         num_prompts=5,
         max_outer_iterations=2,

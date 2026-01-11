@@ -104,7 +104,7 @@ class AgentUIState:
 
     id: str
     name: str
-    role: str  # "extractor", "judge", "optimizer", etc.
+    role: str  # "generator", "judge", "expander", etc.
     status: AgentStatus = AgentStatus.IDLE
     messages: List[AgentMessage] = field(default_factory=list)
     current_tool: Optional[str] = None

@@ -143,7 +143,7 @@ class PipelineConfig(BaseModel):
 
     Example:
         >>> config = PipelineConfig(
-        ...     extractor_llm=LLMConfig(model="claude-opus-4-5"),
+        ...     generator_llm=LLMConfig(model="claude-opus-4-5"),
         ...     judge_llm=LLMConfig(model="claude-sonnet-4-5"),
         ...     datapoint_strategy=DatapointStrategyType.CONTRASTIVE,
         ...     num_prompts=20,
@@ -152,9 +152,9 @@ class PipelineConfig(BaseModel):
     """
 
     # LLM Configuration
-    extractor_llm: LLMConfig = Field(
+    generator_llm: LLMConfig = Field(
         default_factory=LLMConfig,
-        description="LLM for the extractor agent",
+        description="LLM for generating contrast pairs",
     )
     judge_llm: LLMConfig = Field(
         default_factory=LLMConfig,
@@ -190,7 +190,7 @@ class PipelineConfig(BaseModel):
 
     # Iteration Control
     max_outer_iterations: int = Field(default=3, ge=1, description="Max judge-driven refinements")
-    max_inner_iterations: int = Field(default=5, ge=1, description="Max extractor iterations")
+    max_inner_iterations: int = Field(default=5, ge=1, description="Max generator iterations")
     quality_threshold: float = Field(default=0.7, ge=0, le=1)
 
     # Noise Reduction

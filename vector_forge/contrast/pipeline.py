@@ -212,7 +212,8 @@ class ContrastPipeline:
 
     Example:
         >>> pipeline = ContrastPipeline(
-        ...     llm_client=extractor_llm,
+        ...     llm_client=expander_llm,
+        ...     generator_llm_client=generator_llm,
         ...     judge_llm_client=judge_llm,
         ... )
         >>> result = await pipeline.run(
@@ -226,6 +227,7 @@ class ContrastPipeline:
     def __init__(
         self,
         llm_client: BaseLLMClient,
+        generator_llm_client: Optional[BaseLLMClient] = None,
         judge_llm_client: Optional[BaseLLMClient] = None,
         config: Optional[ContrastPipelineConfig] = None,
         event_emitter: Optional["EventEmitter"] = None,
@@ -233,25 +235,29 @@ class ContrastPipeline:
         """Initialize the contrast pipeline.
 
         Args:
-            llm_client: LLM client for generation (analysis, seeds, pairs).
+            llm_client: LLM client for behavior analysis and seed generation.
+            generator_llm_client: LLM client for pair generation. If None, uses llm_client.
             judge_llm_client: LLM client for judging. If None, uses llm_client.
             config: Pipeline configuration.
             event_emitter: Optional event emitter for event sourcing.
         """
         self._llm = llm_client
+        self._generator_llm = generator_llm_client or llm_client
         self._judge_llm = judge_llm_client or llm_client
         self._config = config or ContrastPipelineConfig.default()
         self._emitter = event_emitter
 
         # Initialize components (Dependency Injection)
+        # Expander LLM: behavior analysis and seed generation
         self._analyzer = BehaviorAnalyzer(llm_client)
         self._seed_generator = SeedGenerator(llm_client)
+        # Generator LLM: contrast pair generation
         self._pair_generator = ContrastPairGenerator(
-            llm_client,
+            self._generator_llm,
             temperature=self._config.generation_temperature,
             max_concurrency=self._config.max_concurrent_generations,
         )
-        self._regenerator = ContrastRegenerator(llm_client)
+        self._regenerator = ContrastRegenerator(self._generator_llm)
         self._territory_assigner = TerritoryAssigner()
         self._pool_manager = PoolManager(self._config.to_pool_config())
 

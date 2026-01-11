@@ -29,12 +29,12 @@ class ModelRole:
     Using class with string constants instead of Enum for JSON serialization simplicity.
     """
 
-    EXTRACTOR = "extractor"
+    GENERATOR = "generator"
     JUDGE = "judge"
     EXPANDER = "expander"
     TARGET = "target"
 
-    ALL = [EXTRACTOR, JUDGE, EXPANDER, TARGET]
+    ALL = [GENERATOR, JUDGE, EXPANDER, TARGET]
 
 
 # ============================================================================
@@ -49,9 +49,9 @@ class SelectedModels(BaseModel):
     ModelConfig or HFModelConfig when loading.
     """
 
-    extractor: Optional[str] = Field(
+    generator: Optional[str] = Field(
         default=None,
-        description="ModelConfig ID for extractor model",
+        description="ModelConfig ID for generator model",
     )
     judge: Optional[str] = Field(
         default=None,
@@ -131,8 +131,8 @@ class PreferencesManager:
 
     Example:
         >>> manager = PreferencesManager()
-        >>> manager.set_selected_model(ModelRole.EXTRACTOR, "abc123")
-        >>> config_id = manager.get_selected_model(ModelRole.EXTRACTOR)
+        >>> manager.set_selected_model(ModelRole.GENERATOR, "abc123")
+        >>> config_id = manager.get_selected_model(ModelRole.GENERATOR)
 
     Thread Safety:
         The manager caches the loaded preferences in memory.
@@ -220,7 +220,7 @@ class PreferencesManager:
         """Get the last selected model config ID for a role.
 
         Args:
-            role: One of ModelRole constants (extractor, judge, expander, target)
+            role: One of ModelRole constants (generator, judge, expander, target)
 
         Returns:
             The config ID or None if not set.
@@ -244,7 +244,7 @@ class PreferencesManager:
 
     def set_all_selected_models(
         self,
-        extractor: Optional[str] = None,
+        generator: Optional[str] = None,
         judge: Optional[str] = None,
         expander: Optional[str] = None,
         target: Optional[str] = None,
@@ -256,8 +256,8 @@ class PreferencesManager:
         store = self._load()
         models = store.preferences.selected_models
 
-        if extractor is not None:
-            models.extractor = extractor
+        if generator is not None:
+            models.generator = generator
         if judge is not None:
             models.judge = judge
         if expander is not None:

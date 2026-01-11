@@ -31,7 +31,7 @@ class SessionStore:
     Example:
         >>> store = SessionStore("session_123", Path("~/.vector-forge/sessions"))
         >>> store.initialize("sycophancy", {"model": "claude-opus-4-5"})
-        >>> store.append_event(LLMRequestEvent(...), source="extractor")
+        >>> store.append_event(LLMRequestEvent(...), source="generator")
         >>> store.save_vector(vector, layer=16)
     """
 

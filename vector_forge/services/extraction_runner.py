@@ -2,7 +2,7 @@
 
 This service handles the complete flow from task creation to result:
 1. Load target HuggingFace model
-2. Create LLM clients for extractor and judge
+2. Create LLM clients for expander, generator, and judge
 3. Run ContrastPipeline to generate sample datasets
 4. Run TaskExecutor to perform extraction
 5. Handle errors and cleanup
@@ -151,13 +151,13 @@ class ExtractionRunner:
 
             store = self._session_service.get_session_store(session_id)
             raw_expander = create_client(config.expander_model)
-            raw_extractor = create_client(config.extractor_model)
+            raw_generator = create_client(config.generator_model)
             raw_judge = create_client(config.judge_model)
 
             # Wrap behavior expander client to emit LLM events (creates agent in UI)
             behavior_expander_llm = EventEmittingLLMClient(
                 raw_expander, store,
-                source="behavior_expander",
+                source="expander",
             )
 
             # Step 3: Run BehaviorExpander first (uses expander model)
@@ -184,19 +184,20 @@ class ExtractionRunner:
             ))
 
             # Wrap with event emission so ALL LLM calls are logged
-            # Use expander model for contrast pipeline (analysis, seeds, pairs)
+            # Expander: behavior analysis and seed generation
             expander_llm = EventEmittingLLMClient(
                 raw_expander, store,
-                source="contrast_extractor",
+                source="expander",
             )
+            # Generator: contrast pair generation
+            generator_llm = EventEmittingLLMClient(
+                raw_generator, store,
+                source="generator",
+            )
+            # Judge: contrast validation and evaluation judging
             judge_llm = EventEmittingLLMClient(
                 raw_judge, store,
-                source="contrast_judge",
-            )
-            # Extractor LLM for task execution (optimization phase)
-            extractor_llm = EventEmittingLLMClient(
-                raw_extractor, store,
-                source="extractor",
+                source="judge",
             )
 
             # Create event emitter for complete event sourcing
@@ -222,9 +223,12 @@ class ExtractionRunner:
             )
 
             # Step 5: Run ContrastPipeline with event emitter
-            # Uses expander_llm for BehaviorAnalyzer, seeds, and pairs
+            # Expander: behavior analysis and seed generation
+            # Generator: contrast pair generation
+            # Judge: contrast validation
             contrast_pipeline = ContrastPipeline(
                 llm_client=expander_llm,
+                generator_llm_client=generator_llm,
                 judge_llm_client=judge_llm,
                 config=contrast_config,
                 event_emitter=event_emitter,
@@ -288,12 +292,13 @@ class ExtractionRunner:
             self._task_executor.on_progress(on_runner_progress)
 
             # Step 7: Run extraction
+            # Judge LLM is used for evaluation (behavior, coherence, specificity scoring)
             result = await self._task_executor.execute(
                 session_id=session_id,
                 task=task,
                 sample_datasets=pipeline_result.sample_datasets,
                 model_backend=model_backend,
-                llm_client=extractor_llm,
+                llm_client=judge_llm,
             )
 
             self._emit_progress(ExtractionProgress(

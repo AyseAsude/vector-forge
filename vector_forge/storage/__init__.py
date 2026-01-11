@@ -17,8 +17,8 @@ Example:
     >>> store = manager.create_session("sycophancy", {"model": "claude-opus-4-5"})
     >>>
     >>> # Append events during extraction
-    >>> store.append_event(LLMRequestEvent(...), source="extractor")
-    >>> store.append_event(LLMResponseEvent(...), source="extractor")
+    >>> store.append_event(LLMRequestEvent(...), source="generator")
+    >>> store.append_event(LLMResponseEvent(...), source="generator")
     >>>
     >>> # Later, replay the session
     >>> replayer = SessionReplayer(store)
@@ -78,6 +78,7 @@ from vector_forge.storage.events import (
     OptimizationProgressEvent,
     OptimizationCompletedEvent,
     AggregationCompletedEvent,
+    RankingCompletedEvent,
 )
 from vector_forge.storage.replay import (
     SessionReplayer,
@@ -184,6 +185,7 @@ __all__ = [
     "OptimizationProgressEvent",
     "OptimizationCompletedEvent",
     "AggregationCompletedEvent",
+    "RankingCompletedEvent",
     # Model configuration (API models for agents)
     "Provider",
     "ModelConfig",

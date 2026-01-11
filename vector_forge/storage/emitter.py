@@ -30,6 +30,7 @@ from vector_forge.storage.events import (
     OptimizationProgressEvent,
     OptimizationCompletedEvent,
     AggregationCompletedEvent,
+    RankingCompletedEvent,
     # Datapoint events
     DatapointAddedEvent,
     # Evaluation events
@@ -390,6 +391,28 @@ class EventEmitter:
             source="aggregator",
         )
 
+    def emit_ranking_completed(
+        self,
+        rankings: List[Dict[str, Any]],
+        total_samples: int,
+        valid_samples: int,
+    ) -> None:
+        """Emit ranking completed event after all evaluations.
+
+        Args:
+            rankings: List of dicts with {sample_idx, rank, score, layer, vector_ref}.
+            total_samples: Total number of samples attempted.
+            valid_samples: Number of valid samples with vectors.
+        """
+        self.emit(
+            RankingCompletedEvent(
+                rankings=rankings,
+                total_samples=total_samples,
+                valid_samples=valid_samples,
+            ),
+            source="aggregator",
+        )
+
     # =========================================================================
     # Vector Persistence
     # =========================================================================
@@ -444,7 +467,7 @@ class EventEmitter:
                     "config": config or {},
                 },
             )
-            self.emit(event, source="extractor")
+            self.emit(event, source="generator")
 
             return vector_ref
 

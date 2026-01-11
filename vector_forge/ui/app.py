@@ -387,7 +387,7 @@ class VectorForgeApp(App):
                     id=session_id,
                     behavior_name=behavior_name,
                     behavior_description=description,
-                    model=message.config.extractor_model,
+                    model=message.config.generator_model,
                     target_model=message.config.target_model,
                     status=ExtractionStatus.RUNNING,
                     phase=Phase.INITIALIZING,
@@ -432,7 +432,7 @@ class VectorForgeApp(App):
             id=f"ext_{int(time.time())}",
             behavior_name=behavior_name,
             behavior_description=description,
-            model=message.config.extractor_model,
+            model=message.config.generator_model,
             target_model=message.config.target_model,
             status=ExtractionStatus.PENDING,
             phase=Phase.INITIALIZING,
@@ -483,7 +483,7 @@ def _populate_demo_state(state: UIState) -> None:
         id="ext_001",
         behavior_name="sycophancy",
         behavior_description="Agreeing with the user even when they are factually wrong",
-        model="claude-3.5-sonnet",
+        model="claude-sonnet-4-5",
         status=ExtractionStatus.RUNNING,
         phase=Phase.OPTIMIZING,
         progress=0.67,
@@ -503,7 +503,7 @@ def _populate_demo_state(state: UIState) -> None:
     )
 
     # Add sample agents with proper IDs for count_label
-    extractor = AgentUIState(
+    sample1 = AgentUIState(
         id="ext_001_sample_0",
         name="Sample 1",
         role="T=0.7 L=16 seed=42",
@@ -513,11 +513,11 @@ def _populate_demo_state(state: UIState) -> None:
         tool_calls_count=15,
         current_tool="extract_vector",
     )
-    extractor.add_message(
+    sample1.add_message(
         MessageRole.SYSTEM,
         "Extracting steering vector for sycophancy behavior."
     )
-    extractor.add_message(
+    sample1.add_message(
         MessageRole.ASSISTANT,
         "Generated 12 contrastive pairs. Running extraction on layer 16.",
         [ToolCall(
@@ -526,7 +526,7 @@ def _populate_demo_state(state: UIState) -> None:
             status="running", started_at=time.time()-5
         )]
     )
-    extraction.add_agent(extractor)
+    extraction.add_agent(sample1)
 
     sample2 = AgentUIState(
         id="ext_001_sample_1",

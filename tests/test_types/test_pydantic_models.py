@@ -51,8 +51,8 @@ class TestLLMConfigTypes:
 
     def test_model_accepts_string(self):
         """Test model field accepts strings."""
-        config = LLMConfig(model="gpt-4")
-        assert config.model == "gpt-4"
+        config = LLMConfig(model="gpt-5.2")
+        assert config.model == "gpt-5.2"
 
     def test_model_rejects_non_string(self):
         """Test model field rejects non-strings."""

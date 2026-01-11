@@ -161,7 +161,7 @@ class TestLLMRequestEvent:
         """Test event_type is correct literal."""
         event = LLMRequestEvent(
             request_id="req_123",
-            model="gpt-4",
+            model="gpt-5.2",
             messages=[{"role": "user", "content": "Hello"}]
         )
         assert event.event_type == "llm.request"
@@ -170,7 +170,7 @@ class TestLLMRequestEvent:
         """Test messages accepts list of message dicts."""
         event = LLMRequestEvent(
             request_id="req_123",
-            model="gpt-4",
+            model="gpt-5.2",
             messages=[
                 {"role": "system", "content": "You are helpful"},
                 {"role": "user", "content": "Hello"}
@@ -182,7 +182,7 @@ class TestLLMRequestEvent:
         """Test optional fields default correctly."""
         event = LLMRequestEvent(
             request_id="req_123",
-            model="gpt-4",
+            model="gpt-5.2",
             messages=[]
         )
         assert event.tools is None
@@ -240,13 +240,13 @@ class TestToolCallEvent:
         assert event.event_type == "tool.call"
 
     def test_agent_id_default(self):
-        """Test agent_id defaults to 'extractor'."""
+        """Test agent_id defaults to 'generator'."""
         event = ToolCallEvent(
             call_id="call_123",
             tool_name="search",
             arguments={}
         )
-        assert event.agent_id == "extractor"
+        assert event.agent_id == "generator"
 
 
 class TestToolResultEvent:
@@ -562,7 +562,7 @@ class TestEventSerialization:
         event = SessionStartedEvent(
             behavior_name="sycophancy",
             behavior_description="Test",
-            config={"model": "gpt-4"}
+            config={"model": "gpt-5.2"}
         )
 
         # Serialize
@@ -581,8 +581,8 @@ class TestEventSerialization:
             sequence=42,
             category=EventCategory.LLM,
             event_type="llm.request",
-            source="extractor",
-            payload={"model": "gpt-4", "messages": []}
+            source="generator",
+            payload={"model": "gpt-5.2", "messages": []}
         )
 
         # Serialize
@@ -599,7 +599,7 @@ class TestEventSerialization:
         """Test deeply nested payloads serialize correctly."""
         event = LLMRequestEvent(
             request_id="req_123",
-            model="gpt-4",
+            model="gpt-5.2",
             messages=[
                 {
                     "role": "user",
@@ -645,7 +645,7 @@ class TestEventPayloadUnion:
         data = {
             "event_type": "llm.request",
             "request_id": "req_123",
-            "model": "gpt-4",
+            "model": "gpt-5.2",
             "messages": []
         }
         from pydantic import TypeAdapter

@@ -233,7 +233,7 @@ def apply_event_to_state(
             )
             config = payload.get("config", {})
             extraction.max_outer_iterations = config.get("num_samples", 16)
-            extraction.model = config.get("extractor_model", "")
+            extraction.model = config.get("generator_model", "")
             extraction.target_model = config.get("target_model", "")
             state.extractions[session_id] = extraction
             if state.selected_id is None:
@@ -465,7 +465,7 @@ def _get_or_create_source_agent(
     extraction: "ExtractionUIState",
     source: str,
 ) -> "AgentUIState":
-    """Get or create an agent for a source (extractor, judge, etc.)."""
+    """Get or create an agent for a source (generator, judge, expander, etc.)."""
     from vector_forge.ui.state import AgentUIState, AgentStatus
     import time
 

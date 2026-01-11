@@ -26,7 +26,7 @@ PROVIDER_STYLES = {
 class ModelCard(Static):
     """Clickable card showing a selected model configuration.
 
-    Used in CreateTaskScreen to display and select extractor/judge models.
+    Used in CreateTaskScreen to display and select generator/judge/expander models.
     Click to open model selection modal.
     """
 

@@ -111,7 +111,7 @@ class ToolCallEvent(BaseModel):
     call_id: str
     tool_name: str
     arguments: Dict[str, Any]
-    agent_id: str = "extractor"
+    agent_id: str = "generator"
 
 
 class ToolResultEvent(BaseModel):
@@ -520,6 +520,22 @@ class AggregationCompletedEvent(BaseModel):
     final_layer: int
 
 
+class RankingCompletedEvent(BaseModel):
+    """Sample ranking completed after evaluation.
+
+    Emitted after all evaluations complete, providing the final ranking
+    of samples by their overall score.
+    """
+
+    event_type: Literal["optimization.ranking_completed"] = "optimization.ranking_completed"
+    rankings: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of {sample_idx, rank, score, layer, vector_ref} ordered by rank",
+    )
+    total_samples: int = 0
+    valid_samples: int = 0
+
+
 # =============================================================================
 # Discriminated Union Type
 # =============================================================================
@@ -575,6 +591,7 @@ EventPayload = Annotated[
         OptimizationProgressEvent,
         OptimizationCompletedEvent,
         AggregationCompletedEvent,
+        RankingCompletedEvent,
     ],
     Field(discriminator="event_type"),
 ]

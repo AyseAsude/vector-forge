@@ -1138,6 +1138,24 @@ class TaskRunner:
             reverse=True,
         )
 
+        # Emit ranking completed event with full ranking info
+        rankings = []
+        for rank, result in enumerate(sorted_results, start=1):
+            rankings.append({
+                "sample_idx": result.sample.sample_idx,
+                "rank": rank,
+                "score": result.overall_score,
+                "layer": result.layer,
+                "vector_ref": result.metadata.get("vector_ref"),
+                "sample_id": result.sample.sample_id,
+            })
+        self._emit(
+            "emit_ranking_completed",
+            rankings=rankings,
+            total_samples=len(results),
+            valid_samples=len(valid_results),
+        )
+
         strategy = config.aggregation_strategy
         top_k = min(config.top_k, len(sorted_results))
 

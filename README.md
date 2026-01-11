@@ -41,7 +41,7 @@ vector-forge ui
 ```bash
 vector-forge extract "sycophancy - agreeing with users even when wrong" \
     --model meta-llama/Llama-3.1-8B-Instruct \
-    --llm gpt-4o \
+    --llm gpt-5.2 \
     --samples 16 \
     --output ./sycophancy_vector
 ```
@@ -117,9 +117,9 @@ config = TaskConfig(
     extraction_method=ExtractionMethod.CAA,  # CAA or GRADIENT
 
     # LLM models for agents
-    extractor_model="gpt-4o",
-    judge_model="gpt-4o",
-    expander_model="gpt-4o",
+    generator_model="gpt-5.2",
+    judge_model="gpt-5.2",
+    expander_model="gpt-5.2",
 
     # Contrast pair generation
     contrast=ContrastConfig(

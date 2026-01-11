@@ -234,8 +234,8 @@ class TaskExecutor:
         )
         store.append_event(iter_event, source="executor")
 
-        # Wrap clients with event emission
-        emitting_llm = EventEmittingLLMClient(llm_client, store, source="extractor")
+        # Wrap clients with event emission (judge LLM for evaluation)
+        emitting_llm = EventEmittingLLMClient(llm_client, store, source="judge")
 
         # Create event emitter for TaskRunner
         from vector_forge.storage import EventEmitter

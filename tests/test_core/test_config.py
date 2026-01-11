@@ -31,12 +31,12 @@ class TestLLMConfig:
     def test_custom_values(self):
         """Test creating config with custom values."""
         config = LLMConfig(
-            model="claude-3-opus-20240229",
+            model="claude-sonnet-4-5",
             temperature=0.5,
             max_tokens=2048,
             api_base="https://custom.api.com",
         )
-        assert config.model == "claude-3-opus-20240229"
+        assert config.model == "claude-sonnet-4-5"
         assert config.temperature == 0.5
         assert config.max_tokens == 2048
         assert config.api_base == "https://custom.api.com"
@@ -162,17 +162,17 @@ class TestPipelineConfig:
 
     def test_custom_llm_configs(self):
         """Test setting custom LLM configurations."""
-        extractor_llm = LLMConfig(model="gpt-4", temperature=0.8)
-        judge_llm = LLMConfig(model="claude-3-opus", temperature=0.3)
+        generator_llm = LLMConfig(model="gpt-5.2", temperature=0.8)
+        judge_llm = LLMConfig(model="claude-sonnet-4-5", temperature=0.3)
 
         config = PipelineConfig(
-            extractor_llm=extractor_llm,
+            generator_llm=generator_llm,
             judge_llm=judge_llm,
         )
 
-        assert config.extractor_llm.model == "gpt-4"
-        assert config.extractor_llm.temperature == 0.8
-        assert config.judge_llm.model == "claude-3-opus"
+        assert config.generator_llm.model == "gpt-5.2"
+        assert config.generator_llm.temperature == 0.8
+        assert config.judge_llm.model == "claude-sonnet-4-5"
         assert config.judge_llm.temperature == 0.3
 
     def test_num_prompts_minimum(self):
