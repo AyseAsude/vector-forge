@@ -524,9 +524,13 @@ class ContrastPipeline:
             rejection_reason = None
             if not validation.is_valid:
                 reasons = []
-                if validation.dst_behavior_score < self._config.min_dst_score:
+                # Check semantic distance first (most common early failure)
+                if validation.semantic_distance >= 0 and validation.semantic_distance < self._config.min_semantic_distance:
+                    reasons.append(f"semantic_dist={validation.semantic_distance:.2f}<{self._config.min_semantic_distance}")
+                # Only check behavior scores if they were evaluated (not -1 sentinel)
+                if validation.dst_behavior_score >= 0 and validation.dst_behavior_score < self._config.min_dst_score:
                     reasons.append(f"dst_score={validation.dst_behavior_score:.1f}<{self._config.min_dst_score}")
-                if validation.src_behavior_score > self._config.max_src_score:
+                if validation.src_behavior_score >= 0 and validation.src_behavior_score > self._config.max_src_score:
                     reasons.append(f"src_score={validation.src_behavior_score:.1f}>{self._config.max_src_score}")
                 if validation.contrast_quality < self._config.min_contrast_quality:
                     reasons.append(f"quality={validation.contrast_quality:.1f}<{self._config.min_contrast_quality}")
