@@ -491,12 +491,18 @@ class CreateTaskScreen(Screen):
             # Parameters section
             yield Static("PARAMETERS", classes="main-section")
             with Vertical(id="params-container"):
-                # Row 1: Sampling & Optimization
+                # Row 1: Sampling & Contrast (+ Optimization for gradient mode)
                 with Horizontal(classes="params-row"):
                     with ParamSection("SAMPLING"):
                         yield ParamRow("Samples", "inp-samples", "256")
                         yield ParamRow("Seeds", "inp-seeds", "4")
                         yield ParamRow("Datapoints", "inp-datapoints", "50", "per sample")
+
+                    with ParamSection("CONTRAST"):
+                        yield ParamRow("Core Pool", "inp-core-pool", "80", "shared pairs")
+                        yield ParamRow("Core/Sample", "inp-core-per-sample", "40")
+                        yield ParamRow("Unique/Sample", "inp-unique-per-sample", "10")
+                        yield ParamRow("Max Regen", "inp-max-regen", "2", "retry attempts")
 
                     with ParamSection("OPTIMIZATION", id="optimization-section"):
                         yield ParamRow("Learning Rate", "inp-lr", "0.1")
@@ -504,14 +510,8 @@ class CreateTaskScreen(Screen):
                         yield ParamRow("Coldness", "inp-coldness", "0.7", "softmax temp")
                         yield ParamRow("Max Norm", "inp-max-norm", "2.0", "regularization")
 
-                # Row 2: Contrast & Validation
+                # Row 2: Validation & Intensity
                 with Horizontal(classes="params-row"):
-                    with ParamSection("CONTRAST"):
-                        yield ParamRow("Core Pool", "inp-core-pool", "80", "shared pairs")
-                        yield ParamRow("Core/Sample", "inp-core-per-sample", "40")
-                        yield ParamRow("Unique/Sample", "inp-unique-per-sample", "10")
-                        yield ParamRow("Max Regen", "inp-max-regen", "2", "retry attempts")
-
                     with ParamSection("VALIDATION"):
                         yield ParamRow("Min Quality", "inp-min-quality", "6.0", "contrast score")
                         yield ParamRow("Min Dimension", "inp-min-dim", "6.0", "score 0-10")
