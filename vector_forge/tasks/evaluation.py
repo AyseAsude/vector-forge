@@ -255,7 +255,7 @@ class VectorEvaluator:
             device=vector.device,
             dtype=vector.dtype,
         )
-        steering._vector.data = vector.clone()
+        steering.set_vector(vector)
 
         # Call backend with correct signature
         return self._backend.generate_with_steering(

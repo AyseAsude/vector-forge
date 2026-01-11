@@ -88,7 +88,7 @@ class JudgeAgent(EventEmitter):
             device=vector.device,
             dtype=vector.dtype,
         )
-        steering._vector.data = vector.clone()
+        steering.set_vector(vector)
 
         # Generate outputs at different strengths
         all_outputs = await self._generate_all_outputs(

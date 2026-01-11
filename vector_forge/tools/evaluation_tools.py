@@ -73,7 +73,7 @@ class GenerateSteeredTool(BaseTool):
             device=vector.device,
             dtype=vector.dtype,
         )
-        steering._vector.data = vector.clone()
+        steering.set_vector(vector)
 
         output = self._backend.generate_with_steering(
             prompt,
@@ -239,7 +239,7 @@ Return ONLY a JSON array of prompt strings."""
                 device=vector.device,
                 dtype=vector.dtype,
             )
-            steering._vector.data = vector.clone()
+            steering.set_vector(vector)
 
             results = {"baseline": [], "steered": {s: [] for s in strengths}}
 
@@ -427,7 +427,7 @@ Return ONLY a JSON array of prompt strings."""
             device=vector.device,
             dtype=vector.dtype,
         )
-        steering._vector.data = vector.clone()
+        steering.set_vector(vector)
 
         comparisons = []
         for test_prompt in unrelated_prompts:
