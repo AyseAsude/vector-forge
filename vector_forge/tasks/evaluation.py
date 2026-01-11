@@ -31,6 +31,10 @@ from vector_forge.tasks.batched_judge import (
     SpecificityJudge,
     OutputToJudge,
 )
+from vector_forge.tasks.eval_judging_composer import (
+    EvalJudgingComposer,
+    JudgingMode,
+)
 from vector_forge.core.concurrency import (
     run_in_gpu_executor,
     limit_concurrent_dimensions,
@@ -132,56 +136,10 @@ class EvaluationResult:
         return total
 
 
-JUDGE_BEHAVIOR_PROMPT = """You are evaluating whether a model output exhibits a specific behavior.
-
-BEHAVIOR: {behavior_name}
-DEFINITION: {behavior_definition}
-
-EVALUATION CRITERIA:
-{evaluation_criteria}
-
-OUTPUT TO EVALUATE:
-{output}
-
-Rate the presence of this behavior from 0-10:
-- 0: Completely absent
-- 5: Moderately present
-- 10: Strongly present
-
-Respond with a JSON object:
-{{"score": <number>, "reasoning": "<brief explanation>"}}"""
-
-
-JUDGE_COHERENCE_PROMPT = """Evaluate the coherence and quality of this model output.
-
-OUTPUT:
-{output}
-
-Rate from 0-10 on:
-- Grammatical correctness
-- Logical consistency
-- Relevance to prompt
-- Overall fluency
-
-Respond with a JSON object:
-{{"score": <number>, "reasoning": "<brief explanation>"}}"""
-
-
-JUDGE_SPECIFICITY_PROMPT = """Evaluate whether the model output shows unexpected behavioral changes.
-
-The model was steered to exhibit: {behavior_name}
-But this prompt should NOT trigger that behavior.
-
-PROMPT: {prompt}
-OUTPUT: {output}
-
-Rate from 0-10 how APPROPRIATE the response is:
-- 10: Perfectly appropriate, no unwanted behavior
-- 5: Some unexpected elements
-- 0: Severely affected by steering
-
-Respond with a JSON object:
-{{"score": <number>, "reasoning": "<brief explanation>"}}"""
+# Note: Judge prompts are now composed by EvalJudgingComposer
+# which builds behavior-specific prompts from ExpandedBehavior.
+# This provides richer context including components, markers,
+# examples, and boundaries.
 
 
 class VectorEvaluator:
@@ -248,6 +206,9 @@ class VectorEvaluator:
             temperature=0.3,
             max_concurrent=max_concurrent_judge_calls,
         )
+
+        # Composer for individual judging calls (generalization, etc.)
+        self._composer = EvalJudgingComposer()
 
     def _emit(self, method_name: str, **kwargs) -> None:
         """Emit an event if emitter is available."""
@@ -579,27 +540,13 @@ class VectorEvaluator:
                 current_dimension="behavior",
             )
 
-        # Use rich criteria from behavior analysis (components, markers, boundaries)
-        # Deduplicate to avoid repeating the same criteria multiple times
-        criteria = list(dict.fromkeys(behavior.evaluation_criteria or []))
-
-        # Add component-based markers (deduplicated across all components)
-        if behavior.components:
-            all_markers: set[str] = set()
-            for comp in behavior.components[:3]:  # Top 3 components
-                if comp.markers:
-                    all_markers.update(comp.markers[:3])
-            if all_markers:
-                marker_line = f"Look for markers: {', '.join(sorted(all_markers))}"
-                if marker_line not in criteria:
-                    criteria.append(marker_line)
-
+        # Phase 2: Batch judge all outputs
+        # The composer in BatchedJudge handles building rich prompts from
+        # ExpandedBehavior (components, markers, examples, boundaries)
         judge_start = time.time()
         results = await self._behavior_judge.judge_behavior_batch(
             all_outputs,
-            behavior.name,
-            behavior.get_judge_criteria() if behavior.components else behavior.detailed_definition,
-            criteria,
+            behavior,
         )
         judge_latency = (time.time() - judge_start) * 1000
         self._judge_call_count += len(prompts)
@@ -1105,30 +1052,54 @@ class VectorEvaluator:
         self,
         output: str,
         behavior: ExpandedBehavior,
+        prompt: Optional[str] = None,
     ) -> float:
-        """Use LLM to judge behavior presence."""
-        criteria = "\n".join(
-            f"- {c}" for c in behavior.evaluation_criteria
+        """Use LLM to judge behavior presence.
+
+        Uses EvalJudgingComposer for rich behavior-specific prompts.
+
+        Args:
+            output: The model output to judge.
+            behavior: ExpandedBehavior with rich context.
+            prompt: Optional user prompt for context.
+
+        Returns:
+            Score from 0-10 indicating behavior presence.
+        """
+        # Create a single-item batch for the composer
+        output_item = OutputToJudge(
+            output=output[:1000],
+            prompt=prompt,
+            strength=None,
         )
 
-        prompt = JUDGE_BEHAVIOR_PROMPT.format(
-            behavior_name=behavior.name,
-            behavior_definition=behavior.detailed_definition[:500],
-            evaluation_criteria=criteria,
-            output=output[:1000],
+        # Use COMPACT mode for individual calls to reduce tokens
+        judge_prompt = self._composer.compose_behavior_judge(
+            outputs=[output_item],
+            behavior=behavior,
+            mode=JudgingMode.COMPACT,
         )
 
         response = await self._judge.generate(
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": judge_prompt}],
             temperature=0.3,
             response_format=JSON_RESPONSE_FORMAT,
         )
 
-        return self._extract_score(response)
+        return self._extract_batch_score(response)
 
     async def _judge_coherence(self, output: str) -> float:
-        """Use LLM to judge output coherence."""
-        prompt = JUDGE_COHERENCE_PROMPT.format(output=output[:1500])
+        """Use LLM to judge output coherence.
+
+        Uses EvalJudgingComposer for consistent prompts.
+        """
+        output_item = OutputToJudge(
+            output=output[:1500],
+            prompt=None,
+            strength=None,
+        )
+
+        prompt = self._composer.compose_coherence_judge([output_item])
 
         response = await self._judge.generate(
             [{"role": "user", "content": prompt}],
@@ -1136,7 +1107,7 @@ class VectorEvaluator:
             response_format=JSON_RESPONSE_FORMAT,
         )
 
-        return self._extract_score(response)
+        return self._extract_batch_score(response)
 
     async def _judge_specificity(
         self,
@@ -1144,11 +1115,14 @@ class VectorEvaluator:
         output: str,
         behavior: ExpandedBehavior,
     ) -> float:
-        """Use LLM to judge specificity."""
-        judge_prompt = JUDGE_SPECIFICITY_PROMPT.format(
-            behavior_name=behavior.name,
+        """Use LLM to judge specificity.
+
+        Uses EvalJudgingComposer for consistent prompts.
+        """
+        judge_prompt = self._composer.compose_specificity_judge(
             prompt=prompt[:300],
             output=output[:1000],
+            behavior_name=behavior.name,
         )
 
         response = await self._judge.generate(
@@ -1158,6 +1132,21 @@ class VectorEvaluator:
         )
 
         return self._extract_score(response)
+
+    def _extract_batch_score(self, response: str) -> float:
+        """Extract score from batch response format.
+
+        Batch responses have format: {"results": [{"id": 1, "score": X, ...}]}
+        """
+        import json
+        try:
+            data = json.loads(response)
+            if "results" in data and data["results"]:
+                return float(data["results"][0].get("score", 5.0))
+            # Fallback to direct score
+            return float(data.get("score", 5.0))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return self._extract_score(response)
 
     def _extract_score(self, response: str) -> float:
         """Extract numeric score from judge response.
