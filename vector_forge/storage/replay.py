@@ -37,6 +37,7 @@ class ReplayedVector:
     vector_ref: str
     norm: float
     optimization_metrics: Dict[str, Any] = field(default_factory=dict)
+    score: float = 0.0  # Computed from optimization final_loss (lower is better)
 
 
 @dataclass
@@ -175,6 +176,36 @@ class ReplayedState:
         """Total contrast pairs generated."""
         return len(self.contrast_pairs)
 
+    def compute_vector_scores(self) -> None:
+        """Compute vector scores from optimization results.
+
+        For each layer, finds the best (lowest) final_loss across all samples
+        and assigns it to the corresponding vector. Also determines the
+        overall best layer based on lowest loss.
+        """
+        if not self.optimizations:
+            return
+
+        # Group optimizations by layer, keeping best (lowest) loss per layer
+        layer_scores: Dict[int, float] = {}
+        for opt in self.optimizations:
+            if opt.final_loss is None:
+                continue
+            layer = opt.layer
+            if layer not in layer_scores or opt.final_loss < layer_scores[layer]:
+                layer_scores[layer] = opt.final_loss
+
+        # Assign scores to vectors
+        for layer, score in layer_scores.items():
+            if layer in self.vectors:
+                self.vectors[layer].score = score
+
+        # Determine best layer (lowest loss = best)
+        if layer_scores:
+            best_layer = min(layer_scores, key=lambda l: layer_scores[l])
+            self.best_layer = best_layer
+            self.best_score = layer_scores[best_layer]
+
 
 class SessionReplayer:
     """Reconstructs state from event log.
@@ -229,6 +260,9 @@ class SessionReplayer:
                 continue
 
             self._apply_event(state, event)
+
+        # Compute vector scores from optimization results
+        state.compute_vector_scores()
 
         return state
 

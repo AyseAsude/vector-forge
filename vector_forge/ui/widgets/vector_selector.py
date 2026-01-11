@@ -4,13 +4,15 @@ Shows available vectors from the selected extraction task
 and provides generation settings controls.
 """
 
+from typing import Any
+
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Static, Input, Label
 from textual.reactive import reactive
 
-from vector_forge.ui.state import VectorInfo, get_state, ExtractionStatus
+from vector_forge.ui.state import VectorInfo, get_state, ExtractionStatus, ExtractionUIState
 
 
 class VectorRow(Static):
@@ -40,40 +42,35 @@ class VectorRow(Static):
             super().__init__()
             self.vector_info = vector_info
 
-    def __init__(self, vector_info: VectorInfo, is_selected: bool = False, **kwargs) -> None:
+    def __init__(self, vector_info: VectorInfo, is_selected: bool = False, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.vector_info = vector_info
         self._is_selected = is_selected
 
     def on_mount(self) -> None:
-        """Update content on mount."""
         self._update_display()
 
     def _update_display(self) -> None:
-        """Update the display content."""
         v = self.vector_info
         icon = "●" if self._is_selected else "○"
         color = "$accent" if self._is_selected else "$foreground-muted"
         best_marker = " [bold $success]best[/]" if v.is_best else ""
 
-        content = (
-            f"[{color}]{icon}[/] [bold]L{v.layer}[/] · {v.score:.2f}{best_marker}"
-        )
+        # Format score: lower loss is better, so display it clearly
+        score_display = f"{v.score:.2f}" if v.score > 0 else "—"
+        content = f"[{color}]{icon}[/] [bold]L{v.layer}[/] · {score_display}{best_marker}"
         self.update(content)
 
-        # Update CSS class
         if self._is_selected:
             self.add_class("-selected")
         else:
             self.remove_class("-selected")
 
     def set_selected(self, selected: bool) -> None:
-        """Update selection state."""
         self._is_selected = selected
         self._update_display()
 
     def on_click(self) -> None:
-        """Handle click to select this vector."""
         self.post_message(self.Selected(self.vector_info))
 
 
@@ -171,21 +168,20 @@ class VectorSelector(Vertical):
             self.temperature = temperature
             self.max_tokens = max_tokens
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._selected_layer: int | None = None
+        self._current_extraction_id: str | None = None
+        self._vectors: list[VectorInfo] = []
 
     def compose(self) -> ComposeResult:
-        # Header with task info
         with Vertical(classes="header"):
             yield Static("No task selected", classes="task-name", id="task-name")
             yield Static("", classes="task-model", id="task-model")
 
-        # Vector list section
         yield Static("VECTORS", classes="section-title")
         yield VerticalScroll(classes="vector-list", id="vector-list")
 
-        # Settings section
         with Vertical(classes="settings"):
             yield Static("SETTINGS", classes="section-title")
 
@@ -216,17 +212,16 @@ class VectorSelector(Vertical):
                     classes="setting-value",
                 )
 
-
     def update_from_extraction(self, extraction_id: str | None) -> None:
         """Update the panel based on selected extraction."""
         state = get_state()
-
-        # Update header
         task_name = self.query_one("#task-name", Static)
         task_model = self.query_one("#task-model", Static)
         vector_list = self.query_one("#vector-list", VerticalScroll)
 
+        # Handle no extraction selected
         if extraction_id is None:
+            self._clear_state()
             task_name.update("No task selected")
             task_model.update("")
             vector_list.remove_children()
@@ -235,16 +230,15 @@ class VectorSelector(Vertical):
 
         extraction = state.extractions.get(extraction_id)
         if extraction is None:
+            self._clear_state()
             task_name.update("Task not found")
             task_model.update("")
             return
 
         # Update task info
         task_name.update(f"[bold]{extraction.behavior_name}[/]")
-        # Show target model (used for chat inference)
         model_display = extraction.target_model or extraction.model
         if model_display:
-            # Shorten model name for display
             short_name = model_display.split("/")[-1] if "/" in model_display else model_display
             task_model.update(f"[$foreground-muted]{short_name}[/]")
         else:
@@ -252,98 +246,105 @@ class VectorSelector(Vertical):
 
         # Check if extraction is complete
         if extraction.status != ExtractionStatus.COMPLETE:
+            self._clear_state()
             vector_list.remove_children()
             vector_list.mount(
                 Static("Extraction running...", classes="empty-state")
             )
             return
 
-        # Update vectors
-        self._update_vectors(extraction_id)
+        # Check if we need to reload vectors (extraction changed)
+        if extraction_id != self._current_extraction_id:
+            self._current_extraction_id = extraction_id
+            self._selected_layer = None
+            self._vectors = self._load_vectors(extraction_id, extraction)
 
-    def _update_vectors(self, extraction_id: str) -> None:
-        """Update vector list from extraction."""
-        state = get_state()
-        extraction = state.extractions.get(extraction_id)
-        if extraction is None:
-            return
+        self._render_vectors(vector_list)
 
-        vector_list = self.query_one("#vector-list", VerticalScroll)
+    def _clear_state(self) -> None:
+        """Clear internal state when extraction changes."""
+        self._current_extraction_id = None
+        self._selected_layer = None
+        self._vectors = []
 
-        # Remove empty-state message if present
-        for empty in vector_list.query(".empty-state"):
-            empty.remove()
+    def _load_vectors(self, extraction_id: str, extraction: ExtractionUIState) -> list[VectorInfo]:
+        """Load vectors from session store."""
+        try:
+            from vector_forge.services.session import SessionService
+            from vector_forge.storage import SessionReplayer
 
-        # Load vectors from session store if not cached
-        vectors = state.chat.available_vectors
+            service = SessionService()
+            store = service.get_session_store(extraction_id)
+            replayer = SessionReplayer(store)
+            replayed = replayer.reconstruct_state()
 
-        if not vectors:
-            vectors = self._load_vectors_from_session(extraction_id, extraction)
-            state.chat.available_vectors = vectors
+            if not replayed.vectors:
+                return self._create_fallback_vector(extraction)
 
-        # Deduplicate by layer (keep first occurrence)
-        seen_layers: set[int] = set()
-        unique_vectors = []
-        for v in vectors:
-            if v.layer not in seen_layers:
-                seen_layers.add(v.layer)
-                unique_vectors.append(v)
-
-        # Check which rows already exist
-        existing_ids = {w.id for w in vector_list.query(VectorRow)}
-        needed_ids = {f"vector-{v.layer}" for v in unique_vectors}
-
-        # Remove rows that are no longer needed
-        for widget in list(vector_list.query(VectorRow)):
-            if widget.id not in needed_ids:
-                widget.remove()
-
-        # Mount or update vector rows
-        for v in unique_vectors:
-            row_id = f"vector-{v.layer}"
-            is_selected = (
-                self._selected_layer == v.layer
-                if self._selected_layer is not None
-                else v.is_best
-            )
-
-            if row_id in existing_ids:
-                # Update existing row
-                try:
-                    existing = vector_list.query_one(f"#{row_id}", VectorRow)
-                    existing.set_selected(is_selected)
-                except Exception:
-                    pass
-            else:
-                # Mount new row
-                vector_list.mount(
-                    VectorRow(v, is_selected=is_selected, id=row_id)
+            # Convert replayed vectors to VectorInfo
+            vectors = []
+            for layer, rv in sorted(replayed.vectors.items()):
+                vectors.append(
+                    VectorInfo(
+                        layer=layer,
+                        score=rv.score,
+                        vector_path=rv.vector_ref,
+                        is_best=(layer == replayed.best_layer),
+                    )
                 )
+
+            return vectors if vectors else self._create_fallback_vector(extraction)
+
+        except Exception:
+            return self._create_fallback_vector(extraction)
+
+    def _create_fallback_vector(self, extraction: ExtractionUIState) -> list[VectorInfo]:
+        """Create fallback vector when loading fails."""
+        best_layer = extraction.evaluation.best_layer or 16
+        return [
+            VectorInfo(
+                layer=best_layer,
+                score=extraction.evaluation.overall,
+                vector_path="vectors/final.pt",
+                is_best=True,
+            )
+        ]
+
+    def _render_vectors(self, vector_list: VerticalScroll) -> None:
+        """Render vector list UI."""
+        vector_list.remove_children()
+
+        if not self._vectors:
+            vector_list.mount(Static("No vectors found", classes="empty-state"))
+            return
 
         # Auto-select best if nothing selected
         if self._selected_layer is None:
-            for v in unique_vectors:
+            for v in self._vectors:
                 if v.is_best:
                     self._selected_layer = v.layer
                     break
-            if self._selected_layer is None and unique_vectors:
-                self._selected_layer = unique_vectors[0].layer
+            if self._selected_layer is None:
+                self._selected_layer = self._vectors[0].layer
+
+        # Mount vector rows
+        for v in self._vectors:
+            is_selected = (v.layer == self._selected_layer)
+            vector_list.mount(
+                VectorRow(v, is_selected=is_selected, id=f"vector-{v.layer}")
+            )
 
     def on_vector_row_selected(self, event: VectorRow.Selected) -> None:
         """Handle vector selection."""
         self._selected_layer = event.vector_info.layer
 
-        # Update all rows
         for row in self.query(VectorRow):
             row.set_selected(row.vector_info.layer == self._selected_layer)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle input submission (settings change)."""
         self._emit_settings_changed()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle input change."""
-        # Validate and update reactive properties
         try:
             if event.input.id == "strength-input":
                 self.strength = float(event.value) if event.value else 1.0
@@ -352,10 +353,9 @@ class VectorSelector(Vertical):
             elif event.input.id == "tokens-input":
                 self.max_tokens = int(event.value) if event.value else 256
         except ValueError:
-            pass  # Ignore invalid values
+            pass
 
     def _emit_settings_changed(self) -> None:
-        """Emit settings changed message."""
         self.post_message(
             self.SettingsChanged(
                 strength=self.strength,
@@ -366,62 +366,4 @@ class VectorSelector(Vertical):
 
     @property
     def selected_layer(self) -> int | None:
-        """Get the currently selected layer."""
         return self._selected_layer
-
-    def _load_vectors_from_session(
-        self, extraction_id: str, extraction
-    ) -> list[VectorInfo]:
-        """Load all vectors from session store."""
-        try:
-            from vector_forge.services.session import SessionService
-            from vector_forge.storage import SessionReplayer
-
-            service = SessionService()
-            store = service.get_session_store(extraction_id)
-            replayer = SessionReplayer(store)
-            replayed = replayer.reconstruct_state()
-
-            if not replayed or not replayed.vectors:
-                # Fallback to best layer only
-                return self._create_fallback_vectors(extraction)
-
-            # Convert replayed vectors to VectorInfo
-            vectors = []
-            best_layer = replayed.best_layer
-            best_score = replayed.best_score
-
-            for layer, rv in sorted(replayed.vectors.items()):
-                # Use optimization metrics or evaluation score
-                score = rv.optimization_metrics.get("final_loss", 0.0)
-                # If we have best_score and this is the best layer, use it
-                if layer == best_layer and best_score > 0:
-                    score = best_score
-
-                vectors.append(
-                    VectorInfo(
-                        layer=layer,
-                        score=score,
-                        vector_path=rv.vector_ref,
-                        is_best=(layer == best_layer),
-                    )
-                )
-
-            # Sort by layer
-            vectors.sort(key=lambda v: v.layer)
-            return vectors if vectors else self._create_fallback_vectors(extraction)
-
-        except Exception:
-            return self._create_fallback_vectors(extraction)
-
-    def _create_fallback_vectors(self, extraction) -> list[VectorInfo]:
-        """Create fallback vector list from evaluation metrics."""
-        best_layer = extraction.evaluation.best_layer or 16
-        return [
-            VectorInfo(
-                layer=best_layer,
-                score=extraction.evaluation.overall,
-                vector_path="vectors/final.pt",
-                is_best=True,
-            )
-        ]

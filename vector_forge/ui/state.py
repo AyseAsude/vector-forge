@@ -431,9 +431,6 @@ class ChatUIState:
     # Chat sessions per extraction (extraction_id -> session)
     sessions: Dict[str, ChatSession] = field(default_factory=dict)
 
-    # Available vectors from selected extraction
-    available_vectors: List[VectorInfo] = field(default_factory=list)
-
     # Generation state
     is_generating: bool = False
     model_loaded: bool = False
@@ -450,17 +447,6 @@ class ChatUIState:
                 created_at=time.time(),
             )
         return self.sessions[extraction_id]
-
-    @property
-    def selected_vector(self) -> Optional[VectorInfo]:
-        """Get the currently selected vector (best by default)."""
-        if not self.available_vectors:
-            return None
-        # Return first selected or best
-        for v in self.available_vectors:
-            if v.is_best:
-                return v
-        return self.available_vectors[0] if self.available_vectors else None
 
 
 @dataclass
