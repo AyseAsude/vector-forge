@@ -340,21 +340,30 @@ class WorkerListItem(ListItem):
         }
         return status_map.get(self._agent.status, (ICONS.pending, "$foreground-muted", "?"))
 
+    def on_mount(self) -> None:
+        """Ensure display is up-to-date after mounting."""
+        self._refresh_display()
+
     def update_agent(self, agent: AgentUIState) -> None:
         """Update the agent data and refresh display."""
         self._agent = agent
-        if self.is_mounted:
-            icon, color, label = self._get_display_values()
-            try:
-                self.query_one("#worker-name", Static).update(
-                    f"[{color}]{icon}[/] [bold]{agent.name}[/]"
-                )
-                self.query_one("#worker-time", Static).update(agent.elapsed_str)
-                self.query_one("#worker-meta", Static).update(
-                    f"[{color}]{label}[/] · {agent.turns} turns · {agent.tool_calls_count} {agent.count_label}"
-                )
-            except Exception:
-                pass
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        """Refresh the visual display from current agent state."""
+        if not self.is_mounted:
+            return
+        icon, color, label = self._get_display_values()
+        try:
+            self.query_one("#worker-name", Static).update(
+                f"[{color}]{icon}[/] [bold]{self._agent.name}[/]"
+            )
+            self.query_one("#worker-time", Static).update(self._agent.elapsed_str)
+            self.query_one("#worker-meta", Static).update(
+                f"[{color}]{label}[/] · {self._agent.turns} turns · {self._agent.tool_calls_count} {self._agent.count_label}"
+            )
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -306,13 +306,10 @@ class VectorForgeApp(App):
                     self._refresh_dashboard_session(session_id)
 
             elif screen_name == "SamplesScreen":
-                if session_created or new_agents_created:
-                    # New session or agents - full sync to update worker list
-                    if hasattr(screen, '_sync'):
-                        screen._sync()
-                else:
-                    # Refresh only affected worker items and conversation
-                    self._refresh_samples_screen(session_id, affected_agents)
+                # Always do full sync for samples screen
+                # Targeted updates were unreliable due to widget mounting race conditions
+                if hasattr(screen, '_sync'):
+                    screen._sync()
 
             elif screen_name == "LogsScreen" and has_logs:
                 # Logs: append new log entries
@@ -334,36 +331,6 @@ class VectorForgeApp(App):
                     if extraction:
                         card.update_extraction(extraction)
                     break
-        except Exception:
-            pass
-
-    def _refresh_samples_screen(self, session_id: str, affected_agents: set) -> None:
-        """Refresh samples screen for affected agents."""
-        try:
-            state = get_state()
-            extraction = state.selected_extraction
-
-            # Only refresh if we're viewing this session
-            if extraction and extraction.id == session_id:
-                # Refresh affected worker items
-                from vector_forge.ui.screens.samples import WorkerListItem
-
-                for item in self.screen.query(WorkerListItem):
-                    if item.agent_id in affected_agents:
-                        agent = extraction.agents.get(item.agent_id)
-                        if agent:
-                            item.update_agent(agent)
-
-                # Refresh conversation panel if showing affected agent
-                try:
-                    conv_panel = self.screen.query_one("#conversation-panel")
-                    if hasattr(conv_panel, 'current_agent_id'):
-                        if conv_panel.current_agent_id in affected_agents:
-                            agent = extraction.agents.get(conv_panel.current_agent_id)
-                            if agent:
-                                conv_panel.show_agent(agent)
-                except Exception:
-                    pass
         except Exception:
             pass
 
