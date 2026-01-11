@@ -409,6 +409,21 @@ class VectorForgeApp(App):
                     config=message.config,
                 )
 
+                # Immediately create UI state for the new session (don't wait for watcher)
+                extraction = ExtractionUIState(
+                    id=session_id,
+                    behavior_name=behavior_name,
+                    behavior_description=description,
+                    model=message.config.extractor_model,
+                    status=ExtractionStatus.RUNNING,
+                    phase=Phase.INITIALIZING,
+                    max_outer_iterations=message.config.num_samples,
+                    started_at=time.time(),
+                )
+                state.add_extraction(extraction)
+                # Always select the newly created session
+                state.selected_id = session_id
+
                 # Add to watcher for real-time updates
                 if self._watcher:
                     self._watcher.add_session(session_id)

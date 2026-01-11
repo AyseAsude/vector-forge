@@ -305,7 +305,7 @@ def apply_event_to_state(
     elif event_type == "optimization.completed":
         sample_idx = payload.get("sample_idx", 0)
         success = payload.get("success", True)
-        final_loss = payload.get("final_loss", 0.0)
+        final_loss = payload.get("final_loss")
         iterations = payload.get("iterations", 0)
         duration = payload.get("duration_seconds", 0.0)
         error = payload.get("error")
@@ -316,9 +316,10 @@ def apply_event_to_state(
             agent.completed_at = event.timestamp.timestamp()
             agent.current_tool = None
             if success:
+                loss_str = f"{final_loss:.4f}" if final_loss is not None else "N/A"
                 agent.add_message(
                     MessageRole.ASSISTANT,
-                    f"Optimization complete: loss={final_loss:.4f}, {iterations} iterations in {duration:.1f}s"
+                    f"Optimization complete: loss={loss_str}, {iterations} iterations in {duration:.1f}s"
                 )
             else:
                 agent.add_message(

@@ -610,6 +610,10 @@ class LogsScreen(Screen):
         """Initial projection from current state."""
         self._sync()
 
+    def on_show(self) -> None:
+        """Re-sync when screen becomes visible."""
+        self._sync()
+
     def refresh_content(self) -> None:
         """Refresh screen content (called by App on new events)."""
         self._sync()

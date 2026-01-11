@@ -84,7 +84,7 @@ class ReplayedOptimization:
 
     sample_idx: int
     layer: int
-    final_loss: float
+    final_loss: Optional[float]
     iterations: int
     datapoints_used: int
     duration_seconds: float

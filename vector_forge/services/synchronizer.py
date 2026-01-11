@@ -172,11 +172,11 @@ class SessionLoader:
                 tool_calls_count=opt.iterations,
             )
 
-            msg = (
-                f"Optimization complete: loss={opt.final_loss:.4f}, {opt.iterations} iterations in {opt.duration_seconds:.1f}s"
-                if opt.success
-                else f"Optimization failed: {opt.error or 'Unknown error'}"
-            )
+            if opt.success:
+                loss_str = f"{opt.final_loss:.4f}" if opt.final_loss is not None else "N/A"
+                msg = f"Optimization complete: loss={loss_str}, {opt.iterations} iterations in {opt.duration_seconds:.1f}s"
+            else:
+                msg = f"Optimization failed: {opt.error or 'Unknown error'}"
             agent.add_message(MessageRole.ASSISTANT, msg)
             extraction.add_agent(agent)
 

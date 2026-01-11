@@ -154,6 +154,12 @@ class ExtractionRunner:
             raw_extractor = create_client(config.extractor_model)
             raw_judge = create_client(config.judge_model)
 
+            # Wrap behavior expander client to emit LLM events (creates agent in UI)
+            behavior_expander_llm = EventEmittingLLMClient(
+                raw_expander, store,
+                source="behavior_expander",
+            )
+
             # Step 3: Run BehaviorExpander first (uses expander model)
             self._emit_progress(ExtractionProgress(
                 session_id=session_id,
@@ -162,7 +168,7 @@ class ExtractionRunner:
                 message="Expanding behavior description...",
             ))
 
-            expander = BehaviorExpander(raw_expander, model=config.expander_model)
+            expander = BehaviorExpander(behavior_expander_llm, model=config.expander_model)
             expanded_behavior = await expander.expand(behavior_description)
             logger.info(
                 f"Behavior expanded: {expanded_behavior.name} | "
@@ -177,31 +183,24 @@ class ExtractionRunner:
                 message="Generating contrast pairs...",
             ))
 
-            # Create notification callback for real-time UI updates
-            def on_event(envelope):
-                self._session_service._notify_event(session_id, envelope)
-
-            # Wrap with event emission so ALL LLM calls are logged + notify UI
+            # Wrap with event emission so ALL LLM calls are logged
             # Use expander model for contrast pipeline (analysis, seeds, pairs)
             expander_llm = EventEmittingLLMClient(
                 raw_expander, store,
                 source="contrast_extractor",
-                on_event=on_event,
             )
             judge_llm = EventEmittingLLMClient(
                 raw_judge, store,
                 source="contrast_judge",
-                on_event=on_event,
             )
             # Extractor LLM for task execution (optimization phase)
             extractor_llm = EventEmittingLLMClient(
                 raw_extractor, store,
                 source="extractor",
-                on_event=on_event,
             )
 
-            # Create event emitter for complete event sourcing with notification
-            event_emitter = EventEmitter(store, default_source="extraction_runner", on_event=on_event)
+            # Create event emitter for complete event sourcing
+            event_emitter = EventEmitter(store, default_source="extraction_runner")
 
             # Step 4: Build contrast config from task config
             contrast_config = ContrastPipelineConfig(

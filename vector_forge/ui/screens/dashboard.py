@@ -633,6 +633,10 @@ class DashboardScreen(Screen):
         self._sync()
         self.set_interval(1.0, self._tick)
 
+    def on_show(self) -> None:
+        """Re-sync when screen becomes visible."""
+        self._sync()
+
     def refresh_content(self) -> None:
         """Refresh screen content (called by App on new events)."""
         self._sync()
