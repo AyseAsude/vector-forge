@@ -40,7 +40,6 @@ class LogDetailModal(ModalScreen):
         max-width: 120;
         height: 85%;
         background: $surface;
-        border: solid $primary;
     }
 
     LogDetailModal #modal-header {

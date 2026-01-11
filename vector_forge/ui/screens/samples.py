@@ -54,7 +54,6 @@ class MessageDetailModal(ModalScreen):
         max-width: 120;
         height: 85%;
         background: $surface;
-        border: solid $primary;
     }
 
     MessageDetailModal #modal-header {
