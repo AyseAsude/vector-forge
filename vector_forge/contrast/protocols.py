@@ -631,6 +631,7 @@ class PairRegeneratorProtocol(Protocol):
         validation: ValidationResult,
         analysis: BehaviorAnalysis,
         attempt: int,
+        max_attempts: int,
     ) -> ContrastPair:
         """Regenerate a pair that failed validation.
 
@@ -639,6 +640,7 @@ class PairRegeneratorProtocol(Protocol):
             validation: The validation result with failure reasons.
             analysis: Behavior analysis for context.
             attempt: Which regeneration attempt this is (1-indexed).
+            max_attempts: Maximum regeneration attempts allowed.
 
         Returns:
             New ContrastPair with improvements.

@@ -7,8 +7,11 @@ agent execution, messages, and UI state across screens.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 import time
+
+if TYPE_CHECKING:
+    from vector_forge.tasks.config import TaskConfig
 
 
 class ExtractionStatus(str, Enum):
@@ -245,6 +248,9 @@ class ExtractionUIState:
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
 
+    # Task configuration (for params display)
+    config: Optional["TaskConfig"] = None
+
     @property
     def elapsed_seconds(self) -> float:
         """Calculate elapsed time in seconds."""
@@ -337,9 +343,10 @@ class ChatMessage:
     timestamp: float
     is_streaming: bool = False
 
-    # For steered messages, track which layer/strength was used
+    # For steered messages, track which layer/strength/score was used
     layer: Optional[int] = None
     strength: Optional[float] = None
+    score: Optional[float] = None
 
     @property
     def time_str(self) -> str:
@@ -387,6 +394,7 @@ class ChatSession:
         content: str,
         layer: Optional[int] = None,
         strength: Optional[float] = None,
+        score: Optional[float] = None,
     ) -> ChatMessage:
         """Add a message to the session."""
         import uuid
@@ -398,6 +406,7 @@ class ChatSession:
             timestamp=time.time(),
             layer=layer,
             strength=strength,
+            score=score,
         )
         self.messages.append(msg)
         return msg

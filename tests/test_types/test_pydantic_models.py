@@ -280,15 +280,15 @@ class TestOptimizationConfigTypes:
 class TestContrastConfigTypes:
     """Type validation tests for ContrastConfig."""
 
-    def test_core_pool_size_constraint_ge_20(self):
-        """Test core_pool_size must be >= 20."""
+    def test_core_pool_size_constraint_ge_1(self):
+        """Test core_pool_size must be >= 1."""
         with pytest.raises(ValidationError):
-            ContrastConfig(core_pool_size=19)
+            ContrastConfig(core_pool_size=0)
 
-    def test_core_pool_size_constraint_le_500(self):
-        """Test core_pool_size must be <= 500."""
+    def test_core_pool_size_constraint_le_1000(self):
+        """Test core_pool_size must be <= 1000."""
         with pytest.raises(ValidationError):
-            ContrastConfig(core_pool_size=501)
+            ContrastConfig(core_pool_size=1001)
 
     def test_min_semantic_score_constraint_ge_1(self):
         """Test min_semantic_score must be >= 1.0."""

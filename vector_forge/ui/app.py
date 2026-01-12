@@ -30,6 +30,7 @@ from vector_forge.ui.state import (
     get_state,
     reset_state,
 )
+from vector_forge.tasks.config import TaskConfig
 from vector_forge.ui.screens.dashboard import DashboardScreen
 from vector_forge.ui.screens.samples import SamplesScreen
 from vector_forge.ui.screens.logs import LogsScreen
@@ -400,6 +401,7 @@ class VectorForgeApp(App):
                     phase=Phase.INITIALIZING,
                     max_outer_iterations=message.config.num_samples,
                     started_at=time.time(),
+                    config=message.config,
                 )
                 state.add_extraction(extraction)
                 # Always select the newly created session
@@ -444,6 +446,7 @@ class VectorForgeApp(App):
             status=ExtractionStatus.PENDING,
             phase=Phase.INITIALIZING,
             max_outer_iterations=message.config.num_samples,
+            config=message.config,
         )
 
         state = get_state()
@@ -485,12 +488,16 @@ def _populate_demo_state(state: UIState) -> None:
 
     Used for development and testing purposes.
     """
+    # Demo TaskConfig for params display
+    demo_config = TaskConfig.standard()
+
     # Main running extraction
     extraction = ExtractionUIState(
         id="ext_001",
         behavior_name="sycophancy",
         behavior_description="Agreeing with the user even when they are factually wrong",
         model="claude-sonnet-4-5",
+        target_model="Qwen/Qwen2.5-3B-Instruct",
         status=ExtractionStatus.RUNNING,
         phase=Phase.OPTIMIZING,
         progress=0.67,
@@ -507,6 +514,7 @@ def _populate_demo_state(state: UIState) -> None:
             behavior=0.82, coherence=0.75, specificity=0.80, overall=0.79,
             best_layer=16, best_strength=1.2, verdict="needs_refinement"
         ),
+        config=demo_config,
     )
 
     # Add sample agents with proper IDs for count_label

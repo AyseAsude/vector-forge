@@ -13,6 +13,7 @@ from typing import Optional
 
 from vector_forge.storage import SessionReplayer
 from vector_forge.services.session import SessionService, SessionInfo
+from vector_forge.tasks.config import TaskConfig
 from vector_forge.ui.state import (
     UIState,
     ExtractionUIState,
@@ -127,20 +128,27 @@ class SessionLoader:
         elif session_info.final_score is not None:
             evaluation.overall = session_info.final_score
 
-        # Load config for model info
+        # Load config for model info and full TaskConfig
         model = ""
         target_model = ""
+        task_config = None
         try:
             store = self._session_service.get_session_store(session_info.session_id)
             config_path = store.session_path / "config.json"
             if config_path.exists():
                 import json
                 with open(config_path) as f:
-                    config = json.load(f)
+                    config_data = json.load(f)
                     # LLMConfig is nested as generator_llm.model
-                    generator_llm = config.get("generator_llm", {})
+                    generator_llm = config_data.get("generator_llm", {})
                     model = generator_llm.get("model", "") if isinstance(generator_llm, dict) else ""
-                    target_model = config.get("target_model", "")
+                    target_model = config_data.get("target_model", "")
+
+                    # Try to parse full TaskConfig for params display
+                    try:
+                        task_config = TaskConfig.model_validate(config_data)
+                    except Exception as e:
+                        logger.debug(f"Failed to parse TaskConfig: {e}")
         except Exception:
             pass
 
@@ -159,6 +167,7 @@ class SessionLoader:
             current_layer=replayed.best_layer if replayed else None,
             datapoints=datapoints,
             evaluation=evaluation,
+            config=task_config,
         )
 
         # Add agents from replayed data

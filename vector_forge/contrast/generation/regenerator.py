@@ -38,6 +38,7 @@ class RegenerationPromptComposer:
         analysis: BehaviorAnalysis,
         attempt: int,
         intensity: SignalIntensity,
+        max_attempts: int,
     ) -> str:
         """Compose a targeted regeneration prompt.
 
@@ -47,12 +48,13 @@ class RegenerationPromptComposer:
             analysis: Behavior analysis for context.
             attempt: Which regeneration attempt this is.
             intensity: Target intensity for the pair.
+            max_attempts: Maximum regeneration attempts allowed.
 
         Returns:
             Composed regeneration prompt.
         """
         sections = [
-            self._compose_header(attempt),
+            self._compose_header(attempt, max_attempts),
             self._compose_behavior_context(analysis),
             self._compose_original_pair(pair),
             self._compose_validation_feedback(validation, analysis),
@@ -63,10 +65,10 @@ class RegenerationPromptComposer:
 
         return "\n\n".join(s for s in sections if s)
 
-    def _compose_header(self, attempt: int) -> str:
+    def _compose_header(self, attempt: int, max_attempts: int) -> str:
         """Compose header with attempt context."""
         return f"""The previous contrast pair failed validation. Generate an improved version.
-**Attempt {attempt} of 3**"""
+**Attempt {attempt} of {max_attempts}**"""
 
     def _compose_behavior_context(self, analysis: BehaviorAnalysis) -> str:
         """Compose behavior context section."""
@@ -293,7 +295,7 @@ class ContrastRegenerator(PairRegeneratorProtocol):
     Example:
         >>> regenerator = ContrastRegenerator(llm_client)
         >>> fixed_pair = await regenerator.regenerate(
-        ...     pair, validation_result, analysis, attempt=1
+        ...     pair, validation_result, analysis, attempt=1, max_attempts=3
         ... )
     """
 
@@ -321,6 +323,7 @@ class ContrastRegenerator(PairRegeneratorProtocol):
         validation: ValidationResult,
         analysis: BehaviorAnalysis,
         attempt: int,
+        max_attempts: int,
     ) -> ContrastPair:
         """Regenerate a pair that failed validation.
 
@@ -332,6 +335,7 @@ class ContrastRegenerator(PairRegeneratorProtocol):
             validation: Rich validation result with dimension details.
             analysis: Behavior analysis for context.
             attempt: Which regeneration attempt this is (1-indexed).
+            max_attempts: Maximum regeneration attempts allowed.
 
         Returns:
             New ContrastPair with improvements.
@@ -345,7 +349,7 @@ class ContrastRegenerator(PairRegeneratorProtocol):
 
         # Compose targeted regeneration prompt
         prompt = self._composer.compose(
-            pair, validation, analysis, attempt, intensity
+            pair, validation, analysis, attempt, intensity, max_attempts
         )
 
         # Increase temperature slightly for later attempts

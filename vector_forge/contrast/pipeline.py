@@ -652,6 +652,7 @@ class ContrastPipeline:
                     validation,
                     analysis,
                     attempt + 1,
+                    self._config.max_regeneration_attempts,
                 )
 
         # Return best effort even if not fully valid

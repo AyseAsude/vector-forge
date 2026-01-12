@@ -258,6 +258,7 @@ class ChatScreen(Screen):
         strength = selector.strength
         temperature = selector.temperature
         max_tokens = selector.max_tokens
+        score = selector.selected_score
 
         # Add user message
         user_msg = session.add_message(ChatMessageType.USER, event.content)
@@ -275,6 +276,7 @@ class ChatScreen(Screen):
             extraction_id=extraction_id,
             layer=layer,
             strength=strength,
+            score=score,
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -291,6 +293,7 @@ class ChatScreen(Screen):
         extraction_id: str,
         layer: int | None,
         strength: float,
+        score: float | None,
         temperature: float,
         max_tokens: int,
     ) -> None:
@@ -305,6 +308,7 @@ class ChatScreen(Screen):
             "",
             layer=layer,
             strength=strength,
+            score=score,
         )
         steered_msg.is_streaming = True
         steered_widget = conv_panel.add_message(steered_msg)

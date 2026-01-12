@@ -225,10 +225,33 @@ class DetailsPanel(Vertical):
         height: 1fr;
     }
 
-    DetailsPanel .title {
+    DetailsPanel .header-row {
         height: 1;
-        text-style: bold;
         margin-bottom: 1;
+    }
+
+    DetailsPanel .title {
+        width: 1fr;
+        text-style: bold;
+    }
+
+    DetailsPanel .toggle-btn {
+        width: auto;
+        min-width: 8;
+        height: 1;
+        padding: 0 1;
+        background: $boost;
+        color: $foreground;
+        border: none;
+    }
+
+    DetailsPanel .toggle-btn:hover {
+        background: $primary 20%;
+    }
+
+    DetailsPanel .toggle-btn.-active {
+        background: $accent;
+        color: $background;
     }
 
     DetailsPanel .description {
@@ -240,6 +263,17 @@ class DetailsPanel(Vertical):
     DetailsPanel .stats {
         height: 1;
         margin-bottom: 1;
+    }
+
+    DetailsPanel .models-row {
+        height: auto;
+        margin-bottom: 1;
+        padding: 1;
+        background: $background;
+    }
+
+    DetailsPanel .model-item {
+        height: 1;
     }
 
     DetailsPanel .section {
@@ -263,6 +297,38 @@ class DetailsPanel(Vertical):
     DetailsPanel .log-row {
         height: 1;
     }
+
+    /* Parameters view styles */
+    DetailsPanel .params-view {
+        height: 1fr;
+        padding: 0;
+    }
+
+    DetailsPanel .params-section {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    DetailsPanel .params-title {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    DetailsPanel .param-row {
+        height: 1;
+        padding: 0 1;
+    }
+
+    DetailsPanel .param-label {
+        width: 14;
+        color: $foreground-muted;
+    }
+
+    DetailsPanel .param-value {
+        width: 1fr;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -270,23 +336,104 @@ class DetailsPanel(Vertical):
         self._current_extraction_id: str | None = None
         self._displayed_log_timestamps: set[float] = set()
         self._agent_rows: dict[str, AgentRow] = {}
+        self._showing_params: bool = False
 
     def compose(self) -> ComposeResult:
         # Empty state (shown when no task selected)
         yield Static("Select a task to view details", classes="empty", id="empty-state")
         # Content container (hidden when empty)
         with Vertical(classes="content", id="content-state"):
-            yield Static("", classes="title", id="detail-title")
+            # Header with title and toggle button
+            with Horizontal(classes="header-row"):
+                yield Static("", classes="title", id="detail-title")
+                yield Button("Params", id="toggle-params", classes="toggle-btn")
             yield Static("", classes="description", id="detail-desc")
             yield Static("", classes="stats", id="detail-stats")
-            yield Static("PARALLEL RUNS", classes="section")
-            yield VerticalScroll(classes="list", id="agents-list")
-            yield Static("RECENT", classes="section")
-            yield VerticalScroll(classes="activity-list", id="activity-list")
+            # Models section
+            yield Static("MODELS", classes="section", id="models-section-title")
+            with Vertical(classes="models-row", id="models-row"):
+                yield Static("", classes="model-item", id="model-target")
+                yield Static("", classes="model-item", id="model-generator")
+                yield Static("", classes="model-item", id="model-judge")
+                yield Static("", classes="model-item", id="model-expander")
+            # Default detail view
+            with Vertical(id="detail-view"):
+                yield Static("PARALLEL RUNS", classes="section")
+                yield VerticalScroll(classes="list", id="agents-list")
+                yield Static("RECENT", classes="section")
+                yield VerticalScroll(classes="activity-list", id="activity-list")
+            # Parameters view (hidden by default)
+            with VerticalScroll(classes="params-view", id="params-view"):
+                # Sampling section
+                with Vertical(classes="params-section"):
+                    yield Static("SAMPLING", classes="params-title")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Samples", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-samples")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Datapoints", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-datapoints")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Top K", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-topk")
+                # Extraction section
+                with Vertical(classes="params-section"):
+                    yield Static("EXTRACTION", classes="params-title")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Method", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-method")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Layers", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-layers")
+                # Optimization section
+                with Vertical(classes="params-section"):
+                    yield Static("OPTIMIZATION", classes="params-title")
+                    with Horizontal(classes="param-row"):
+                        yield Static("LR", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-lr")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Max Iters", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-max-iters")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Coldness", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-coldness")
+                # Tournament section
+                with Vertical(classes="params-section"):
+                    yield Static("TOURNAMENT", classes="params-title")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Enabled", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-tournament")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Rounds", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-rounds")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Survivors", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-survivors")
+                # Evaluation section
+                with Vertical(classes="params-section"):
+                    yield Static("EVALUATION", classes="params-title")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Strengths", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-strengths")
+                    with Horizontal(classes="param-row"):
+                        yield Static("Temperature", classes="param-label")
+                        yield Static("—", classes="param-value", id="param-eval-temp")
 
     def on_mount(self) -> None:
         # Start with empty state visible
         self.query_one("#content-state").display = False
+        # Hide params view by default
+        self.query_one("#params-view").display = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle toggle button press."""
+        if event.button.id == "toggle-params":
+            self._showing_params = not self._showing_params
+            self.query_one("#detail-view").display = not self._showing_params
+            self.query_one("#params-view").display = self._showing_params
+            # Update button style
+            event.button.set_class(self._showing_params, "-active")
+            event.stop()
 
     def show(self, extraction: ExtractionUIState | None) -> None:
         """Update the panel to show an extraction's details."""
@@ -337,11 +484,120 @@ class DetailsPanel(Vertical):
             f"Runs: {runs}  │  Layer: {layer}  │  Score: {score}"
         )
 
+        # Update models section
+        self._update_models_section(ext)
+
+        # Update parameters section
+        self._update_params_section(ext)
+
         # Update agents list efficiently
         self._update_agents_list(ext)
 
         # Update activity log
         self._update_activity_log(ext)
+
+    def _shorten_model_name(self, model: str | None) -> str:
+        """Shorten a model name for display."""
+        if not model:
+            return "—"
+        # Remove common prefixes and get last part
+        name = model.split("/")[-1] if "/" in model else model
+        # Truncate if too long
+        if len(name) > 24:
+            name = name[:21] + "..."
+        return name
+
+    def _update_models_section(self, ext: ExtractionUIState) -> None:
+        """Update the models display section."""
+        # Target model (HF model)
+        target_name = self._shorten_model_name(ext.target_model)
+        self.query_one("#model-target", Static).update(
+            f"[$accent]TARGET[/]    {target_name}"
+        )
+
+        # Generator model (API model) - stored in ext.model
+        gen_name = self._shorten_model_name(ext.model)
+        self.query_one("#model-generator", Static).update(
+            f"[$primary]GEN[/]       {gen_name}"
+        )
+
+        # Judge and Expander - try to get from config if available
+        judge_name = "—"
+        expander_name = "—"
+        if hasattr(ext, 'config') and ext.config is not None:
+            if hasattr(ext.config, 'judge_llm'):
+                judge_name = self._shorten_model_name(ext.config.judge_llm.model)
+            if hasattr(ext.config, 'expander_llm'):
+                expander_name = self._shorten_model_name(ext.config.expander_llm.model)
+
+        self.query_one("#model-judge", Static).update(
+            f"[$warning]JUDGE[/]     {judge_name}"
+        )
+        self.query_one("#model-expander", Static).update(
+            f"[$success]EXPANDER[/]  {expander_name}"
+        )
+
+    def _update_params_section(self, ext: ExtractionUIState) -> None:
+        """Update the parameters view with task config."""
+        # Get config if available
+        config = getattr(ext, 'config', None)
+
+        if config is None:
+            # No config available - show defaults
+            self.query_one("#param-samples", Static).update("—")
+            self.query_one("#param-datapoints", Static).update("—")
+            self.query_one("#param-topk", Static).update("—")
+            self.query_one("#param-method", Static).update("—")
+            self.query_one("#param-layers", Static).update("—")
+            self.query_one("#param-lr", Static).update("—")
+            self.query_one("#param-max-iters", Static).update("—")
+            self.query_one("#param-coldness", Static).update("—")
+            self.query_one("#param-tournament", Static).update("—")
+            self.query_one("#param-rounds", Static).update("—")
+            self.query_one("#param-survivors", Static).update("—")
+            self.query_one("#param-strengths", Static).update("—")
+            self.query_one("#param-eval-temp", Static).update("—")
+            return
+
+        # Sampling
+        self.query_one("#param-samples", Static).update(str(config.num_samples))
+        self.query_one("#param-datapoints", Static).update(str(config.datapoints_per_sample))
+        self.query_one("#param-topk", Static).update(str(config.top_k))
+
+        # Extraction
+        method = config.extraction_method.value.upper() if hasattr(config, 'extraction_method') else "CAA"
+        self.query_one("#param-method", Static).update(method)
+
+        layers = "—"
+        if config.target_layers:
+            layers = ", ".join(str(l) for l in config.target_layers[:5])
+            if len(config.target_layers) > 5:
+                layers += "..."
+        self.query_one("#param-layers", Static).update(layers)
+
+        # Optimization
+        if hasattr(config, 'optimization'):
+            opt = config.optimization
+            self.query_one("#param-lr", Static).update(str(opt.lr))
+            self.query_one("#param-max-iters", Static).update(str(opt.max_iters))
+            self.query_one("#param-coldness", Static).update(str(opt.coldness))
+
+        # Tournament
+        if hasattr(config, 'tournament'):
+            t = config.tournament
+            enabled = "[$success]Yes[/]" if t.enabled else "[$foreground-muted]No[/]"
+            self.query_one("#param-tournament", Static).update(enabled)
+            self.query_one("#param-rounds", Static).update(str(t.elimination_rounds))
+            self.query_one("#param-survivors", Static).update(str(t.final_survivors))
+
+        # Evaluation
+        if hasattr(config, 'evaluation'):
+            ev = config.evaluation
+            strengths = ", ".join(str(s) for s in ev.strength_levels[:4])
+            if len(ev.strength_levels) > 4:
+                strengths += "..."
+            self.query_one("#param-strengths", Static).update(strengths)
+            self.query_one("#param-eval-temp", Static).update(str(ev.generation_temperature))
 
     def _update_agents_list(self, ext: ExtractionUIState) -> None:
         """Update the agents list efficiently - only add/remove/update what changed."""

@@ -20,6 +20,10 @@ from vector_forge.llm import create_client
 from vector_forge.tasks.config import TaskConfig
 from vector_forge.tasks.task import ExtractionTask, TaskResult
 from vector_forge.tasks.expander import ExpandedBehavior
+from vector_forge.tasks.eval_prompt_generator import (
+    EvalPromptGenerator,
+    EvalPromptConfig,
+)
 from vector_forge.contrast.pipeline import ContrastPipeline, ContrastPipelineConfig
 from vector_forge.services.session import SessionService
 from vector_forge.services.task_executor import TaskExecutor
@@ -222,10 +226,10 @@ class ExtractionRunner:
                 intensity_natural=config.contrast.intensity_natural,
             )
 
-            # Step 5: Run ContrastPipeline with event emitter
-            # Expander: behavior analysis and seed generation
-            # Generator: contrast pair generation
-            # Judge: contrast validation
+            # Step 5: Run ContrastPipeline and EvalPromptGenerator IN PARALLEL
+            # Both use the judge LLM but for different purposes:
+            # - ContrastPipeline: behavior analysis, seed generation, pair validation
+            # - EvalPromptGenerator: generate actual user prompts for evaluation
             contrast_pipeline = ContrastPipeline(
                 llm_client=expander_llm,
                 generator_llm_client=generator_llm,
@@ -234,9 +238,25 @@ class ExtractionRunner:
                 event_emitter=event_emitter,
             )
 
-            pipeline_result = await contrast_pipeline.run(
-                behavior_description=behavior_description,
-                num_samples=config.effective_samples,
+            # Configure eval prompt generation
+            eval_prompt_config = EvalPromptConfig(
+                total_prompts=config.evaluation.behavior_prompts * 2,  # Generate extra for diversity
+                prompts_per_batch=15,
+                temperature=1.0,  # Maximum diversity for evaluation prompts
+                max_concurrent=3,
+                include_edge_cases=True,
+                include_adversarial=True,
+            )
+            eval_prompt_generator = EvalPromptGenerator(judge_llm, eval_prompt_config)
+
+            # Run both in parallel - this saves significant time
+            logger.info("Running ContrastPipeline and EvalPromptGenerator in parallel...")
+            pipeline_result, eval_prompts = await asyncio.gather(
+                contrast_pipeline.run(
+                    behavior_description=behavior_description,
+                    num_samples=config.effective_samples,
+                ),
+                eval_prompt_generator.generate(expanded_behavior),
             )
 
             # Log contrast pipeline results
@@ -252,6 +272,13 @@ class ExtractionRunner:
                 if len(dataset.valid_pairs) == 0:
                     logger.warning(f"  Sample {sample_idx} has NO valid pairs!")
 
+            # Log eval prompt generation results
+            logger.info(
+                f"EvalPromptGenerator complete: {len(eval_prompts)} prompts generated"
+            )
+            if eval_prompts:
+                logger.debug(f"  Sample prompts: {[p.prompt[:50] for p in eval_prompts[:3]]}")
+
             self._emit_progress(ExtractionProgress(
                 session_id=session_id,
                 phase="extracting",
@@ -259,14 +286,18 @@ class ExtractionRunner:
                 message=f"Starting extraction ({config.num_samples} samples)...",
             ))
 
-            # Step 6: Augment ExpandedBehavior with analysis from contrast pipeline
-            # This merges the expander output (domains, criteria) with
-            # the analyzer output (scenarios, components) for comprehensive evaluation
+            # Step 6: Augment ExpandedBehavior with analysis and eval prompts
+            # This merges:
+            # - Expander output (domains, criteria)
+            # - Analyzer output (scenarios, components)
+            # - Generated eval prompts (actual user messages)
             expanded_behavior.augment_with_analysis(pipeline_result.behavior_analysis)
+            expanded_behavior.set_eval_prompts([p.prompt for p in eval_prompts])
             logger.info(
                 f"Behavior augmented with analysis: "
                 f"{len(expanded_behavior.realistic_scenarios)} scenarios, "
-                f"{len(expanded_behavior.components)} components"
+                f"{len(expanded_behavior.components)} components, "
+                f"{len(expanded_behavior.generated_eval_prompts)} eval prompts"
             )
 
             task = ExtractionTask.from_behavior(expanded_behavior, config)

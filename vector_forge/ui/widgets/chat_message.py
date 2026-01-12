@@ -91,10 +91,11 @@ class ChatMessageWidget(Static):
         elif msg.message_type == ChatMessageType.BASELINE:
             role = f"[$warning]{icon}[/] [$warning bold]Baseline[/]"
         else:
-            # Steered: include layer and strength inline
+            # Steered: include layer, strength, and score inline
             layer = f"L{msg.layer}" if msg.layer else ""
             strength = f" @ {msg.strength}x" if msg.strength else ""
-            role = f"[$success]{icon}[/] [$success bold]Steered {layer}[/][$success-darken-1]{strength}[/]"
+            score = f" · {msg.score:.2f}" if msg.score else ""
+            role = f"[$success]{icon}[/] [$success bold]Steered {layer}[/][$success-darken-1]{strength}{score}[/]"
 
         time = f"[$foreground-disabled]{msg.time_str}[/]"
         return f"{role}  {time}"

@@ -368,3 +368,13 @@ class VectorSelector(Vertical):
     @property
     def selected_layer(self) -> int | None:
         return self._selected_layer
+
+    @property
+    def selected_score(self) -> float | None:
+        """Get the score of the currently selected vector."""
+        if self._selected_layer is None:
+            return None
+        for v in self._vectors:
+            if v.layer == self._selected_layer:
+                return v.score
+        return None
