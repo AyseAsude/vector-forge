@@ -6,6 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-green.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Apart Research](https://img.shields.io/badge/Apart_Research-Project-43FF98.svg)](https://apartresearch.com/project/vector-forge-ckcl)
 
 **Autonomous steering vector extraction for LLM safety. Just describe the behavior, no data needed!**
 
