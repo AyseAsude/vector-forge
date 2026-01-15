@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 
 import torch
-from steering_vectors import VectorSteering
+from steerex import VectorSteering
 
 from vector_forge.tasks.config import TaskConfig
 from vector_forge.services.session import SessionService
@@ -127,7 +127,7 @@ async def main():
 
     # Load model for testing
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from steering_vectors import HuggingFaceBackend
+    from steerex import HuggingFaceBackend
 
     print("Loading model for testing...")
     tokenizer = AutoTokenizer.from_pretrained(target_model)

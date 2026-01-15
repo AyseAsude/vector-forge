@@ -20,7 +20,7 @@ import logging
 import time
 
 import torch
-from steering_vectors import VectorSteering
+from steerex import VectorSteering
 
 from vector_forge.llm import JSON_RESPONSE_FORMAT
 from vector_forge.tasks.config import EvaluationConfig
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class ModelBackend(Protocol):
     """Protocol for model backend operations.
 
-    Compatible with steering_vectors.HuggingFaceBackend.
+    Compatible with steerex.HuggingFaceBackend.
     """
 
     def generate(self, prompt: str, max_new_tokens: int = 100, **kwargs) -> str:
@@ -60,7 +60,7 @@ class ModelBackend(Protocol):
     def generate_with_steering(
         self,
         prompt: str,
-        steering_mode: Any,  # SteeringMode from steering_vectors
+        steering_mode: Any,  # SteeringMode from steerex
         layers: Union[int, List[int]],
         strength: float,
         **kwargs,

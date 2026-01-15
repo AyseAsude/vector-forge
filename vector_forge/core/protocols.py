@@ -384,4 +384,4 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from vector_forge.core.behavior import BehaviorSpec
     from vector_forge.core.results import EvaluationResult
-    from steering_vectors import TrainingDatapoint
+    from steerex import TrainingDatapoint

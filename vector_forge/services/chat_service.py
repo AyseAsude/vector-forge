@@ -108,7 +108,7 @@ class ChatService:
         Returns:
             HuggingFaceBackend instance.
         """
-        from steering_vectors import HuggingFaceBackend
+        from steerex import HuggingFaceBackend
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -243,7 +243,7 @@ class ChatService:
         Returns:
             Generated response text.
         """
-        from steering_vectors import VectorSteering
+        from steerex import VectorSteering
 
         backend = await self._ensure_backend()
         vector = await self._load_vector(vector_path)

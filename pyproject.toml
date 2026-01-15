@@ -37,11 +37,10 @@ dependencies = [
     "textual>=7.0.0",
     "transformers>=4.40.0",
     "accelerate>=1.12.0",
-    "steering-vectors",
+    "steerex",
 ]
 
 [tool.uv.sources]
-steering-vectors = { path = "../steering-vectors", editable = true }
 
 [project.optional-dependencies]
 dev = [

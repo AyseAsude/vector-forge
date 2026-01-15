@@ -173,7 +173,7 @@ class PipelineConfig(BaseModel):
     )
     layer_search_iterations: int = Field(default=2, ge=1)
 
-    # Optimization (passed to steering_vectors optimizer)
+    # Optimization (passed to steerex optimizer)
     optimization_lr: float = Field(default=0.1, gt=0)
     optimization_max_iters: int = Field(default=50, gt=0)
     optimization_coldness: float = Field(default=0.7, gt=0)

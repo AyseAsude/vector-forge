@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, TypeVar
 import torch
 
 if TYPE_CHECKING:
-    from steering_vectors import HuggingFaceBackend, TrainingDatapoint
+    from steerex import HuggingFaceBackend, TrainingDatapoint
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class ExtractionMemoryProfiler:
         """Initialize profiler with model backend.
 
         Args:
-            backend: The steering-vectors backend to profile.
+            backend: The steerex backend to profile.
         """
         self._backend = backend
         self._cached_profile: Optional[MemoryProfile] = None
@@ -222,8 +222,8 @@ class ExtractionMemoryProfiler:
 
         Returns memory usage in GB.
         """
-        from steering_vectors import SteeringOptimizer, VectorSteering
-        from steering_vectors.core.config import OptimizationConfig
+        from steerex import SteeringOptimizer, VectorSteering
+        from steerex.core.config import OptimizationConfig
 
         # Record baseline before optimization
         baseline = torch.cuda.memory_allocated()

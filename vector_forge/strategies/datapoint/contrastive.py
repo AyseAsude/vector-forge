@@ -3,7 +3,7 @@
 import json
 from typing import List, Any
 
-from steering_vectors import TrainingDatapoint
+from steerex import TrainingDatapoint
 
 from vector_forge.core.behavior import BehaviorSpec
 from vector_forge.core.protocols import LLMClient, Message

@@ -578,7 +578,7 @@ class OptimizationConfig(BaseModel):
         )
 
     def to_steering_config(self) -> dict:
-        """Convert to steering-vectors OptimizationConfig kwargs."""
+        """Convert to steerex OptimizationConfig kwargs."""
         return {
             "lr": self.lr,
             "max_iters": self.max_iters,

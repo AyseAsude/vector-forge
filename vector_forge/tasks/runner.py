@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
-from steering_vectors import (
+from steerex import (
     SteeringOptimizer,
     VectorSteering,
     HuggingFaceBackend,
@@ -34,8 +34,8 @@ from steering_vectors import (
     extract as caa_extract,
     ContrastPair,
 )
-from steering_vectors.core.config import OptimizationConfig as SVOptimizationConfig
-from steering_vectors.optimization.callbacks import (
+from steerex.core.config import OptimizationConfig as SVOptimizationConfig
+from steerex.optimization.callbacks import (
     HistoryCallback,
     ConvergenceCallback,
     EarlyStoppingCallback,
@@ -182,7 +182,7 @@ class ExtractionResult:
 class TaskRunner:
     """Parallel execution engine for extraction tasks.
 
-    Uses the optimization-based approach from steering-vectors library
+    Uses the optimization-based approach from steerex library
     for high-quality steering vector extraction.
 
     Features:
@@ -220,7 +220,7 @@ class TaskRunner:
         self._progress_callback: Optional[Callable[[RunnerProgress], None]] = None
         self._emitter = event_emitter
 
-        # Create steering-vectors backend with gradient checkpointing
+        # Create steerex backend with gradient checkpointing
         self._sv_backend = HuggingFaceBackend(
             model=model_backend.model,
             tokenizer=model_backend.tokenizer,

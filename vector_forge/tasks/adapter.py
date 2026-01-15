@@ -1,7 +1,7 @@
-"""Data adapters for converting between vector-forge and steering-vectors formats.
+"""Data adapters for converting between vector-forge and steerex formats.
 
 Implements the Adapter pattern to bridge the gap between our contrast generation
-pipeline and the steering-vectors optimization library.
+pipeline and the steerex optimization library.
 
 Architecture:
 - Single Responsibility: Each adapter handles one conversion
@@ -14,7 +14,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import json
 import random
 
-from steering_vectors import TrainingDatapoint
+from steerex import TrainingDatapoint
 
 from vector_forge.contrast.protocols import (
     ValidatedPair,
@@ -32,7 +32,7 @@ class ContrastToTrainingAdapter:
     """Adapts ValidatedPairs to TrainingDatapoints for optimization.
 
     Converts our contrast generation output format to the format expected
-    by the steering-vectors optimization library.
+    by the steerex optimization library.
 
     Example:
         >>> adapter = ContrastToTrainingAdapter()

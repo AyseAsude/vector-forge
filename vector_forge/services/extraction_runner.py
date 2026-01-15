@@ -415,7 +415,7 @@ class ExtractionRunner:
         Returns:
             HuggingFaceBackend instance.
         """
-        from steering_vectors import HuggingFaceBackend
+        from steerex import HuggingFaceBackend
 
         logger.info(f"Loading target model: {model_id}")
 

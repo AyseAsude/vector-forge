@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import torch
-from steering_vectors import TrainingDatapoint
+from steerex import TrainingDatapoint
 
 from vector_forge.core.results import DatapointQuality
 
